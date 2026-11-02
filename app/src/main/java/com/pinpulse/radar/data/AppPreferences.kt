@@ -244,4 +244,16 @@ class AppPreferences(context: Context) {
         prefs.edit().putString("self_marker_mode", valid).apply()
         _selfMarkerModeFlow.value = valid
     }
+
+    fun getLastDownloadedUpdateVersion(): String {
+        return prefs.getString("last_downloaded_update_version", "") ?: ""
+    }
+
+    fun setLastDownloadedUpdateVersion(version: String) {
+        prefs.edit().putString("last_downloaded_update_version", version.trim().removePrefix("v")).apply()
+    }
+
+    fun clearLastDownloadedUpdateVersion() {
+        prefs.edit().remove("last_downloaded_update_version").apply()
+    }
 }

@@ -8,6 +8,7 @@ import android.provider.Settings
 import android.util.Log
 import androidx.core.content.FileProvider
 import com.pinpulse.radar.BuildConfig
+import com.pinpulse.radar.data.AppPreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -24,6 +25,7 @@ data class UpdateState(
     val isDownloading: Boolean = false,
     val downloadProgress: Float = 0f,
     val updateAvailable: Boolean = false,
+    val isDownloaded: Boolean = false, // True if a valid update APK is ready on device
     val latestVersion: String = "",
     val currentVersion: String = BuildConfig.VERSION_NAME,
     val apkUrl: String = "",
@@ -40,7 +42,7 @@ object UpdateManager {
     private val _updateState = MutableStateFlow(UpdateState())
     val updateState: StateFlow<UpdateState> = _updateState.asStateFlow()
 
-    suspend fun checkForUpdates(): UpdateState = withContext(Dispatchers.IO) {
+    suspend fun checkForUpdates(context: Context? = null): UpdateState = withContext(Dispatchers.IO) {
         _updateState.value = _updateState.value.copy(
             isChecking = true,
             statusMessage = "Checking for updates...",
@@ -77,18 +79,25 @@ object UpdateManager {
 
                 val currentVer = BuildConfig.VERSION_NAME
                 val isNewer = compareVersions(tagName, currentVer)
+                val cleanLatest = tagName.removePrefix("v")
+
+                // Check if the update is ALREADY downloaded on this device
+                val isAlreadyDownloaded = context?.let { ctx ->
+                    isDownloadedApkReady(ctx, cleanLatest)
+                } ?: false
 
                 val newState = _updateState.value.copy(
                     isChecking = false,
                     updateAvailable = isNewer && apkUrl.isNotBlank(),
-                    latestVersion = tagName.removePrefix("v"),
+                    isDownloaded = isAlreadyDownloaded,
+                    latestVersion = cleanLatest,
                     currentVersion = currentVer,
                     apkUrl = apkUrl,
                     releaseNotes = body,
-                    statusMessage = if (isNewer && apkUrl.isNotBlank()) {
-                        "Update available: $tagName"
-                    } else {
-                        "You have the latest version ($currentVer)"
+                    statusMessage = when {
+                        isAlreadyDownloaded -> "Update v$cleanLatest is already downloaded! Ready to install."
+                        isNewer && apkUrl.isNotBlank() -> "Update available: $tagName"
+                        else -> "You have the latest version ($currentVer)"
                     }
                 )
                 _updateState.value = newState
@@ -114,7 +123,16 @@ object UpdateManager {
         }
     }
 
-    private fun compareVersions(latestTag: String, currentVer: String): Boolean {
+    fun refreshDownloadedStatus(context: Context) {
+        val targetVer = _updateState.value.latestVersion
+        val isReady = isDownloadedApkReady(context, targetVer)
+        _updateState.value = _updateState.value.copy(
+            isDownloaded = isReady,
+            statusMessage = if (isReady) "Update v$targetVer is already downloaded! Ready to install." else _updateState.value.statusMessage
+        )
+    }
+
+    fun compareVersions(latestTag: String, currentVer: String): Boolean {
         try {
             val cleanLatest = latestTag.removePrefix("v").trim()
             val cleanCurrent = currentVer.removePrefix("v").trim()
@@ -134,15 +152,70 @@ object UpdateManager {
         return false
     }
 
+    /**
+     * Check if a valid update APK is already downloaded on disk and matches target version.
+     */
+    fun isDownloadedApkReady(context: Context, targetVersion: String = ""): Boolean {
+        val file = File(context.cacheDir, "pinpulse_update.apk")
+        if (!file.exists() || file.length() < 1_500_000) return false
+
+        try {
+            val pkg = context.packageManager.getPackageArchiveInfo(file.absolutePath, 0)
+            if (pkg != null && pkg.packageName == context.packageName) {
+                val vName = pkg.versionName ?: ""
+                if (targetVersion.isNotBlank()) {
+                    if (vName == targetVersion.removePrefix("v")) return true
+                }
+                if (compareVersions(vName, BuildConfig.VERSION_NAME)) return true
+            }
+        } catch (e: Exception) {}
+
+        val savedVer = AppPreferences(context).getLastDownloadedUpdateVersion()
+        if (savedVer.isNotBlank() && file.length() > 5_000_000) {
+            if (targetVersion.isNotBlank() && savedVer == targetVersion.removePrefix("v")) return true
+            if (compareVersions(savedVer, BuildConfig.VERSION_NAME)) return true
+        }
+
+        return false
+    }
+
+    /**
+     * Get the downloaded update APK if it is valid and ready to install.
+     */
+    fun getDownloadedUpdateApk(context: Context, targetVersion: String = ""): File? {
+        val file = File(context.cacheDir, "pinpulse_update.apk")
+        return if (isDownloadedApkReady(context, targetVersion)) file else null
+    }
+
     suspend fun downloadAndInstall(context: Context, onInstalled: () -> Unit = {}) = withContext(Dispatchers.IO) {
+        val latestVer = _updateState.value.latestVersion
+
+        // 1. If APK is ALREADY downloaded and valid, do NOT re-download! Launch installer immediately!
+        val existingFile = getDownloadedUpdateApk(context, latestVer)
+        if (existingFile != null) {
+            Log.d(TAG, "Update APK already downloaded: ${existingFile.absolutePath} (${existingFile.length() / 1024} KB) -> Reusing file without downloading!")
+            _updateState.value = _updateState.value.copy(
+                isDownloading = false,
+                isDownloaded = true,
+                downloadProgress = 1f,
+                statusMessage = "Launching installer..."
+            )
+            withContext(Dispatchers.Main) {
+                installApk(context, existingFile)
+                onInstalled()
+            }
+            return@withContext
+        }
+
         val apkUrl = _updateState.value.apkUrl
         if (apkUrl.isBlank()) return@withContext
 
-        // Pre-clean any leftover APKs so storage doesn't bloat
+        // Pre-clean older/incomplete files before starting fresh download
         cleanupDownloadedApks(context)
 
         _updateState.value = _updateState.value.copy(
             isDownloading = true,
+            isDownloaded = false,
             downloadProgress = 0f,
             statusMessage = "Downloading update..."
         )
@@ -189,10 +262,14 @@ object UpdateManager {
                 }
             }
 
+            // Save version so if user cancels or leaves installer, we remember it was downloaded
+            AppPreferences(context).setLastDownloadedUpdateVersion(latestVer)
+
             _updateState.value = _updateState.value.copy(
                 isDownloading = false,
+                isDownloaded = true,
                 downloadProgress = 1f,
-                statusMessage = "Download complete! Launching installer..."
+                statusMessage = "Download complete! Ready to install."
             )
 
             withContext(Dispatchers.Main) {
@@ -234,34 +311,56 @@ object UpdateManager {
     }
 
     /**
-     * Delete any downloaded update APKs from internal and external cache.
-     * Prevents downloaded installers from accumulating and consuming disk storage.
-     * Returns the total number of bytes freed.
+     * Automatically cleans up APK files from PREVIOUS updates ONLY IF
+     * the currently running app version is already equal to or newer than the APK version.
+     * If the running app is still older (i.e. the user downloaded but hasn't installed yet),
+     * the APK is PRESERVED so the user is never required to re-download!
+     */
+    fun cleanupOldInstalledApks(context: Context): Long {
+        var totalFreed = 0L
+        try {
+            val file = File(context.cacheDir, "pinpulse_update.apk")
+            if (file.exists()) {
+                val isStillNewer = isDownloadedApkReady(context)
+                if (!isStillNewer) {
+                    val len = file.length()
+                    if (file.delete()) {
+                        totalFreed += len
+                        AppPreferences(context).clearLastDownloadedUpdateVersion()
+                        Log.d(TAG, "Pruned installed APK ($len bytes) - update successfully applied to v${BuildConfig.VERSION_NAME}")
+                    }
+                } else {
+                    Log.d(TAG, "Preserving downloaded update APK (${file.length() / 1024} KB) - pending install by user.")
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error cleaning old installed APKs: ${e.message}")
+        }
+        return totalFreed
+    }
+
+    /**
+     * Unconditional cache purge (e.g. user manually taps 'Purge Storage' in Settings).
      */
     fun cleanupDownloadedApks(context: Context): Long {
         var totalFreed = 0L
         try {
-            // 1. Check internal cache
             context.cacheDir?.listFiles()?.forEach { file ->
                 if (file.isFile && file.name.endsWith(".apk", ignoreCase = true)) {
                     val len = file.length()
                     if (file.delete()) {
                         totalFreed += len
-                        Log.d(TAG, "Pruned update APK: ${file.name} (${len / 1024} KB)")
                     }
                 }
             }
-            // 2. Check external cache
             context.externalCacheDir?.listFiles()?.forEach { file ->
                 if (file.isFile && file.name.endsWith(".apk", ignoreCase = true)) {
                     val len = file.length()
                     if (file.delete()) {
                         totalFreed += len
-                        Log.d(TAG, "Pruned external update APK: ${file.name}")
                     }
                 }
             }
-            // 3. Check updates subdirectory
             val updatesDir = File(context.cacheDir, "updates")
             if (updatesDir.exists()) {
                 updatesDir.listFiles()?.forEach { f ->
@@ -272,6 +371,8 @@ object UpdateManager {
                 }
                 updatesDir.delete()
             }
+            AppPreferences(context).clearLastDownloadedUpdateVersion()
+            _updateState.value = _updateState.value.copy(isDownloaded = false)
         } catch (e: Exception) {
             Log.w(TAG, "Error cleaning cached update APKs: ${e.message}")
         }

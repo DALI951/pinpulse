@@ -176,18 +176,19 @@ fun SettingsDialog(
                             trackColor = Color(0xFF1E293B),
                             modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp))
                         )
-                    } else if (updateState.updateAvailable) {
+                    } else if (updateState.updateAvailable || updateState.isDownloaded) {
+                        val isReady = updateState.isDownloaded
                         Text(
-                            text = "🚀 New version available: v${updateState.latestVersion}!",
+                            text = if (isReady) "🚀 Update ready to install: v${updateState.latestVersion}" else "🚀 New version available: v${updateState.latestVersion}!",
                             fontSize = 13.sp,
                             color = PulseGreen,
                             fontWeight = FontWeight.Bold
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "Install in 1-tap directly without browser downloads.",
+                            text = if (isReady) "APK is already downloaded! Tap below to install directly without downloading again." else "Install in 1-tap directly without browser downloads.",
                             fontSize = 12.sp,
-                            color = TextMuted
+                            color = if (isReady) Color.White else TextMuted
                         )
                         Spacer(modifier = Modifier.height(10.dp))
                         Button(
@@ -196,9 +197,9 @@ fun SettingsDialog(
                             shape = RoundedCornerShape(10.dp),
                             modifier = Modifier.fillMaxWidth().height(42.dp)
                         ) {
-                            Icon(Icons.Default.Download, contentDescription = null, tint = Color.Black, modifier = Modifier.size(16.dp))
+                            Icon(if (isReady) Icons.Default.CheckCircle else Icons.Default.Download, contentDescription = null, tint = Color.Black, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("Download & Install Update", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Text(if (isReady) "Install Now (Already Downloaded)" else "Download & Install Update", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                         }
                     } else {
                         Text(
@@ -247,10 +248,13 @@ fun SettingsDialog(
                             }
                             val apkSizeMb = apkBytes / (1024f * 1024f)
                             Text(
-                                if (apkSizeMb > 0.05f) "${String.format("%.1f", apkSizeMb)} MB (Stored)" else "0.0 MB (Auto-Cleaned)",
+                                if (apkSizeMb > 0.05f) {
+                                    if (updateState.isDownloaded) "${String.format("%.1f", apkSizeMb)} MB (Ready to Install)"
+                                    else "${String.format("%.1f", apkSizeMb)} MB (Stored)"
+                                } else "0.0 MB (Auto-Cleaned)",
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = if (apkSizeMb > 0.05f) Color(0xFFF59E0B) else PulseGreen
+                                color = if (updateState.isDownloaded) PulseGreen else (if (apkSizeMb > 0.05f) Color(0xFFF59E0B) else PulseGreen)
                             )
                         }
 

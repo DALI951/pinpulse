@@ -138,8 +138,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     init {
-        // Auto-prune any downloaded update APKs from storage
-        UpdateManager.cleanupDownloadedApks(application)
+        // Auto-prune old installed APKs from previous updates (keeps pending update APKs safe!)
+        UpdateManager.cleanupOldInstalledApks(application)
 
         // Auto-heal any friends corrupted by legacy offline alerts
         val savedFriends = prefs.loadFriends()
@@ -1012,8 +1012,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun checkForUpdates() {
         viewModelScope.launch {
-            UpdateManager.checkForUpdates()
+            UpdateManager.checkForUpdates(application)
         }
+    }
+
+    fun refreshUpdateStatus() {
+        UpdateManager.refreshDownloadedStatus(application)
     }
 
     fun downloadAndInstallUpdate(context: Context) {
