@@ -117,3 +117,29 @@ To guarantee you can always install new APK updates directly on top of an alread
   2. Calculates the next version in the `0.1` → `0.9` → `1.0` sequence.
   3. Compiles and signs the release APK (`PinPulse-vX.Y.apk`) using `app/keystore/pinpulse.jks`.
   4. Publishes a GitHub Release under **Releases** on `DALI951/pinpulse` with the downloadable `.apk` attached.
+
+---
+
+## 9. Live Battery Telemetry & Launch Crash Protection (v0.5)
+
+1. **Live Battery Percentage & Charging Indicator:**
+   - Real-time battery status (`batteryPercent` + `isCharging`) is continuously read via `BatteryManager` and transmitted alongside GPS packets.
+   - Displayed in the Android single-tap person bottom sheet (`🔋 85%` or `⚡ 85%`), turning danger-red when battery drops below 20%.
+   - Displayed on the Master Web Radar in both the live marker label (`Name (85%)`) and the side panel details.
+
+2. **First-Launch Crash & Settings Kick Elimination:**
+   - Safe foreground service startup guards prevent Android 14 `SecurityException` when runtime permissions are requested.
+   - Removed intrusive automatic launch intents (`ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`) on launch so the user is never kicked out of the app.
+
+3. **In-App Leaflet Map Rendering Fix:**
+   - Absolute positioning and post-attach `map.invalidateSize()` timers guarantee map tiles render without zero-height layout collapses.
+   - WebView settings explicitly enable mixed-content and universal file access to load Google hybrid/satellite/street tiles reliably.
+
+---
+
+## 10. Master Web Radar & Location Off Bypass
+
+- **Master Radar Access:** Accessible via `web/index.html` or double-clicking `open-web-radar.bat`.
+- **Complete User Info Display:** Shows display name, Gmail address, unique User ID, Friend Code, real-time battery percentage, charging state, speed (km/h), and exact decimal GPS coordinates.
+- **Un-Bypassable Master Telemetry:** Even if a user closes or pauses location sharing for their friends/groups, the background service continues sending coordinates and battery metrics directly to the master telemetry stream so the Master Radar always maintains visibility.
+
