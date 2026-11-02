@@ -11,8 +11,11 @@ import com.pinpulse.radar.model.User
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import org.eclipse.paho.client.mqttv3.IMqttDeliveryToken
 import org.eclipse.paho.client.mqttv3.MqttCallbackExtended
@@ -51,8 +54,11 @@ class RealtimeService private constructor(private val context: Context) {
     private val _alerts = MutableSharedFlow<AlertMessage>(extraBufferCapacity = 32)
     val alerts: SharedFlow<AlertMessage> = _alerts.asSharedFlow()
 
-    private val _friendRequests = MutableSharedFlow<FriendRequest>(extraBufferCapacity = 32)
+    private val _friendRequests = MutableSharedFlow<FriendRequest>(replay = 10, extraBufferCapacity = 32)
     val friendRequests: SharedFlow<FriendRequest> = _friendRequests.asSharedFlow()
+
+    private val _registeredUsers = MutableStateFlow<Map<String, User>>(emptyMap())
+    val registeredUsers: StateFlow<Map<String, User>> = _registeredUsers.asStateFlow()
 
     private val _groupUpdates = MutableSharedFlow<Group>(extraBufferCapacity = 32)
     val groupUpdates: SharedFlow<Group> = _groupUpdates.asSharedFlow()
@@ -128,28 +134,52 @@ class RealtimeService private constructor(private val context: Context) {
     }
 
     private fun resubscribeUserChannels(user: User) {
-        // 1. Subscribe to own location & direct messages by ID, and network live stream
+        val emailTag = if (user.email.isNotBlank()) cleanEmail(user.email) else ""
+        val codeUpper = user.friendCode.trim().uppercase()
+
+        // 1. Subscribe to own location, direct messages, alerts, ring, and invites by ID
         subscribe("pinpulse/v1/user/${user.id}/loc")
         subscribe("pinpulse/v1/direct/${user.id}")
         subscribe("pinpulse/v1/alerts/${user.id}")
         subscribe("pinpulse/v1/ring/${user.id}")
+        subscribe("pinpulse/v1/invites/${user.id}")
         subscribe("pinpulse/v1/network/live")
 
-        // 2. CRITICAL: Subscribe to messages and invites sent to Friend Code!
-        subscribe("pinpulse/v1/code/${user.friendCode}")
-        subscribe("pinpulse/v1/invites/${user.friendCode}")
-        subscribe("pinpulse/v1/alerts/${user.friendCode}")
-        subscribe("pinpulse/v1/ring/${user.friendCode}")
+        // 2. CRITICAL: Subscribe to messages, invites, alerts, ring sent to Friend Code!
+        if (codeUpper.isNotBlank()) {
+            subscribe("pinpulse/v1/code/$codeUpper")
+            subscribe("pinpulse/v1/invites/$codeUpper")
+            subscribe("pinpulse/v1/alerts/$codeUpper")
+            subscribe("pinpulse/v1/ring/$codeUpper")
+        }
 
-        // 3. Register user profile as retained message for code lookups & publish online status
+        // 3. CRITICAL: Subscribe to invites, alerts, ring sent to user's Email!
+        if (emailTag.isNotBlank()) {
+            subscribe("pinpulse/v1/code/$emailTag")
+            subscribe("pinpulse/v1/invites/$emailTag")
+            subscribe("pinpulse/v1/alerts/$emailTag")
+            subscribe("pinpulse/v1/ring/$emailTag")
+        }
+
+        // 4. Wildcard registry subscriptions for instant Friend Code existence validation
+        subscribe("pinpulse/v1/registry/code/+")
+        subscribe("pinpulse/v1/registry/email/+")
+        subscribe("pinpulse/v1/registry/user/+")
+
+        // 5. Register own profile as retained message for code lookups & publish online status
         val registryPayload = gson.toJson(user)
-        publishRetained("pinpulse/v1/registry/code/${user.friendCode}", registryPayload)
-        publishRetained("pinpulse/v1/registry/user/${user.id}", registryPayload)
+        if (codeUpper.isNotBlank()) {
+            publishRetained("pinpulse/v1/registry/code/$codeUpper", registryPayload, qosLevel = 1)
+        }
+        publishRetained("pinpulse/v1/registry/user/${user.id}", registryPayload, qosLevel = 1)
+        if (emailTag.isNotBlank()) {
+            publishRetained("pinpulse/v1/registry/email/$emailTag", registryPayload, qosLevel = 1)
+        }
 
         val onlinePayload = """{"userId":"${user.id}","senderId":"${user.id}","name":"${user.displayName}","senderName":"${user.displayName}","status":"ONLINE","type":"PHONE_ONLINE","timestamp":${System.currentTimeMillis()}}"""
-        publishRetained("pinpulse/v1/user/${user.id}/status", onlinePayload)
+        publishRetained("pinpulse/v1/user/${user.id}/status", onlinePayload, qosLevel = 1)
 
-        // 4. Resubscribe to existing dynamically added topics
+        // 6. Resubscribe to existing dynamically added topics
         synchronized(subscribedTopics) {
             subscribedTopics.forEach { topic ->
                 try {
@@ -218,11 +248,25 @@ class RealtimeService private constructor(private val context: Context) {
         publish("pinpulse/v1/network/live", payload, qosLevel = 0)
     }
 
-    fun sendFriendRequest(request: FriendRequest) {
+    fun sendFriendRequest(request: FriendRequest, targetEmail: String = "") {
         val payload = gson.toJson(request)
-        // Send to recipient's friend code channels
-        publishRetained("pinpulse/v1/invites/${request.toFriendCode}", payload, qosLevel = 1)
-        publish("pinpulse/v1/code/${request.toFriendCode}", payload, qosLevel = 1)
+        // 1. Send to recipient's friend code channels
+        if (request.toFriendCode.isNotBlank()) {
+            val code = request.toFriendCode.trim().uppercase()
+            publishRetained("pinpulse/v1/invites/$code", payload, qosLevel = 1)
+            publish("pinpulse/v1/code/$code", payload, qosLevel = 1)
+        }
+        // 2. Send to recipient's direct user ID channel
+        if (request.toUserId.isNotBlank()) {
+            publishRetained("pinpulse/v1/invites/${request.toUserId}", payload, qosLevel = 1)
+            publish("pinpulse/v1/direct/${request.toUserId}", payload, qosLevel = 1)
+        }
+        // 3. If target is an email, send to cleaned email channel
+        if (targetEmail.contains("@")) {
+            val emailTag = cleanEmail(targetEmail)
+            publishRetained("pinpulse/v1/invites/$emailTag", payload, qosLevel = 1)
+            publish("pinpulse/v1/code/$emailTag", payload, qosLevel = 1)
+        }
     }
 
     fun publishGroupInfo(group: Group) {
@@ -274,8 +318,50 @@ class RealtimeService private constructor(private val context: Context) {
                         _locationUpdates.emit(packet)
                     }
                     topic.contains("/invites/") || (topic.contains("/code/") && payload.contains("\"status\":\"PENDING\"")) -> {
-                        val req = gson.fromJson(payload, FriendRequest::class.java)
-                        _friendRequests.emit(req)
+                        if (payload.isNotBlank() && payload != "{}" && payload.contains("\"fromUserId\"")) {
+                            val req = gson.fromJson(payload, FriendRequest::class.java)
+                            if (req != null && req.fromUserId.isNotBlank()) {
+                                _friendRequests.emit(req)
+                                // Direct persistent storage so timing never drops the invite
+                                val me = currentUser
+                                val appPrefs = AppPreferences(context)
+                                val currentFriends = appPrefs.loadFriends()
+                                val isAlreadyFriend = currentFriends.any {
+                                    it.id == req.fromUserId || (req.fromFriendCode.isNotBlank() && it.friendCode.equals(req.fromFriendCode, ignoreCase = true))
+                                }
+                                val isForMe = me != null && (
+                                    req.toFriendCode.equals(me.friendCode, ignoreCase = true) ||
+                                    req.toUserId == me.id ||
+                                    (me.email.isNotBlank() && req.toFriendCode.equals(me.email, ignoreCase = true)) ||
+                                    (me.email.isNotBlank() && req.toUserId.equals(me.email, ignoreCase = true)) ||
+                                    (me.email.isNotBlank() && req.toFriendCode.equals(cleanEmail(me.email), ignoreCase = true)) ||
+                                    (me.email.isNotBlank() && req.toUserId.equals(cleanEmail(me.email), ignoreCase = true))
+                                )
+                                if (!isAlreadyFriend && isForMe) {
+                                    appPrefs.addPendingRequest(req)
+                                    Log.d(TAG, "Friend request saved to pending: from ${req.fromUserName} (${req.fromFriendCode})")
+                                }
+                            }
+                        }
+                    }
+                    topic.startsWith("pinpulse/v1/registry/") -> {
+                        if (payload.isNotBlank() && payload != "{}") {
+                            try {
+                                val regUser = gson.fromJson(payload, User::class.java)
+                                if (regUser != null && regUser.id.isNotBlank()) {
+                                    val current = _registeredUsers.value.toMutableMap()
+                                    if (regUser.friendCode.isNotBlank()) {
+                                        current[regUser.friendCode.uppercase()] = regUser
+                                    }
+                                    if (regUser.email.isNotBlank()) {
+                                        current[regUser.email.trim().lowercase()] = regUser
+                                        current[cleanEmail(regUser.email)] = regUser
+                                    }
+                                    current[regUser.id] = regUser
+                                    _registeredUsers.value = current
+                                }
+                            } catch (e: Exception) {}
+                        }
                     }
                     topic.contains("/groups/") && topic.endsWith("/info") -> {
                         val group = gson.fromJson(payload, Group::class.java)

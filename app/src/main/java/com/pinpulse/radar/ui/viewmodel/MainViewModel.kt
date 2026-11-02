@@ -62,6 +62,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val pendingRequests: StateFlow<List<FriendRequest>> = prefs.pendingRequestsFlow
     val hiddenFromGeneral: StateFlow<Set<String>> = prefs.hiddenFromGeneralMapFlow
     val mapStyle: StateFlow<String> = prefs.mapStyleFlow
+    val registeredUsers: StateFlow<Map<String, User>> = realtime.registeredUsers
 
     private val _currentFilter = MutableStateFlow<MapFilter>(MapFilter.General)
     val currentFilter: StateFlow<MapFilter> = _currentFilter.asStateFlow()
@@ -657,11 +658,63 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _kickState.value = null
     }
 
-    // --- 1-on-1 Friends (Option B) ---
+    // --- 1-on-1 Friends & Verification ---
+
+    fun lookupUser(query: String): User? {
+        val clean = query.trim()
+        if (clean.isBlank()) return null
+        val upper = clean.uppercase()
+        val lower = clean.lowercase()
+        val emailTag = realtime.cleanEmail(clean)
+        val map = realtime.registeredUsers.value
+
+        var found = map[upper] ?: map[lower] ?: map[emailTag] ?: map[clean]
+        if (found != null) return found
+
+        // Normalize hyphen variants e.g. DALI9510 vs DALI-9510
+        if (clean.contains("-")) {
+            val noHyphen = clean.replace("-", "").uppercase()
+            found = map[noHyphen]
+        } else if (clean.length in 7..8) {
+            val withHyphen = "${clean.take(4).uppercase()}-${clean.drop(4).uppercase()}"
+            found = map[withHyphen]
+        }
+        if (found != null) return found
+
+        // Search in registry user list directly
+        return map.values.firstOrNull { u ->
+            u.friendCode.equals(clean, ignoreCase = true) ||
+            u.friendCode.replace("-", "").equals(clean.replace("-", ""), ignoreCase = true) ||
+            (u.email.isNotBlank() && u.email.equals(clean, ignoreCase = true)) ||
+            u.id == clean
+        }
+    }
+
+    fun queryUserOnDemand(codeOrEmail: String) {
+        val clean = codeOrEmail.trim()
+        if (clean.length in 4..20) {
+            val upper = clean.uppercase()
+            realtime.subscribe("pinpulse/v1/registry/code/$upper")
+            if (clean.contains("-")) {
+                realtime.subscribe("pinpulse/v1/registry/code/${clean.replace("-", "").uppercase()}")
+            }
+            if (clean.contains("@")) {
+                val emailTag = realtime.cleanEmail(clean)
+                realtime.subscribe("pinpulse/v1/registry/email/$emailTag")
+            }
+        }
+    }
 
     fun sendFriendRequest(targetFriendCodeOrEmail: String) {
         val me = prefs.loadCurrentUser() ?: return
-        val cleanTarget = targetFriendCodeOrEmail.trim().uppercase()
+        val rawInput = targetFriendCodeOrEmail.trim()
+        val isEmail = rawInput.contains("@")
+        val found = lookupUser(rawInput)
+
+        val cleanCode = (found?.friendCode?.ifBlank { null } ?: rawInput).uppercase()
+        val targetUserId = found?.id ?: if (isEmail) prefs.generateDeterministicUserId(rawInput) else cleanCode
+        val targetEmail = found?.email ?: if (isEmail) rawInput else ""
+
         val req = FriendRequest(
             id = "req_" + UUID.randomUUID().toString().take(8),
             fromUserId = me.id,
@@ -669,11 +722,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             fromUserEmail = me.email,
             fromUserAvatar = me.avatarBase64,
             fromFriendCode = me.friendCode,
-            toUserId = cleanTarget,
-            toFriendCode = cleanTarget,
+            toUserId = targetUserId,
+            toFriendCode = cleanCode,
             status = "PENDING"
         )
-        realtime.sendFriendRequest(req)
+        realtime.sendFriendRequest(req, targetEmail)
     }
 
     fun acceptFriendRequest(request: FriendRequest) {
@@ -690,19 +743,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
         prefs.addOrUpdateFriend(newFriend)
         prefs.removePendingRequest(request.id)
-        realtime.publishRetained("pinpulse/v1/invites/${request.toFriendCode}", "")
-        realtime.publishRetained("pinpulse/v1/invites/${me.friendCode}", "")
+
+        // Clear retained invites across all candidate topics
+        if (request.toFriendCode.isNotBlank()) {
+            realtime.publishRetained("pinpulse/v1/invites/${request.toFriendCode.uppercase()}", "")
+        }
+        if (request.toUserId.isNotBlank()) {
+            realtime.publishRetained("pinpulse/v1/invites/${request.toUserId}", "")
+        }
+        if (me.friendCode.isNotBlank()) {
+            realtime.publishRetained("pinpulse/v1/invites/${me.friendCode.uppercase()}", "")
+        }
+        if (me.email.isNotBlank()) {
+            realtime.publishRetained("pinpulse/v1/invites/${realtime.cleanEmail(me.email)}", "")
+        }
+
         realtime.subscribe("pinpulse/v1/user/${newFriend.id}/loc")
+        realtime.subscribe("pinpulse/v1/user/${newFriend.id}/status")
         syncCloudBackup()
 
-        // Broadcast acceptance packet back to requester so they add us too!
+        // Broadcast acceptance packet back to requester with QoS 1 so they add us too!
         val payload = mapOf(
             "type" to "FRIEND_ACCEPTED",
             "friend" to me
         )
         val json = gson.toJson(payload)
-        realtime.publish("pinpulse/v1/code/${request.fromFriendCode}", json)
-        realtime.publish("pinpulse/v1/direct/${request.fromUserId}", json)
+        realtime.publish("pinpulse/v1/code/${request.fromFriendCode.uppercase()}", json, qosLevel = 1)
+        realtime.publish("pinpulse/v1/direct/${request.fromUserId}", json, qosLevel = 1)
+        realtime.publishRetained("pinpulse/v1/direct/${request.fromUserId}", json, qosLevel = 1)
     }
 
     fun declineFriendRequest(requestId: String) {
@@ -710,10 +778,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val req = prefs.loadPendingRequests().find { it.id == requestId }
         prefs.removePendingRequest(requestId)
         if (req != null) {
-            realtime.publishRetained("pinpulse/v1/invites/${req.toFriendCode}", "")
+            if (req.toFriendCode.isNotBlank()) realtime.publishRetained("pinpulse/v1/invites/${req.toFriendCode.uppercase()}", "")
+            if (req.toUserId.isNotBlank()) realtime.publishRetained("pinpulse/v1/invites/${req.toUserId}", "")
         }
         if (me != null) {
-            realtime.publishRetained("pinpulse/v1/invites/${me.friendCode}", "")
+            if (me.friendCode.isNotBlank()) realtime.publishRetained("pinpulse/v1/invites/${me.friendCode.uppercase()}", "")
+            if (me.email.isNotBlank()) realtime.publishRetained("pinpulse/v1/invites/${realtime.cleanEmail(me.email)}", "")
         }
     }
 
