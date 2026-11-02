@@ -14,12 +14,25 @@
       -webkit-tap-highlight-color: transparent;
       user-select: none;
     }
-    html, body, #map {
+    html, body {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
       width: 100%;
       height: 100%;
-      background-color: #1a1a24;
+      background-color: #0f172a;
       overflow: hidden;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    #map {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-color: #0f172a;
     }
     .leaflet-control-attribution {
       display: none !important;
@@ -153,10 +166,21 @@
     var currentLayer;
     var hasAutoCentered = false;
     var tileLayers = {
-      streets: L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', { maxZoom: 20 }),
-      satellite: L.tileLayer('https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', { maxZoom: 20 }),
-      hybrid: L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', { maxZoom: 20 }),
-      osm: L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 })
+      streets: L.tileLayer('https://mt{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+        subdomains: ['0', '1', '2', '3'],
+        maxZoom: 20
+      }),
+      satellite: L.tileLayer('https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
+        subdomains: ['0', '1', '2', '3'],
+        maxZoom: 20
+      }),
+      hybrid: L.tileLayer('https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
+        subdomains: ['0', '1', '2', '3'],
+        maxZoom: 20
+      }),
+      osm: L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19
+      })
     };
 
     function initMap() {
@@ -169,6 +193,10 @@
       currentLayer = tileLayers.streets;
       currentLayer.addTo(map);
 
+      // Invalidate size immediately and after layout settles so tiles draw without delay
+      setTimeout(function() { if (map) map.invalidateSize(); }, 150);
+      setTimeout(function() { if (map) map.invalidateSize(); }, 600);
+
       map.on('click', function(e) {
         if (window.AndroidBridge && window.AndroidBridge.onMapClicked) {
           window.AndroidBridge.onMapClicked();
@@ -179,6 +207,10 @@
         window.AndroidBridge.onMapReady();
       }
     }
+
+    window.resizeMap = function() {
+      if (map) map.invalidateSize();
+    };
 
     function setMapStyle(styleKey) {
       if (tileLayers[styleKey]) {
@@ -252,6 +284,7 @@
         if (user.isSelf && !hasAutoCentered && lat !== 0 && lng !== 0) {
           map.setView([lat, lng], 16);
           hasAutoCentered = true;
+          if (map) map.invalidateSize();
         }
       } catch (err) {
         console.error("Error updating marker: " + err);
@@ -279,6 +312,7 @@
         duration: 1.2,
         easeLinearity: 0.25
       });
+      map.invalidateSize();
     }
 
     window.addEventListener('DOMContentLoaded', initMap);

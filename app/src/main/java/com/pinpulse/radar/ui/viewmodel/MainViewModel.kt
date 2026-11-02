@@ -200,10 +200,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (index >= 0) {
             val updated = currentFriends[index].copy(
                 displayName = packet.displayName,
+                email = if (packet.email.isNotEmpty()) packet.email else currentFriends[index].email,
                 avatarBase64 = packet.avatarBase64 ?: currentFriends[index].avatarBase64,
                 latitude = packet.latitude,
                 longitude = packet.longitude,
                 speedKmh = packet.speedKmh,
+                batteryPercent = packet.batteryPercent,
+                isCharging = packet.isCharging,
                 isSharingLocation = packet.isSharingLocation,
                 lastUpdated = packet.timestamp
             )
@@ -213,6 +216,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             // If selected person is this user, update sheet
             if (_selectedPerson.value?.id == packet.userId) {
                 _selectedPerson.value = updated
+            }
+        } else {
+            // Also check if this packet is from a group member
+            val allGroups = prefs.loadGroups()
+            val isInAnyGroup = allGroups.any { it.memberIds.contains(packet.userId) }
+            if (isInAnyGroup) {
+                val memberUser = User(
+                    id = packet.userId,
+                    displayName = packet.displayName,
+                    email = packet.email,
+                    avatarBase64 = packet.avatarBase64,
+                    latitude = packet.latitude,
+                    longitude = packet.longitude,
+                    speedKmh = packet.speedKmh,
+                    batteryPercent = packet.batteryPercent,
+                    isCharging = packet.isCharging,
+                    isSharingLocation = packet.isSharingLocation,
+                    lastUpdated = packet.timestamp
+                )
+                prefs.addOrUpdateFriend(memberUser)
+                if (_selectedPerson.value?.id == packet.userId) {
+                    _selectedPerson.value = memberUser
+                }
             }
         }
     }
@@ -314,10 +340,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateMyLocation(lat: Double, lng: Double, speed: Float) {
         val current = prefs.loadCurrentUser() ?: return
+        val batteryInfo = LocationTrackingService.getBatteryInfo(getApplication())
         val updated = current.copy(
             latitude = lat,
             longitude = lng,
             speedKmh = speed * 3.6f,
+            batteryPercent = batteryInfo.first,
+            isCharging = batteryInfo.second,
             isSharingLocation = true,
             lastUpdated = System.currentTimeMillis()
         )
@@ -326,10 +355,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val packet = LocationPacket(
             userId = updated.id,
             displayName = updated.displayName,
+            email = updated.email,
             avatarBase64 = updated.avatarBase64,
             latitude = lat,
             longitude = lng,
             speedKmh = speed * 3.6f,
+            batteryPercent = batteryInfo.first,
+            isCharging = batteryInfo.second,
             isSharingLocation = true,
             timestamp = System.currentTimeMillis()
         )

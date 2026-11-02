@@ -17,6 +17,7 @@
       --primary: #10b981;
       --primary-glow: rgba(16, 185, 129, 0.35);
       --accent: #3b82f6;
+      --warning: #f59e0b;
       --danger: #ef4444;
       --text: #f8fafc;
       --text-muted: #94a3b8;
@@ -39,7 +40,7 @@
 
     /* Sidebar */
     #sidebar {
-      width: 380px;
+      width: 400px;
       background: var(--panel);
       border-right: 1px solid var(--panel-border);
       display: flex;
@@ -224,16 +225,29 @@
       overflow: hidden;
       text-overflow: ellipsis;
     }
+    .card-email {
+      font-size: 11px;
+      color: #60a5fa;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-top: 1px;
+    }
     .card-sub {
       font-size: 11px;
       color: var(--text-muted);
-      margin-top: 2px;
+      margin-top: 4px;
       display: flex;
-      gap: 8px;
+      gap: 6px;
       align-items: center;
+      flex-wrap: wrap;
     }
     .badge-live {
       color: var(--primary);
+      font-weight: 600;
+    }
+    .badge-ghost {
+      color: var(--warning);
       font-weight: 600;
     }
     .badge-speed {
@@ -242,6 +256,15 @@
       border-radius: 4px;
       font-family: 'JetBrains Mono', monospace;
       font-size: 10px;
+    }
+    .badge-battery {
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+      padding: 2px 5px;
+      border-radius: 4px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      font-weight: 700;
     }
 
     /* Map container */
@@ -291,14 +314,14 @@
       position: absolute;
       bottom: 24px;
       right: 24px;
-      width: 360px;
-      background: rgba(17, 24, 39, 0.95);
-      backdrop-filter: blur(12px);
+      width: 380px;
+      background: rgba(17, 24, 39, 0.96);
+      backdrop-filter: blur(14px);
       border: 1px solid var(--panel-border);
       border-radius: 20px;
-      padding: 20px;
+      padding: 22px;
       z-index: 1000;
-      box-shadow: 0 12px 36px rgba(0,0,0,0.6);
+      box-shadow: 0 12px 36px rgba(0,0,0,0.7);
       display: none;
       animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
     }
@@ -314,19 +337,20 @@
       margin-bottom: 16px;
     }
     .modal-avatar {
-      width: 56px;
-      height: 56px;
+      width: 58px;
+      height: 58px;
       border-radius: 50%;
       border: 3px solid var(--primary);
       overflow: hidden;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 20px;
+      font-size: 22px;
       font-weight: 800;
       background: #252836;
       color: #fff;
       box-shadow: 0 0 14px var(--primary-glow);
+      flex-shrink: 0;
     }
     .modal-avatar img {
       width: 100%;
@@ -339,10 +363,17 @@
       font-weight: 800;
       color: #fff;
     }
+    .modal-email {
+      font-size: 12px;
+      color: #60a5fa;
+      font-weight: 600;
+      margin-top: 1px;
+    }
     .modal-id {
-      font-size: 11px;
+      font-size: 10px;
       color: var(--text-muted);
       font-family: 'JetBrains Mono', monospace;
+      margin-top: 2px;
     }
 
     .stats-grid {
@@ -448,7 +479,7 @@
       position: relative;
       z-index: 3;
       margin-top: 4px;
-      background: rgba(15, 23, 42, 0.9);
+      background: rgba(15, 23, 42, 0.92);
       color: #fff;
       font-size: 11px;
       font-weight: 700;
@@ -468,7 +499,7 @@
       <div class="logo-badge">📍</div>
       <div class="title-group">
         <h1>PinPulse <span class="master-tag">Master Radar</span></h1>
-        <div class="subtitle">Global Network Monitor • All Devices</div>
+        <div class="subtitle">Global Network Monitor • Live Location & Battery</div>
       </div>
     </div>
 
@@ -481,7 +512,7 @@
     </div>
 
     <div class="search-bar">
-      <input type="text" class="search-input" id="search-box" placeholder="Search user name or ID..." />
+      <input type="text" class="search-input" id="search-box" placeholder="Search name, email, or ID..." />
     </div>
 
     <div id="user-list">
@@ -505,24 +536,33 @@
     <div id="person-modal">
       <div class="modal-header">
         <div class="modal-avatar" id="m-avatar">?</div>
-        <div>
+        <div style="min-width:0; flex:1;">
           <div class="modal-name" id="m-name">User</div>
+          <div class="modal-email" id="m-email">user@gmail.com</div>
           <div class="modal-id" id="m-id">ID: ---</div>
         </div>
       </div>
 
       <div class="stats-grid">
         <div class="stat-box">
+          <div class="stat-lbl">Battery</div>
+          <div class="stat-val" id="m-battery" style="color: #34d399;">100%</div>
+        </div>
+        <div class="stat-box">
           <div class="stat-lbl">Live Speed</div>
           <div class="stat-val" id="m-speed">0 km/h</div>
         </div>
         <div class="stat-box">
-          <div class="stat-lbl">Status</div>
+          <div class="stat-lbl">Radar Status</div>
           <div class="stat-val" id="m-status" style="color: var(--primary);">Live</div>
         </div>
+        <div class="stat-box">
+          <div class="stat-lbl">Friend Sharing</div>
+          <div class="stat-val" id="m-sharing" style="font-size: 12px;">Active</div>
+        </div>
         <div class="stat-box" style="grid-column: span 2;">
-          <div class="stat-lbl">Coordinates</div>
-          <div class="stat-val" id="m-coords" style="font-size: 12px;">36.8065, 10.1815</div>
+          <div class="stat-lbl">GPS Coordinates</div>
+          <div class="stat-val" id="m-coords" style="font-size: 12px;">36.806500, 10.181500</div>
         </div>
       </div>
 
@@ -540,9 +580,9 @@
     var currentLayer;
 
     var layers = {
-      streets: L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', { maxZoom: 20 }),
-      satellite: L.tileLayer('https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', { maxZoom: 20 }),
-      hybrid: L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', { maxZoom: 20 })
+      streets: L.tileLayer('https://mt{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', { subdomains: ['0','1','2','3'], maxZoom: 20 }),
+      satellite: L.tileLayer('https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', { subdomains: ['0','1','2','3'], maxZoom: 20 }),
+      hybrid: L.tileLayer('https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', { subdomains: ['0','1','2','3'], maxZoom: 20 })
     };
 
     function init() {
@@ -555,6 +595,8 @@
 
       currentLayer = layers.streets;
       currentLayer.addTo(map);
+
+      setTimeout(function() { if (map) map.invalidateSize(); }, 300);
 
       map.on('click', function() {
         document.getElementById('person-modal').style.display = 'none';
@@ -587,7 +629,7 @@
       client.on('connect', function() {
         document.getElementById('conn-dot').className = 'status-dot connected';
         document.getElementById('conn-text').textContent = 'Live Global Relay Active';
-        // Wildcard subscribe: catches every single user's location packet!
+        // Wildcard subscribe: catches every single user's location packet worldwide!
         client.subscribe('pinpulse/v1/user/+/loc', function(err) {
           if (!err) console.log('Subscribed to all users worldwide on pinpulse/v1/user/+/loc');
         });
@@ -615,10 +657,13 @@
       users[id] = {
         id: id,
         name: data.displayName || 'User ' + id.substring(0, 5),
+        email: data.email || 'No email provided',
         avatar: data.avatarBase64 || null,
         lat: parseFloat(data.latitude),
         lng: parseFloat(data.longitude),
         speed: data.speedKmh || 0,
+        batteryPercent: data.batteryPercent !== undefined ? data.batteryPercent : 100,
+        isCharging: !!data.isCharging,
         isSharing: data.isSharingLocation !== false,
         timestamp: data.timestamp || Date.now()
       };
@@ -634,7 +679,7 @@
     function updateMarker(u) {
       if (isNaN(u.lat) || isNaN(u.lng) || (u.lat === 0 && u.lng === 0)) return;
 
-      var isLive = (Date.now() - u.timestamp < 60000) && u.isSharing;
+      var isLive = (Date.now() - u.timestamp < 90000);
       var avatarContent = (u.avatar && u.avatar.length > 10)
         ? '<img src="' + u.avatar + '" />'
         : u.name.charAt(0).toUpperCase();
@@ -642,7 +687,7 @@
       var iconHtml = '<div class="pinpulse-marker-wrapper" onclick="selectUser(\'' + u.id + '\')">' +
                        (isLive ? '<div class="pulse-ring"></div>' : '') +
                        '<div class="avatar-bubble">' + avatarContent + '</div>' +
-                       '<div class="name-pill">' + u.name + '</div>' +
+                       '<div class="name-pill">' + u.name + ' (' + u.batteryPercent + '%)' + '</div>' +
                      '</div>';
 
       var customIcon = L.divIcon({
@@ -677,14 +722,25 @@
       modal.style.display = 'block';
 
       document.getElementById('m-name').textContent = u.name;
+      document.getElementById('m-email').textContent = u.email;
       document.getElementById('m-id').textContent = 'ID: ' + u.id;
+      document.getElementById('m-battery').textContent = u.batteryPercent + '%' + (u.isCharging ? ' ⚡' : '');
       document.getElementById('m-speed').textContent = Math.round(u.speed) + ' km/h';
       document.getElementById('m-coords').textContent = u.lat.toFixed(6) + ', ' + u.lng.toFixed(6);
 
-      var isLive = (Date.now() - u.timestamp < 60000) && u.isSharing;
+      var isLive = (Date.now() - u.timestamp < 90000);
       var statusEl = document.getElementById('m-status');
       statusEl.textContent = isLive ? 'Live Now' : 'Last Seen ' + Math.round((Date.now() - u.timestamp) / 1000) + 's ago';
       statusEl.style.color = isLive ? 'var(--primary)' : 'var(--text-muted)';
+
+      var sharingEl = document.getElementById('m-sharing');
+      if (u.isSharing) {
+        sharingEl.textContent = 'Visible to Friends';
+        sharingEl.style.color = 'var(--primary)';
+      } else {
+        sharingEl.textContent = 'Ghost Mode (Master Bypass Active)';
+        sharingEl.style.color = 'var(--warning)';
+      }
 
       var avatarEl = document.getElementById('m-avatar');
       if (u.avatar && u.avatar.length > 10) {
@@ -710,22 +766,39 @@
         return;
       }
 
-      var filtered = userArr.filter(u => u.name.toLowerCase().includes(filter) || u.id.toLowerCase().includes(filter));
-      
+      var filtered = userArr.filter(u =>
+        u.name.toLowerCase().includes(filter) ||
+        u.email.toLowerCase().includes(filter) ||
+        u.id.toLowerCase().includes(filter)
+      );
+
       listEl.innerHTML = filtered.map(u => {
-        var isLive = (Date.now() - u.timestamp < 60000) && u.isSharing;
+        var isLive = (Date.now() - u.timestamp < 90000);
         var activeClass = (selectedUserId === u.id) ? ' active' : '';
         var avatarContent = (u.avatar && u.avatar.length > 10)
           ? '<img src="' + u.avatar + '" />'
           : u.name.charAt(0).toUpperCase();
 
+        var statusBadge = '';
+        if (isLive) {
+          if (u.isSharing) {
+            statusBadge = '<span class="badge-live">● Live</span>';
+          } else {
+            statusBadge = '<span class="badge-ghost">● Ghost (Master Tracked)</span>';
+          }
+        } else {
+          statusBadge = '<span class="badge-speed">○ Offline</span>';
+        }
+
         return '<div class="user-card' + activeClass + '" onclick="selectUser(\'' + u.id + '\')">' +
                  '<div class="card-avatar">' + avatarContent + '</div>' +
                  '<div class="card-info">' +
                    '<div class="card-title">' + u.name + '</div>' +
+                   '<div class="card-email">' + u.email + '</div>' +
                    '<div class="card-sub">' +
-                     '<span class="badge-live">' + (isLive ? '● Live' : '○ Offline') + '</span>' +
+                     statusBadge +
                      '<span class="badge-speed">' + Math.round(u.speed) + ' km/h</span>' +
+                     '<span class="badge-battery">🔋 ' + u.batteryPercent + '%' + (u.isCharging ? ' ⚡' : '') + '</span>' +
                    '</div>' +
                  '</div>' +
                '</div>';

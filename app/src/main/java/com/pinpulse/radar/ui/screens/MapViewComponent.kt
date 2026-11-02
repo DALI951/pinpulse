@@ -64,13 +64,27 @@ fun MapViewComponent(
                     domStorageEnabled = true
                     cacheMode = WebSettings.LOAD_DEFAULT
                     allowFileAccess = true
+                    allowContentAccess = true
+                    allowFileAccessFromFileURLs = true
+                    allowUniversalAccessFromFileURLs = true
+                    mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                    databaseEnabled = true
                 }
-                webViewClient = object : WebViewClient() {}
+                webChromeClient = android.webkit.WebChromeClient()
+                webViewClient = object : WebViewClient() {
+                    override fun onPageFinished(view: WebView?, url: String?) {
+                        super.onPageFinished(view, url)
+                        view?.evaluateJavascript("window.resizeMap && window.resizeMap();", null)
+                    }
+                }
                 addJavascriptInterface(
                     AndroidMapBridge(
                         onAvatarClick = onAvatarClick,
                         onMapClick = onMapClick,
-                        onReady = { isMapReady = true }
+                        onReady = {
+                            isMapReady = true
+                            post { evaluateJavascript("window.resizeMap && window.resizeMap();", null) }
+                        }
                     ),
                     "AndroidBridge"
                 )

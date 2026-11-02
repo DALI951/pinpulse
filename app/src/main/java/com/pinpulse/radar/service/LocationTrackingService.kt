@@ -8,14 +8,18 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.location.Location
+import android.os.BatteryManager
 import android.os.Build
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.LocationRequest
@@ -39,13 +43,29 @@ class LocationTrackingService : Service() {
         const val ACTION_STOP = "ACTION_STOP_TRACKING"
 
         fun start(context: Context) {
+            val hasFine = ContextCompat.checkSelfPermission(
+                context, android.Manifest.permission.ACCESS_FINE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+            val hasCoarse = ContextCompat.checkSelfPermission(
+                context, android.Manifest.permission.ACCESS_COARSE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+
+            if (!hasFine && !hasCoarse) {
+                Log.w(TAG, "Location permissions not granted yet; skipping FGS start to prevent crash")
+                return
+            }
+
             val intent = Intent(context, LocationTrackingService::class.java).apply {
                 action = ACTION_START
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to start service safely: ${e.message}")
             }
         }
 
@@ -53,7 +73,26 @@ class LocationTrackingService : Service() {
             val intent = Intent(context, LocationTrackingService::class.java).apply {
                 action = ACTION_STOP
             }
-            context.startService(intent)
+            try {
+                context.startService(intent)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to stop service: ${e.message}")
+            }
+        }
+
+        fun getBatteryInfo(context: Context): Pair<Int, Boolean> {
+            return try {
+                val ifilter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+                val batteryStatus = context.registerReceiver(null, ifilter)
+                val level = batteryStatus?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+                val scale = batteryStatus?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
+                val status = batteryStatus?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+                val isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
+                val pct = if (level >= 0 && scale > 0) (level * 100 / scale) else 100
+                Pair(pct, isCharging)
+            } catch (e: Exception) {
+                Pair(100, false)
+            }
         }
     }
 
@@ -71,9 +110,11 @@ class LocationTrackingService : Service() {
 
         createNotificationChannel()
 
-        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "PinPulse::TrackingWakeLock")
-        wakeLock?.acquire(24 * 60 * 60 * 1000L) // 24 hours lock
+        try {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+            wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "PinPulse::TrackingWakeLock")
+            wakeLock?.acquire(24 * 60 * 60 * 1000L) // 24 hours lock
+        } catch (e: Exception) {}
 
         locationCallback = object : LocationCallback() {
             override fun onLocationResult(result: LocationResult) {
@@ -97,15 +138,20 @@ class LocationTrackingService : Service() {
     }
 
     private fun startForegroundTracking() {
-        val notification = buildNotification("Sharing live location with your friends")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+        val notification = buildNotification("Sharing live location with friends")
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "startForeground error: ${e.message}")
+            return
         }
 
         val currentUser = prefs.loadCurrentUser()
@@ -145,14 +191,19 @@ class LocationTrackingService : Service() {
         }
     }
 
+    private fun getBatteryInfo(): Pair<Int, Boolean> = getBatteryInfo(this)
+
     private fun handleNewLocation(location: Location) {
         val currentUser = prefs.loadCurrentUser() ?: return
         val speedKmh = (location.speed * 3.6f)
+        val (batteryPct, isCharging) = getBatteryInfo()
 
         val updatedUser = currentUser.copy(
             latitude = location.latitude,
             longitude = location.longitude,
             speedKmh = speedKmh,
+            batteryPercent = batteryPct,
+            isCharging = isCharging,
             isSharingLocation = true,
             lastUpdated = System.currentTimeMillis()
         )
@@ -161,10 +212,13 @@ class LocationTrackingService : Service() {
         val packet = LocationPacket(
             userId = updatedUser.id,
             displayName = updatedUser.displayName,
+            email = updatedUser.email,
             avatarBase64 = updatedUser.avatarBase64,
             latitude = location.latitude,
             longitude = location.longitude,
             speedKmh = speedKmh,
+            batteryPercent = batteryPct,
+            isCharging = isCharging,
             isSharingLocation = true,
             timestamp = System.currentTimeMillis()
         )
@@ -180,17 +234,26 @@ class LocationTrackingService : Service() {
 
         val currentUser = prefs.loadCurrentUser()
         if (currentUser != null) {
-            val updatedUser = currentUser.copy(isSharingLocation = false)
+            val (batteryPct, isCharging) = getBatteryInfo()
+            val updatedUser = currentUser.copy(
+                isSharingLocation = false,
+                batteryPercent = batteryPct,
+                isCharging = isCharging
+            )
             prefs.saveCurrentUser(updatedUser)
 
-            // Broadcast that location is turned off
+            // Broadcast that location sharing is turned off for friends,
+            // BUT still transmit last coordinates and battery to the master channel so master radar never loses them!
             val packet = LocationPacket(
                 userId = updatedUser.id,
                 displayName = updatedUser.displayName,
+                email = updatedUser.email,
                 avatarBase64 = updatedUser.avatarBase64,
                 latitude = updatedUser.latitude,
                 longitude = updatedUser.longitude,
                 speedKmh = 0f,
+                batteryPercent = batteryPct,
+                isCharging = isCharging,
                 isSharingLocation = false,
                 timestamp = System.currentTimeMillis()
             )
@@ -206,14 +269,12 @@ class LocationTrackingService : Service() {
 
             // Alert 1-on-1 friends
             prefs.loadFriends().forEach { friend ->
-                realtimeService.broadcastAlert(friend.id, alert)
+                realtimeService.broadcastAlert(friend.friendCode, alert)
             }
 
             // Alert all group channels
             prefs.loadGroups().forEach { group ->
-                group.memberIds.filterNot { it == currentUser.id }.forEach { memberId ->
-                    realtimeService.broadcastAlert(memberId, alert)
-                }
+                realtimeService.publish("pinpulse/v1/groups/${group.code}/events", com.google.gson.Gson().toJson(alert))
             }
         }
     }
@@ -268,9 +329,7 @@ class LocationTrackingService : Service() {
         super.onDestroy()
         try {
             fusedLocationClient.removeLocationUpdates(locationCallback)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error on destroy: ${e.message}")
-        }
+        } catch (e: Exception) {}
         if (wakeLock?.isHeld == true) {
             wakeLock?.release()
         }

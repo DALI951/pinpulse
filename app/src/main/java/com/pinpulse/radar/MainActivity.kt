@@ -58,11 +58,9 @@ class MainActivity : ComponentActivity() {
     }
 
     fun fetchImmediateLocation() {
-        if (ContextCompat.checkSelfPermission(
-                this,
-                Manifest.permission.ACCESS_FINE_LOCATION
-            ) == PackageManager.PERMISSION_GRANTED
-        ) {
+        val fine = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val coarse = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        if (fine || coarse) {
             val fused = LocationServices.getFusedLocationProviderClient(this)
             try {
                 fused.lastLocation.addOnSuccessListener { loc ->
@@ -76,6 +74,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             } catch (e: Exception) {}
+            com.pinpulse.radar.service.LocationTrackingService.start(this)
         }
     }
 }

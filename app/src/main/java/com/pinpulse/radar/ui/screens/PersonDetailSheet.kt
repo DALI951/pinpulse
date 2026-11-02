@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BatteryChargingFull
+import androidx.compose.material.icons.filled.BatteryFull
 import androidx.compose.material.icons.filled.Directions
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Navigation
@@ -184,7 +186,7 @@ fun PersonDetailSheet(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Speed and Coordinates Badge
+            // Speed and Battery Badge Row
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -224,14 +226,14 @@ fun PersonDetailSheet(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
-                            Icons.Default.Navigation,
-                            contentDescription = "Heading",
-                            tint = PulseGreen,
+                            if (targetUser.isCharging) Icons.Default.BatteryChargingFull else Icons.Default.BatteryFull,
+                            contentDescription = "Battery",
+                            tint = if (targetUser.batteryPercent <= 20) DangerRed else PulseGreen,
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "GPS Active",
+                            text = "${targetUser.batteryPercent}%" + (if (targetUser.isCharging) " ⚡" else ""),
                             fontSize = 13.sp,
                             color = TextPrimary,
                             fontWeight = FontWeight.SemiBold

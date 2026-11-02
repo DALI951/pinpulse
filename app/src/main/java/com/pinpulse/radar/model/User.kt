@@ -12,6 +12,8 @@ data class User(
     @SerializedName("latitude") val latitude: Double = 0.0,
     @SerializedName("longitude") val longitude: Double = 0.0,
     @SerializedName("speedKmh") val speedKmh: Float = 0f,
+    @SerializedName("batteryPercent") val batteryPercent: Int = 100,
+    @SerializedName("isCharging") val isCharging: Boolean = false,
     @SerializedName("lastUpdated") val lastUpdated: Long = System.currentTimeMillis()
 ) {
     val isLive: Boolean
