@@ -6,6 +6,8 @@ import android.content.Context
 import android.os.Build
 import android.os.PowerManager
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -26,6 +28,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BatteryChargingFull
+import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudUpload
@@ -68,6 +71,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.pinpulse.radar.util.UserAvatar
 import com.pinpulse.radar.ui.theme.DangerRed
 import com.pinpulse.radar.ui.theme.PulseGreen
 import com.pinpulse.radar.ui.theme.RadarBlue
@@ -94,6 +98,15 @@ fun SettingsDialog(
     var newPinInput by remember { mutableStateOf("") }
     var confirmPinInput by remember { mutableStateOf("") }
     var pinErrorMessage by remember { mutableStateOf<String?>(null) }
+
+    val avatarPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            viewModel.updatePersonalAvatar(uri, context)
+            Toast.makeText(context, "Avatar updated!", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -393,25 +406,34 @@ fun SettingsDialog(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(
                             modifier = Modifier
-                                .size(44.dp)
+                                .size(50.dp)
                                 .clip(CircleShape)
                                 .background(Color(0xFF1E293B))
-                                .border(2.dp, PulseGreen, CircleShape),
+                                .border(2.dp, PulseGreen, CircleShape)
+                                .clickable { avatarPicker.launch("image/*") },
                             contentAlignment = Alignment.Center
                         ) {
-                            if (!currentUser?.avatarBase64.isNullOrEmpty()) {
-                                AsyncImage(
-                                    model = currentUser?.avatarBase64,
-                                    contentDescription = "Avatar",
-                                    modifier = Modifier.fillMaxWidth(),
-                                    contentScale = ContentScale.Crop
-                                )
-                            } else {
-                                Text(
-                                    currentUser?.displayName?.take(1)?.uppercase() ?: "P",
-                                    color = Color.White,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 18.sp
+                            UserAvatar(
+                                avatarSource = currentUser?.avatarBase64,
+                                displayName = currentUser?.displayName ?: "User",
+                                modifier = Modifier.fillMaxSize(),
+                                fallbackTextSize = 18.sp
+                            )
+
+                            // Subtle camera badge overlay at bottom
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(Color(0x33000000)),
+                                contentAlignment = Alignment.BottomCenter
+                            ) {
+                                Icon(
+                                    Icons.Default.CameraAlt,
+                                    contentDescription = "Change photo",
+                                    tint = Color.White.copy(alpha = 0.9f),
+                                    modifier = Modifier
+                                        .padding(bottom = 2.dp)
+                                        .size(13.dp)
                                 )
                             }
                         }
@@ -421,6 +443,7 @@ fun SettingsDialog(
                         Column(modifier = Modifier.weight(1f)) {
                             Text(currentUser?.displayName ?: "User", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 15.sp)
                             Text(currentUser?.email ?: "", fontSize = 12.sp, color = TextMuted)
+                            Text("Tap photo to change avatar", fontSize = 10.sp, color = PulseGreen)
                         }
                     }
 

@@ -58,6 +58,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.pinpulse.radar.model.Group
 import com.pinpulse.radar.model.User
+import com.pinpulse.radar.util.UserAvatar
 import com.pinpulse.radar.ui.theme.DangerRed
 import com.pinpulse.radar.ui.theme.PulseGreen
 import com.pinpulse.radar.ui.theme.RadarBlue
@@ -300,21 +301,12 @@ fun GroupsSheet(
                                             .border(1.dp, PulseGreen, CircleShape),
                                         contentAlignment = Alignment.Center
                                     ) {
-                                        if (!effectiveAvatar.isNullOrEmpty()) {
-                                            AsyncImage(
-                                                model = effectiveAvatar,
-                                                contentDescription = memberUser.displayName,
-                                                modifier = Modifier.fillMaxWidth(),
-                                                contentScale = ContentScale.Crop
-                                            )
-                                        } else {
-                                            Text(
-                                                memberUser.displayName.take(1).uppercase(),
-                                                color = Color.White,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 14.sp
-                                            )
-                                        }
+                                        UserAvatar(
+                                            avatarSource = effectiveAvatar,
+                                            displayName = memberUser.displayName,
+                                            modifier = Modifier.fillMaxSize(),
+                                            fallbackTextSize = 14.sp
+                                        )
                                     }
 
                                     Spacer(modifier = Modifier.width(10.dp))

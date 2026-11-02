@@ -86,6 +86,7 @@ import com.pinpulse.radar.ui.theme.TextPrimary
 import com.pinpulse.radar.ui.theme.TextSecondary
 import com.pinpulse.radar.ui.viewmodel.MainViewModel
 import com.pinpulse.radar.ui.viewmodel.MapFilter
+import com.pinpulse.radar.util.UserAvatar
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -361,13 +362,13 @@ fun MainScreen(
                 shape = CircleShape
             ) {
                 if (!currentUser?.avatarBase64.isNullOrEmpty()) {
-                    AsyncImage(
-                        model = currentUser?.avatarBase64,
-                        contentDescription = "Profile",
+                    UserAvatar(
+                        avatarSource = currentUser?.avatarBase64,
+                        displayName = currentUser?.displayName ?: "Me",
                         modifier = Modifier
                             .fillMaxSize()
                             .clip(CircleShape),
-                        contentScale = ContentScale.Crop
+                        fallbackTextSize = 16.sp
                     )
                 } else {
                     Icon(Icons.Default.Person, contentDescription = "Profile", modifier = Modifier.size(22.dp))

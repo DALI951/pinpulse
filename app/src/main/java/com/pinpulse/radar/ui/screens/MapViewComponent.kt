@@ -31,6 +31,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.pinpulse.radar.model.User
+import com.pinpulse.radar.util.ImageHelper
 import org.osmdroid.config.Configuration
 import org.osmdroid.events.MapEventsReceiver
 import org.osmdroid.tileprovider.tilesource.OnlineTileSourceBase
@@ -200,7 +201,8 @@ fun MapViewComponent(
                         batteryPercent = user.batteryPercent,
                         isCharging = user.isCharging,
                         isSelf = isSelf,
-                        isLive = user.isLive
+                        isLive = user.isLive,
+                        onAvatarLoaded = { mapView.postInvalidate() }
                     )
                 )
             }
@@ -240,16 +242,6 @@ fun MapViewComponent(
     }
 }
 
-private fun decodeBase64ToBitmap(base64Str: String): Bitmap? {
-    return try {
-        val clean = if (base64Str.contains(",")) base64Str.substringAfter(",") else base64Str
-        val bytes = Base64.decode(clean, Base64.DEFAULT)
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-    } catch (e: Exception) {
-        null
-    }
-}
-
 private fun createSelfDotBitmap(context: Context, isLive: Boolean): Bitmap {
     val density = context.resources.displayMetrics.density
     val size = (24 * density).toInt().coerceAtLeast(1)
@@ -284,7 +276,8 @@ private fun createMarkerBitmap(
     batteryPercent: Int,
     isCharging: Boolean,
     isSelf: Boolean,
-    isLive: Boolean
+    isLive: Boolean,
+    onAvatarLoaded: (() -> Unit)? = null
 ): Bitmap {
     val density = context.resources.displayMetrics.density
     val width = (100 * density).toInt()
@@ -305,8 +298,8 @@ private fun createMarkerBitmap(
         canvas.drawCircle(centerX, avatarCenterY, avatarRadius + (6 * density), paint)
     }
 
-    // 2. Avatar background or decoded photo
-    val avatarBitmap = decodeBase64ToBitmap(avatarBase64 ?: "")
+    // 2. Avatar background or decoded photo (supports Base64 data URIs and HTTP URLs)
+    val avatarBitmap = ImageHelper.getOrDecodeBitmap(context, avatarBase64, onAvatarLoaded)
     if (avatarBitmap != null) {
         val scaled = Bitmap.createScaledBitmap(avatarBitmap, (avatarRadius * 2).toInt(), (avatarRadius * 2).toInt(), true)
         val shader = BitmapShader(scaled, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)

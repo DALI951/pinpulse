@@ -53,6 +53,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.pinpulse.radar.util.UserAvatar
 import com.pinpulse.radar.model.FriendRequest
 import com.pinpulse.radar.model.User
 import com.pinpulse.radar.ui.theme.DangerRed
@@ -439,21 +440,12 @@ fun FriendsSheet(
                                     ),
                                 contentAlignment = Alignment.Center
                             ) {
-                                if (!friend.avatarBase64.isNullOrEmpty()) {
-                                    AsyncImage(
-                                        model = friend.avatarBase64,
-                                        contentDescription = friend.displayName,
-                                        modifier = Modifier.fillMaxWidth(),
-                                        contentScale = ContentScale.Crop
-                                    )
-                                } else {
-                                    Text(
-                                        friend.displayName.take(1).uppercase(),
-                                        color = Color.White,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 18.sp
-                                    )
-                                }
+                                UserAvatar(
+                                    avatarSource = friend.avatarBase64,
+                                    displayName = friend.displayName,
+                                    modifier = Modifier.fillMaxSize(),
+                                    fallbackTextSize = 18.sp
+                                )
                             }
 
                             Spacer(modifier = Modifier.width(12.dp))

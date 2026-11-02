@@ -19,6 +19,7 @@ import com.pinpulse.radar.model.Group
 import com.pinpulse.radar.model.LocationPacket
 import com.pinpulse.radar.model.User
 import com.pinpulse.radar.service.LocationTrackingService
+import com.pinpulse.radar.util.ImageHelper
 import com.pinpulse.radar.util.SirenHelper
 import com.pinpulse.radar.util.UpdateManager
 import com.pinpulse.radar.util.UpdateState
@@ -55,6 +56,7 @@ data class KickConfirmationState(
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
+    private val app: Application = application
     private val prefs = AppPreferences(application)
     private val realtime = RealtimeService.getInstance(application)
     private val gson = Gson()
@@ -139,7 +141,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         // Auto-prune old installed APKs from previous updates (keeps pending update APKs safe!)
-        UpdateManager.cleanupOldInstalledApks(application)
+        UpdateManager.cleanupOldInstalledApks(app)
 
         // Auto-heal any friends corrupted by legacy offline alerts
         val savedFriends = prefs.loadFriends()
@@ -263,7 +265,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 realtime.subscribe("pinpulse/v1/user/${f.id}/status")
             }
             if (user.isSharingLocation) {
-                LocationTrackingService.start(application)
+                LocationTrackingService.start(app)
             }
         }
     }
@@ -530,12 +532,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             syncCloudBackup()
         }
 
-        LocationTrackingService.start(getApplication())
+        LocationTrackingService.start(app)
     }
 
     fun updateMyLocation(lat: Double, lng: Double, speed: Float) {
         val current = prefs.loadCurrentUser() ?: return
-        val batteryInfo = LocationTrackingService.getBatteryInfo(getApplication())
+        val batteryInfo = LocationTrackingService.getBatteryInfo(app)
         val updated = current.copy(
             latitude = lat,
             longitude = lng,
@@ -566,16 +568,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun updatePersonalAvatar(uri: Uri, context: Context) {
         val base64 = compressImageToBase64(uri, context) ?: return
         val current = prefs.loadCurrentUser() ?: return
+        ImageHelper.evictFromCache(current.avatarBase64)
+        ImageHelper.evictFromCache(base64)
         val updated = current.copy(avatarBase64 = base64)
         prefs.saveCurrentUser(updated)
         syncCloudBackup()
 
         // Broadcast new avatar
-        LocationTrackingService.start(getApplication())
+        LocationTrackingService.start(app)
     }
 
     fun setGroupMemberAvatarByLeader(group: Group, memberId: String, uri: Uri, context: Context) {
         val base64 = compressImageToBase64(uri, context) ?: return
+        ImageHelper.evictFromCache(base64)
         val updatedMap = group.memberAvatars.toMutableMap()
         updatedMap[memberId] = base64
         val updatedGroup = group.copy(memberAvatars = updatedMap)
@@ -591,9 +596,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val current = prefs.loadCurrentUser() ?: return
         val newState = !current.isSharingLocation
         if (newState) {
-            LocationTrackingService.start(getApplication())
+            LocationTrackingService.start(app)
         } else {
-            LocationTrackingService.stop(getApplication())
+            LocationTrackingService.stop(app)
         }
     }
 
@@ -1012,12 +1017,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun checkForUpdates() {
         viewModelScope.launch {
-            UpdateManager.checkForUpdates(application)
+            UpdateManager.checkForUpdates(app)
         }
     }
 
     fun refreshUpdateStatus() {
-        UpdateManager.refreshDownloadedStatus(application)
+        UpdateManager.refreshDownloadedStatus(app)
     }
 
     fun downloadAndInstallUpdate(context: Context) {

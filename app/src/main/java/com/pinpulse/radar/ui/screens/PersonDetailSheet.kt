@@ -50,6 +50,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.pinpulse.radar.util.UserAvatar
 import com.pinpulse.radar.model.Group
 import com.pinpulse.radar.model.User
 import com.pinpulse.radar.ui.theme.DangerRed
@@ -128,21 +129,12 @@ fun PersonDetailSheet(
                             shape = CircleShape
                         )
                 ) {
-                    if (!targetUser.avatarBase64.isNullOrEmpty()) {
-                        AsyncImage(
-                            model = targetUser.avatarBase64,
-                            contentDescription = targetUser.displayName,
-                            modifier = Modifier.fillMaxWidth(),
-                            contentScale = ContentScale.Crop
-                        )
-                    } else {
-                        Text(
-                            text = targetUser.displayName.take(1).uppercase(),
-                            fontSize = 24.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
-                    }
+                    UserAvatar(
+                        avatarSource = targetUser.avatarBase64,
+                        displayName = targetUser.displayName,
+                        modifier = Modifier.fillMaxSize(),
+                        fallbackTextSize = 24.sp
+                    )
                 }
 
                 Spacer(modifier = Modifier.width(16.dp))

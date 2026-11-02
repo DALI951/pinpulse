@@ -57,6 +57,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.pinpulse.radar.util.UserAvatar
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.pinpulse.radar.ui.theme.PulseGreen
@@ -222,11 +223,11 @@ fun AuthScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     if (avatarBase64 != null) {
-                        AsyncImage(
-                            model = avatarBase64,
-                            contentDescription = "Selected Avatar",
+                        UserAvatar(
+                            avatarSource = avatarBase64,
+                            displayName = nameInput.ifBlank { "Me" },
                             modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Crop
+                            fallbackTextSize = 24.sp
                         )
                     } else {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {

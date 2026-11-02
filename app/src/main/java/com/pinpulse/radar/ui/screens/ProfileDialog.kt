@@ -43,6 +43,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.pinpulse.radar.util.UserAvatar
 import androidx.compose.ui.window.Dialog
 import coil.compose.AsyncImage
 import com.pinpulse.radar.model.User
@@ -98,21 +99,12 @@ fun ProfileDialog(
                         .clickable { avatarPicker.launch("image/*") },
                     contentAlignment = Alignment.Center
                 ) {
-                    if (!user.avatarBase64.isNullOrEmpty()) {
-                        AsyncImage(
-                            model = user.avatarBase64,
-                            contentDescription = user.displayName,
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Crop
-                        )
-                    } else {
-                        Text(
-                            user.displayName.take(1).uppercase(),
-                            color = Color.White,
-                            fontSize = 32.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
+                    UserAvatar(
+                        avatarSource = user.avatarBase64,
+                        displayName = user.displayName,
+                        modifier = Modifier.fillMaxSize(),
+                        fallbackTextSize = 32.sp
+                    )
 
                     // Overlay icon
                     Box(

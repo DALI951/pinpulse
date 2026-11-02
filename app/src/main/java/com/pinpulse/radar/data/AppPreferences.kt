@@ -38,6 +38,22 @@ class AppPreferences(context: Context) {
     private val _selfMarkerModeFlow = MutableStateFlow(prefs.getString("self_marker_mode", "FULL") ?: "FULL")
     val selfMarkerModeFlow: StateFlow<String> = _selfMarkerModeFlow.asStateFlow()
 
+    private val prefChangeListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        when (key) {
+            "current_user" -> _currentUserFlow.value = loadCurrentUser()
+            "friends_list" -> _friendsFlow.value = loadFriends()
+            "groups_list" -> _groupsFlow.value = loadGroups()
+            "pending_requests" -> _pendingRequestsFlow.value = loadPendingRequests()
+            "hidden_from_general" -> _hiddenFromGeneralMapFlow.value = loadHiddenUserIds()
+            "map_style" -> _mapStyleFlow.value = prefs.getString("map_style", "streets") ?: "streets"
+            "self_marker_mode" -> _selfMarkerModeFlow.value = prefs.getString("self_marker_mode", "FULL") ?: "FULL"
+        }
+    }
+
+    init {
+        prefs.registerOnSharedPreferenceChangeListener(prefChangeListener)
+    }
+
     fun loadCurrentUser(): User? {
         val json = prefs.getString("current_user", null) ?: return null
         return try {
