@@ -227,6 +227,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     displayName = packet.displayName,
                     email = packet.email,
                     avatarBase64 = packet.avatarBase64,
+                    friendCode = "",
                     latitude = packet.latitude,
                     longitude = packet.longitude,
                     speedKmh = packet.speedKmh,

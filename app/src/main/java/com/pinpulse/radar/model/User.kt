@@ -4,10 +4,10 @@ import com.google.gson.annotations.SerializedName
 
 data class User(
     @SerializedName("id") val id: String,
-    @SerializedName("email") val email: String,
+    @SerializedName("email") val email: String = "",
     @SerializedName("displayName") val displayName: String,
     @SerializedName("avatarBase64") val avatarBase64: String? = null,
-    @SerializedName("friendCode") val friendCode: String,
+    @SerializedName("friendCode") val friendCode: String = "",
     @SerializedName("isSharingLocation") val isSharingLocation: Boolean = true,
     @SerializedName("latitude") val latitude: Double = 0.0,
     @SerializedName("longitude") val longitude: Double = 0.0,
