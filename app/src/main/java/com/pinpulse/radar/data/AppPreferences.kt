@@ -35,6 +35,9 @@ class AppPreferences(context: Context) {
     private val _mapStyleFlow = MutableStateFlow(prefs.getString("map_style", "streets") ?: "streets")
     val mapStyleFlow: StateFlow<String> = _mapStyleFlow.asStateFlow()
 
+    private val _selfMarkerModeFlow = MutableStateFlow(prefs.getString("self_marker_mode", "FULL") ?: "FULL")
+    val selfMarkerModeFlow: StateFlow<String> = _selfMarkerModeFlow.asStateFlow()
+
     fun loadCurrentUser(): User? {
         val json = prefs.getString("current_user", null) ?: return null
         return try {
@@ -221,5 +224,24 @@ class AppPreferences(context: Context) {
 
     fun hasCustomSecurityPin(): Boolean {
         return prefs.contains("security_pin")
+    }
+
+    /**
+     * Map marker display mode for current user:
+     * - "FULL": Standard avatar with pulse ring and name badge
+     * - "DOT": Small discreet accent dot that does not obscure nearby friends
+     * - "HIDDEN": Hide own marker entirely from the map canvas
+     */
+    fun getSelfMarkerMode(): String {
+        return prefs.getString("self_marker_mode", "FULL") ?: "FULL"
+    }
+
+    fun setSelfMarkerMode(mode: String) {
+        val valid = when (mode.uppercase()) {
+            "DOT", "HIDDEN" -> mode.uppercase()
+            else -> "FULL"
+        }
+        prefs.edit().putString("self_marker_mode", valid).apply()
+        _selfMarkerModeFlow.value = valid
     }
 }

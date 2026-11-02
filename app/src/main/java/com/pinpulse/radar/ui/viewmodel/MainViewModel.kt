@@ -65,6 +65,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val pendingRequests: StateFlow<List<FriendRequest>> = prefs.pendingRequestsFlow
     val hiddenFromGeneral: StateFlow<Set<String>> = prefs.hiddenFromGeneralMapFlow
     val mapStyle: StateFlow<String> = prefs.mapStyleFlow
+    val selfMarkerMode: StateFlow<String> = prefs.selfMarkerModeFlow
     val registeredUsers: StateFlow<Map<String, User>> = realtime.registeredUsers
 
     private val _currentFilter = MutableStateFlow<MapFilter>(MapFilter.General)
@@ -137,6 +138,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     init {
+        // Auto-prune any downloaded update APKs from storage
+        UpdateManager.cleanupDownloadedApks(application)
+
         // Auto-heal any friends corrupted by legacy offline alerts
         val savedFriends = prefs.loadFriends()
         if (savedFriends.any { !it.isSharingLocation }) {
@@ -188,12 +192,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        // Observe siren state to pop up the Security PIN dialog when siren rings
+        // Observe siren state to pop up or dismiss the Security PIN dialog
         viewModelScope.launch {
             SirenHelper.isSirenActive.collect { active ->
-                if (active) {
-                    _isSirenPinDialogOpen.value = true
-                }
+                _isSirenPinDialogOpen.value = active
             }
         }
 
@@ -630,6 +632,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             type = "RING_SENT",
             message = "🔊 Siren alert sent to ${targetUser.displayName}'s phone!"
         )
+    }
+
+    fun stopPersonPhone(targetUser: User) {
+        val me = prefs.loadCurrentUser()
+        val callerName = me?.displayName ?: "Friend"
+        realtime.sendStopRingCommand(targetUser.id, targetUser.friendCode, callerName)
+        _activeAlert.value = AlertMessage(
+            senderId = me?.id ?: "",
+            senderName = callerName,
+            type = "STOP_RING_SENT",
+            message = "🛑 Remote stop signal sent to ${targetUser.displayName}'s phone!"
+        )
+    }
+
+    fun setSelfMarkerMode(mode: String) {
+        prefs.setSelfMarkerMode(mode)
     }
 
     fun dismissAlert() {

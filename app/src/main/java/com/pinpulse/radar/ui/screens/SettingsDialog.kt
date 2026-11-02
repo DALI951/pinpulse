@@ -87,6 +87,7 @@ fun SettingsDialog(
     val context = LocalContext.current
     val currentUser by viewModel.currentUser.collectAsState()
     val mapStyle by viewModel.mapStyle.collectAsState()
+    val selfMarkerMode by viewModel.selfMarkerMode.collectAsState()
     val updateState by viewModel.updateState.collectAsState()
 
     var isEditingPin by remember { mutableStateOf(false) }
@@ -224,6 +225,46 @@ fun SettingsDialog(
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.SemiBold
                             )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // APK Storage Auto-Cleanup Status
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFF131D2E))
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column {
+                            Text("Installer APK Storage", fontSize = 11.sp, color = TextMuted)
+                            val apkBytes = remember(updateState) {
+                                com.pinpulse.radar.util.UpdateManager.getCachedApkSizeBytes(context)
+                            }
+                            val apkSizeMb = apkBytes / (1024f * 1024f)
+                            Text(
+                                if (apkSizeMb > 0.05f) "${String.format("%.1f", apkSizeMb)} MB (Stored)" else "0.0 MB (Auto-Cleaned)",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (apkSizeMb > 0.05f) Color(0xFFF59E0B) else PulseGreen
+                            )
+                        }
+
+                        Button(
+                            onClick = {
+                                val freed = com.pinpulse.radar.util.UpdateManager.cleanupDownloadedApks(context)
+                                val freedMb = freed / (1024f * 1024f)
+                                Toast.makeText(context, "Storage verified clean! ${String.format("%.1f", freedMb)} MB freed.", Toast.LENGTH_SHORT).show()
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B)),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.height(32.dp)
+                        ) {
+                            Text("Purge Cache", fontSize = 11.sp, color = Color.White)
                         }
                     }
                 }
@@ -483,7 +524,48 @@ fun SettingsDialog(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // My Marker on Radar
+                    Text("My Marker on Radar", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 13.sp)
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        "Prevent obscuring friends when they are standing close to you:",
+                        fontSize = 11.sp,
+                        color = TextMuted
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf(
+                            "FULL" to "Full Profile",
+                            "DOT" to "Discreet Dot",
+                            "HIDDEN" to "Hidden"
+                        ).forEach { (modeKey, modeName) ->
+                            val isSelected = selfMarkerMode.equals(modeKey, ignoreCase = true)
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (isSelected) RadarBlue else Color(0xFF1E293B))
+                                    .clickable { viewModel.setSelfMarkerMode(modeKey) }
+                                    .padding(vertical = 8.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = modeName,
+                                    fontSize = 11.sp,
+                                    color = if (isSelected) Color.White else TextMuted,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
 
                     // 24/7 Background Exemption
                     Button(

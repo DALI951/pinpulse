@@ -84,6 +84,7 @@ fun MapViewComponent(
     visibleUsers: List<User>,
     currentUserId: String?,
     mapStyle: String,
+    selfMarkerMode: String = "FULL",
     onAvatarClick: (String) -> Unit,
     onMapClick: () -> Unit,
     centerTarget: User? = null,
@@ -167,7 +168,7 @@ fun MapViewComponent(
     }
 
     // Sync native user markers
-    LaunchedEffect(mapViewRef, visibleUsers, currentUserId) {
+    LaunchedEffect(mapViewRef, visibleUsers, currentUserId, selfMarkerMode) {
         val mapView = mapViewRef ?: return@LaunchedEffect
 
         // Keep the click overlay at index 0, remove other markers
@@ -178,11 +179,19 @@ fun MapViewComponent(
         visibleUsers.forEach { user ->
             if (user.latitude == 0.0 && user.longitude == 0.0) return@forEach
 
-            val marker = Marker(mapView).apply {
-                position = GeoPoint(user.latitude, user.longitude)
-                setAnchor(Marker.ANCHOR_CENTER, 0.45f)
-                infoWindow = null // No default popup bubble
-                icon = BitmapDrawable(
+            val isSelf = (user.id == currentUserId)
+
+            // If user chose to remove themselves from the map, don't draw self marker
+            if (isSelf && selfMarkerMode.equals("HIDDEN", ignoreCase = true)) {
+                return@forEach
+            }
+
+            val isDotMode = isSelf && selfMarkerMode.equals("DOT", ignoreCase = true)
+
+            val markerIcon = if (isDotMode) {
+                BitmapDrawable(context.resources, createSelfDotBitmap(context, user.isLive))
+            } else {
+                BitmapDrawable(
                     context.resources,
                     createMarkerBitmap(
                         context = context,
@@ -190,10 +199,17 @@ fun MapViewComponent(
                         avatarBase64 = user.avatarBase64,
                         batteryPercent = user.batteryPercent,
                         isCharging = user.isCharging,
-                        isSelf = (user.id == currentUserId),
+                        isSelf = isSelf,
                         isLive = user.isLive
                     )
                 )
+            }
+
+            val marker = Marker(mapView).apply {
+                position = GeoPoint(user.latitude, user.longitude)
+                setAnchor(Marker.ANCHOR_CENTER, if (isDotMode) Marker.ANCHOR_CENTER else 0.45f)
+                infoWindow = null // No default popup bubble
+                icon = markerIcon
                 setOnMarkerClickListener { _, _ ->
                     currentOnAvatarClick(user.id)
                     true
@@ -232,6 +248,33 @@ private fun decodeBase64ToBitmap(base64Str: String): Bitmap? {
     } catch (e: Exception) {
         null
     }
+}
+
+private fun createSelfDotBitmap(context: Context, isLive: Boolean): Bitmap {
+    val density = context.resources.displayMetrics.density
+    val size = (24 * density).toInt().coerceAtLeast(1)
+    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+    val center = size / 2f
+
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    // Outer subtle glow halo
+    paint.style = Paint.Style.FILL
+    paint.color = if (isLive) 0x553B82F6.toInt() else 0x3364748B.toInt()
+    canvas.drawCircle(center, center - (1 * density), paint)
+
+    // Solid core dot
+    paint.color = if (isLive) 0xFF3B82F6.toInt() else 0xFF64748B.toInt()
+    canvas.drawCircle(center, 6.5f * density, paint)
+
+    // Crisp white border
+    paint.color = Color.WHITE
+    paint.style = Paint.Style.STROKE
+    paint.strokeWidth = 2f * density
+    canvas.drawCircle(center, 6.5f * density, paint)
+
+    return bitmap
 }
 
 private fun createMarkerBitmap(

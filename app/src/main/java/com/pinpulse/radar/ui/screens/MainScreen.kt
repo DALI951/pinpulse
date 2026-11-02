@@ -40,6 +40,8 @@ import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
@@ -100,6 +102,7 @@ fun MainScreen(
     val pendingRequests by viewModel.pendingRequests.collectAsState()
     val hiddenFromGeneral by viewModel.hiddenFromGeneral.collectAsState()
     val mapStyle by viewModel.mapStyle.collectAsState()
+    val selfMarkerMode by viewModel.selfMarkerMode.collectAsState()
     val currentFilter by viewModel.currentFilter.collectAsState()
     val selectedPerson by viewModel.selectedPerson.collectAsState()
     val activeAlert by viewModel.activeAlert.collectAsState()
@@ -155,6 +158,7 @@ fun MainScreen(
             visibleUsers = visibleUsers,
             currentUserId = currentUser?.id,
             mapStyle = mapStyle,
+            selfMarkerMode = selfMarkerMode,
             onAvatarClick = { userId ->
                 viewModel.selectPersonForSheet(userId)
             },
@@ -311,6 +315,41 @@ fun MainScreen(
                 shape = CircleShape
             ) {
                 Icon(Icons.Default.Layers, contentDescription = "Map Style", modifier = Modifier.size(22.dp))
+            }
+
+            // Quick Toggle: My Radar Marker (Full Profile -> Discreet Dot -> Hidden from Map)
+            FloatingActionButton(
+                onClick = {
+                    val nextMode = when (selfMarkerMode) {
+                        "FULL" -> "DOT"
+                        "DOT" -> "HIDDEN"
+                        else -> "FULL"
+                    }
+                    viewModel.setSelfMarkerMode(nextMode)
+                    val toastText = when (nextMode) {
+                        "DOT" -> "Radar Marker: Discreet Dot (Friends prioritized)"
+                        "HIDDEN" -> "Radar Marker: Hidden from Map"
+                        else -> "Radar Marker: Full Profile Avatar"
+                    }
+                    android.widget.Toast.makeText(context, toastText, android.widget.Toast.LENGTH_SHORT).show()
+                },
+                modifier = Modifier.size(46.dp),
+                containerColor = RadarCardBg,
+                contentColor = when (selfMarkerMode) {
+                    "DOT" -> RadarBlue
+                    "HIDDEN" -> DangerRed
+                    else -> PulseGreen
+                },
+                shape = CircleShape
+            ) {
+                Icon(
+                    when (selfMarkerMode) {
+                        "HIDDEN" -> Icons.Default.VisibilityOff
+                        else -> Icons.Default.Visibility
+                    },
+                    contentDescription = "My Marker Mode",
+                    modifier = Modifier.size(22.dp)
+                )
             }
 
             // My Profile Dialog Button

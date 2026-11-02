@@ -33,6 +33,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Prune any downloaded update APKs from disk immediately so they don't consume storage
+        com.pinpulse.radar.util.UpdateManager.cleanupDownloadedApks(this)
+
         fetchImmediateLocation()
 
         setContent {
@@ -73,6 +76,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        // If user returned from installing an update or leaving installer, clean up any installer APK
+        com.pinpulse.radar.util.UpdateManager.cleanupDownloadedApks(this)
         fetchImmediateLocation()
     }
 

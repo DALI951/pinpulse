@@ -3,30 +3,113 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>PinPulse Master Radar — Global Live Viewer</title>
+  <title>PinPulse Master Radar & Fleet Command Console</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/mqtt@5.3.4/dist/mqtt.min.js"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
+    /* ---------------- THEME VARIABLES & ACCESSIBILITY TOKENS ---------------- */
     :root {
       --bg: #090d16;
-      --panel: #111827;
-      --panel-border: #1f293d;
+      --panel: #0f172a;
+      --panel-secondary: #131d31;
+      --panel-border: #1e293b;
+      --panel-border-bright: #334155;
       --primary: #10b981;
       --primary-glow: rgba(16, 185, 129, 0.35);
       --accent: #3b82f6;
+      --accent-glow: rgba(59, 130, 246, 0.35);
       --warning: #f59e0b;
       --danger: #ef4444;
+      --danger-glow: rgba(239, 68, 68, 0.35);
       --text: #f8fafc;
       --text-muted: #94a3b8;
+      --focus-ring: #38bdf8;
+      --font-scale: 1;
+      --pulse-animation-state: running;
+      --transition-duration: 0.2s;
     }
 
+    /* High Contrast Cyber Mode (WCAG AAA) */
+    body.theme-high-contrast {
+      --bg: #000000;
+      --panel: #050505;
+      --panel-secondary: #0d0d0d;
+      --panel-border: #00e5ff;
+      --panel-border-bright: #ffffff;
+      --primary: #00ff66;
+      --primary-glow: rgba(0, 255, 102, 0.6);
+      --accent: #00e5ff;
+      --accent-glow: rgba(0, 229, 255, 0.6);
+      --warning: #ffea00;
+      --danger: #ff0055;
+      --danger-glow: rgba(255, 0, 85, 0.6);
+      --text: #ffffff;
+      --text-muted: #d4d4d8;
+      --focus-ring: #ffff00;
+    }
+
+    /* Daylight High-Visibility Mode */
+    body.theme-daylight {
+      --bg: #f1f5f9;
+      --panel: #ffffff;
+      --panel-secondary: #e2e8f0;
+      --panel-border: #cbd5e1;
+      --panel-border-bright: #94a3b8;
+      --primary: #059669;
+      --primary-glow: rgba(5, 150, 105, 0.25);
+      --accent: #2563eb;
+      --accent-glow: rgba(37, 99, 235, 0.25);
+      --warning: #d97706;
+      --danger: #dc2626;
+      --danger-glow: rgba(220, 38, 38, 0.25);
+      --text: #0f172a;
+      --text-muted: #475569;
+      --focus-ring: #2563eb;
+    }
+
+    /* Night Amber Ops (Night vision protection) */
+    body.theme-night-amber {
+      --bg: #120900;
+      --panel: #1a0f02;
+      --panel-secondary: #261605;
+      --panel-border: #593508;
+      --panel-border-bright: #8c530d;
+      --primary: #ffaa00;
+      --primary-glow: rgba(255, 170, 0, 0.4);
+      --accent: #ff8800;
+      --accent-glow: rgba(255, 136, 0, 0.4);
+      --warning: #ffcc00;
+      --danger: #ff3300;
+      --danger-glow: rgba(255, 51, 0, 0.4);
+      --text: #fff2e0;
+      --text-muted: #c2996b;
+      --focus-ring: #ffaa00;
+    }
+
+    /* Reduced Motion */
+    body.reduce-motion * {
+      animation: none !important;
+      transition: none !important;
+    }
+
+    /* Colorblind simulation / contrast filters */
+    body.cb-protanopia { filter: url('#cb-filter-protanopia'); }
+    body.cb-deuteranopia { filter: url('#cb-filter-deuteranopia'); }
+    body.cb-tritanopia { filter: url('#cb-filter-tritanopia'); }
+    body.cb-mono { filter: grayscale(100%) contrast(125%); }
+
+    /* ---------------- BASE RESET & TYPOGRAPHY ---------------- */
     * {
       box-sizing: border-box;
       margin: 0;
       padding: 0;
+    }
+
+    html {
+      font-size: calc(14px * var(--font-scale));
     }
 
     body {
@@ -34,179 +117,386 @@
       background: var(--bg);
       color: var(--text);
       display: flex;
+      flex-direction: column;
       height: 100vh;
       overflow: hidden;
+      user-select: none;
     }
 
-    /* Sidebar */
-    #sidebar {
-      width: 400px;
+    button, input, select {
+      font-family: inherit;
+    }
+
+    :focus-visible {
+      outline: 3px solid var(--focus-ring) !important;
+      outline-offset: 2px !important;
+    }
+
+    /* ---------------- TOP COMMAND BAR (SOC HEADER) ---------------- */
+    #top-bar {
+      height: 60px;
       background: var(--panel);
-      border-right: 1px solid var(--panel-border);
-      display: flex;
-      flex-direction: column;
-      z-index: 1000;
-      box-shadow: 4px 0 24px rgba(0,0,0,0.5);
-    }
-
-    .header {
-      padding: 20px;
       border-bottom: 1px solid var(--panel-border);
       display: flex;
       align-items: center;
-      gap: 12px;
-      background: linear-gradient(180deg, #162032 0%, #111827 100%);
+      justify-content: space-between;
+      padding: 0 18px;
+      z-index: 1001;
+      box-shadow: 0 2px 14px rgba(0, 0, 0, 0.4);
     }
 
-    .logo-badge {
-      width: 44px;
-      height: 44px;
-      border-radius: 12px;
+    .brand-section {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .radar-brand-badge {
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
       background: rgba(16, 185, 129, 0.15);
       border: 1px solid var(--primary);
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 22px;
+      font-size: 20px;
+      box-shadow: 0 0 12px var(--primary-glow);
     }
 
-    .title-group h1 {
-      font-size: 18px;
+    .brand-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .brand-title h1 {
+      font-size: 1.15rem;
       font-weight: 800;
       letter-spacing: -0.02em;
-      color: #ffffff;
-      display: flex;
-      align-items: center;
-      gap: 8px;
+      color: var(--text);
     }
 
-    .master-tag {
-      font-size: 10px;
-      font-weight: 700;
-      background: #dc2626;
+    .admin-pill {
+      font-size: 0.65rem;
+      font-weight: 800;
+      background: linear-gradient(135deg, #ef4444 0%, #b91c1c 100%);
       color: #fff;
-      padding: 2px 7px;
+      padding: 3px 8px;
       border-radius: 6px;
+      letter-spacing: 0.08em;
       text-transform: uppercase;
-      letter-spacing: 0.05em;
+      box-shadow: 0 0 10px var(--danger-glow);
     }
 
-    .subtitle {
-      font-size: 12px;
+    .brand-subtitle {
+      font-size: 0.75rem;
       color: var(--text-muted);
-      margin-top: 2px;
+      font-family: 'JetBrains Mono', monospace;
     }
 
-    /* Live connection banner */
-    .status-bar {
-      padding: 10px 20px;
-      background: rgba(15, 23, 42, 0.6);
-      border-bottom: 1px solid var(--panel-border);
+    /* Header Live Metrics Ticker */
+    .telemetry-ticker {
       display: flex;
-      justify-content: space-between;
       align-items: center;
-      font-size: 12px;
+      gap: 16px;
+      background: var(--panel-secondary);
+      border: 1px solid var(--panel-border);
+      border-radius: 10px;
+      padding: 6px 14px;
     }
 
-    .conn-status {
+    .ticker-item {
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 6px;
+      font-size: 0.78rem;
       font-weight: 600;
     }
 
-    .status-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: #eab308;
-    }
-    .status-dot.connected {
-      background: var(--primary);
-      box-shadow: 0 0 10px var(--primary);
-    }
-    .status-dot.disconnected {
-      background: var(--danger);
+    .ticker-lbl {
+      color: var(--text-muted);
+      text-transform: uppercase;
+      font-size: 0.65rem;
+      letter-spacing: 0.04em;
     }
 
-    .user-counter {
-      background: rgba(59, 130, 246, 0.15);
-      color: var(--accent);
-      padding: 3px 9px;
-      border-radius: 12px;
+    .ticker-val {
+      font-family: 'JetBrains Mono', monospace;
       font-weight: 700;
-      font-size: 11px;
-      border: 1px solid rgba(59, 130, 246, 0.3);
+      color: var(--text);
     }
 
-    /* Search */
-    .search-bar {
-      padding: 14px 20px;
-      border-bottom: 1px solid var(--panel-border);
+    .ticker-divider {
+      width: 1px;
+      height: 16px;
+      background: var(--panel-border-bright);
     }
+
+    /* Emergency Siren Alert Banner in Ticker */
+    .siren-alert-indicator {
+      display: none;
+      align-items: center;
+      gap: 6px;
+      background: rgba(239, 68, 68, 0.2);
+      border: 1px solid var(--danger);
+      color: var(--danger);
+      padding: 4px 10px;
+      border-radius: 8px;
+      font-weight: 800;
+      font-size: 0.75rem;
+      animation: alertPulse 1.2s infinite alternate;
+    }
+
+    @keyframes alertPulse {
+      0% { opacity: 0.7; transform: scale(0.98); }
+      100% { opacity: 1; transform: scale(1.02); box-shadow: 0 0 14px var(--danger-glow); }
+    }
+
+    /* Header Action Controls */
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .btn-admin {
+      background: var(--panel-secondary);
+      border: 1px solid var(--panel-border);
+      color: var(--text);
+      padding: 7px 12px;
+      border-radius: 8px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all var(--transition-duration);
+    }
+
+    .btn-admin:hover {
+      background: var(--panel-border);
+      border-color: var(--panel-border-bright);
+    }
+
+    .btn-admin.danger-btn {
+      background: rgba(239, 68, 68, 0.15);
+      border-color: rgba(239, 68, 68, 0.5);
+      color: #fca5a5;
+    }
+
+    .btn-admin.danger-btn:hover {
+      background: rgba(239, 68, 68, 0.3);
+      border-color: var(--danger);
+      color: #fff;
+    }
+
+    .btn-admin.accent-btn {
+      background: rgba(59, 130, 246, 0.18);
+      border-color: rgba(59, 130, 246, 0.5);
+      color: #93c5fd;
+    }
+
+    .btn-admin.accent-btn:hover {
+      background: rgba(59, 130, 246, 0.35);
+      color: #fff;
+    }
+
+    /* ---------------- MAIN CONTAINER ---------------- */
+    #main-container {
+      display: flex;
+      flex: 1;
+      height: calc(100vh - 60px);
+      position: relative;
+    }
+
+    /* ---------------- SIDEBAR (CONTROL HUB) ---------------- */
+    #sidebar {
+      width: 420px;
+      background: var(--panel);
+      border-right: 1px solid var(--panel-border);
+      display: flex;
+      flex-direction: column;
+      z-index: 1000;
+      box-shadow: 4px 0 24px rgba(0, 0, 0, 0.5);
+    }
+
+    .sidebar-tabs {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      background: var(--bg);
+      border-bottom: 1px solid var(--panel-border);
+      padding: 4px;
+      gap: 4px;
+    }
+
+    .sidebar-tab {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      padding: 8px 4px;
+      border-radius: 6px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 3px;
+      transition: all var(--transition-duration);
+    }
+
+    .sidebar-tab.active {
+      background: var(--panel);
+      color: var(--accent);
+      border: 1px solid var(--panel-border);
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    }
+
+    .tab-badge {
+      background: rgba(255, 255, 255, 0.08);
+      padding: 1px 6px;
+      border-radius: 10px;
+      font-size: 0.65rem;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .sidebar-tab.active .tab-badge {
+      background: rgba(59, 130, 246, 0.2);
+      color: var(--accent);
+    }
+
+    /* Tab Panes */
+    .tab-pane {
+      display: none;
+      flex: 1;
+      overflow-y: auto;
+      flex-direction: column;
+    }
+
+    .tab-pane.active {
+      display: flex;
+    }
+
+    /* Search & Filter Toolbar */
+    .search-section {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--panel-border);
+      background: var(--panel);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .search-input-wrap {
+      position: relative;
+    }
+
     .search-input {
       width: 100%;
-      background: #0b111e;
+      background: var(--panel-secondary);
       border: 1px solid var(--panel-border);
-      border-radius: 10px;
-      padding: 10px 14px;
-      color: #fff;
-      font-size: 13px;
+      border-radius: 8px;
+      padding: 9px 12px 9px 34px;
+      color: var(--text);
+      font-size: 0.82rem;
       outline: none;
-      transition: all 0.2s;
-    }
-    .search-input:focus {
-      border-color: var(--primary);
-      box-shadow: 0 0 0 2px var(--primary-glow);
+      transition: all var(--transition-duration);
     }
 
-    /* Users list */
+    .search-input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px var(--accent-glow);
+    }
+
+    .search-icon-svg {
+      position: absolute;
+      left: 10px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-muted);
+      width: 16px;
+      height: 16px;
+      pointer-events: none;
+    }
+
+    .filter-chips {
+      display: flex;
+      gap: 6px;
+      overflow-x: auto;
+      padding-bottom: 2px;
+    }
+
+    .filter-chip {
+      background: var(--panel-secondary);
+      border: 1px solid var(--panel-border);
+      color: var(--text-muted);
+      padding: 4px 8px;
+      border-radius: 6px;
+      font-size: 0.7rem;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .filter-chip.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+
+    /* User Node Cards */
     #user-list {
       flex: 1;
       overflow-y: auto;
-      padding: 12px;
+      padding: 10px 12px;
       display: flex;
       flex-direction: column;
       gap: 8px;
     }
 
     .user-card {
-      background: #151d2e;
+      background: var(--panel-secondary);
       border: 1px solid var(--panel-border);
-      border-radius: 14px;
+      border-radius: 12px;
       padding: 12px;
       cursor: pointer;
       display: flex;
       align-items: center;
       gap: 12px;
-      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      transition: all var(--transition-duration);
+      position: relative;
     }
+
     .user-card:hover {
-      background: #1c273e;
-      border-color: rgba(59, 130, 246, 0.5);
+      background: var(--panel-border);
+      border-color: var(--panel-border-bright);
       transform: translateY(-1px);
     }
+
     .user-card.active {
       border-color: var(--primary);
-      background: #172a38;
-      box-shadow: 0 4px 14px rgba(16, 185, 129, 0.2);
+      background: rgba(16, 185, 129, 0.08);
+      box-shadow: 0 4px 14px rgba(16, 185, 129, 0.15);
     }
 
     .card-avatar {
       width: 44px;
       height: 44px;
       border-radius: 50%;
-      background: #232f48;
+      background: #1e293b;
       border: 2px solid var(--primary);
       overflow: hidden;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-weight: 700;
+      font-weight: 800;
       color: #fff;
-      font-size: 16px;
+      font-size: 1rem;
       flex-shrink: 0;
     }
+
     .card-avatar img {
       width: 100%;
       height: 100%;
@@ -217,116 +507,311 @@
       flex: 1;
       min-width: 0;
     }
-    .card-title {
-      font-size: 14px;
-      font-weight: 700;
-      color: #fff;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-    .card-email {
-      font-size: 11px;
-      color: #60a5fa;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      margin-top: 1px;
-    }
-    .card-sub {
-      font-size: 11px;
-      color: var(--text-muted);
-      margin-top: 4px;
+
+    .card-title-row {
       display: flex;
-      gap: 6px;
       align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+
+    .card-title {
+      font-size: 0.88rem;
+      font-weight: 700;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .card-code {
+      font-size: 0.68rem;
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--primary);
+      background: rgba(16, 185, 129, 0.1);
+      padding: 1px 5px;
+      border-radius: 4px;
+      border: 1px solid rgba(16, 185, 129, 0.25);
+    }
+
+    .card-email {
+      font-size: 0.72rem;
+      color: var(--accent);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-top: 2px;
+    }
+
+    .card-telemetry {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 6px;
+      font-size: 0.7rem;
+      color: var(--text-muted);
       flex-wrap: wrap;
     }
-    .badge-live {
-      color: var(--primary);
-      font-weight: 600;
-    }
-    .badge-ghost {
-      color: var(--warning);
-      font-weight: 600;
-    }
+
     .badge-speed {
-      background: rgba(255,255,255,0.08);
-      padding: 2px 5px;
+      background: rgba(255, 255, 255, 0.06);
+      padding: 2px 6px;
       border-radius: 4px;
       font-family: 'JetBrains Mono', monospace;
-      font-size: 10px;
+      font-size: 0.68rem;
     }
+
     .badge-battery {
-      background: rgba(16, 185, 129, 0.15);
-      color: #34d399;
-      padding: 2px 5px;
+      padding: 2px 6px;
       border-radius: 4px;
       font-family: 'JetBrains Mono', monospace;
-      font-size: 10px;
+      font-size: 0.68rem;
       font-weight: 700;
     }
 
-    /* Map container */
+    .badge-battery.normal {
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+    }
+
+    .badge-battery.low {
+      background: rgba(239, 68, 68, 0.2);
+      color: #f87171;
+    }
+
+    .card-quick-actions {
+      display: flex;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+
+    .action-icon-btn {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--panel-border);
+      color: var(--text-muted);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.9rem;
+      transition: all var(--transition-duration);
+    }
+
+    .action-icon-btn:hover {
+      background: var(--panel-border-bright);
+      color: var(--text);
+    }
+
+    .action-icon-btn.ring:hover {
+      background: rgba(245, 158, 11, 0.2);
+      border-color: var(--warning);
+      color: #fbbf24;
+    }
+
+    .action-icon-btn.stop:hover {
+      background: rgba(239, 68, 68, 0.25);
+      border-color: var(--danger);
+      color: #f87171;
+    }
+
+    /* ---------------- AUDIT LOG PANE ---------------- */
+    #audit-log-pane {
+      background: var(--bg);
+      font-family: 'JetBrains Mono', monospace;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .log-toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 4px;
+      border-bottom: 1px solid var(--panel-border);
+      font-size: 0.72rem;
+      color: var(--text-muted);
+    }
+
+    #log-stream {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 0.72rem;
+      padding-top: 4px;
+    }
+
+    .log-entry {
+      background: var(--panel);
+      border: 1px solid var(--panel-border);
+      border-left: 3px solid var(--accent);
+      padding: 6px 8px;
+      border-radius: 4px;
+      word-break: break-all;
+      line-height: 1.4;
+    }
+
+    .log-entry.alarm {
+      border-left-color: var(--danger);
+      background: rgba(239, 68, 68, 0.1);
+      color: #fca5a5;
+    }
+
+    .log-entry.silence {
+      border-left-color: var(--warning);
+      background: rgba(245, 158, 11, 0.1);
+      color: #fde68a;
+    }
+
+    .log-entry.connect {
+      border-left-color: var(--primary);
+    }
+
+    .log-time {
+      color: var(--text-muted);
+      font-size: 0.65rem;
+      margin-right: 6px;
+    }
+
+    /* ---------------- SYSTEM DIAGNOSTICS PANE ---------------- */
+    #diag-pane {
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .diag-card {
+      background: var(--panel-secondary);
+      border: 1px solid var(--panel-border);
+      border-radius: 10px;
+      padding: 12px;
+    }
+
+    .diag-title {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+    }
+
+    .diag-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .diag-metric {
+      background: var(--bg);
+      border: 1px solid var(--panel-border);
+      border-radius: 8px;
+      padding: 8px;
+    }
+
+    .diag-lbl {
+      font-size: 0.65rem;
+      color: var(--text-muted);
+    }
+
+    .diag-val {
+      font-size: 0.95rem;
+      font-weight: 700;
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--text);
+      margin-top: 2px;
+    }
+
+    /* ---------------- MAP CANVAS & HUD OVERLAYS ---------------- */
     #map-wrapper {
       flex: 1;
       position: relative;
     }
+
     #map {
       width: 100%;
       height: 100%;
       background: #090d16;
     }
 
-    /* Map controls */
+    /* Map Style Switcher (Floating HUD) */
     .map-style-switcher {
       position: absolute;
-      top: 18px;
-      right: 18px;
+      top: 16px;
+      right: 16px;
       z-index: 1000;
-      background: rgba(17, 24, 39, 0.9);
+      background: rgba(15, 23, 42, 0.92);
       backdrop-filter: blur(8px);
       border: 1px solid var(--panel-border);
-      border-radius: 12px;
+      border-radius: 10px;
       padding: 4px;
       display: flex;
       gap: 4px;
-      box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
     }
+
     .style-btn {
       background: transparent;
       border: none;
       color: var(--text-muted);
-      padding: 8px 14px;
-      font-size: 12px;
-      font-weight: 600;
-      border-radius: 8px;
+      padding: 6px 12px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      border-radius: 6px;
       cursor: pointer;
-      transition: all 0.2s;
+      transition: all var(--transition-duration);
     }
+
     .style-btn.active, .style-btn:hover {
       background: var(--accent);
       color: #fff;
     }
 
-    /* Selected user modal / bottom sheet */
+    /* Coordinates Crosshair HUD (Bottom Left) */
+    .coords-hud {
+      position: absolute;
+      bottom: 20px;
+      left: 20px;
+      z-index: 1000;
+      background: rgba(15, 23, 42, 0.9);
+      backdrop-filter: blur(8px);
+      border: 1px solid var(--panel-border);
+      border-radius: 8px;
+      padding: 6px 12px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    /* ---------------- FLOATING PERSON DETAIL MODAL ---------------- */
     #person-modal {
       position: absolute;
       bottom: 24px;
       right: 24px;
-      width: 380px;
-      background: rgba(17, 24, 39, 0.96);
+      width: 400px;
+      background: rgba(15, 23, 42, 0.96);
       backdrop-filter: blur(14px);
-      border: 1px solid var(--panel-border);
-      border-radius: 20px;
-      padding: 22px;
+      border: 1px solid var(--panel-border-bright);
+      border-radius: 18px;
+      padding: 20px;
       z-index: 1000;
-      box-shadow: 0 12px 36px rgba(0,0,0,0.7);
+      box-shadow: 0 12px 36px rgba(0, 0, 0, 0.7);
       display: none;
-      animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      animation: modalSlideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1);
     }
-    @keyframes slideUp {
-      from { transform: translateY(20px); opacity: 0; }
+
+    @keyframes modalSlideUp {
+      from { transform: translateY(16px); opacity: 0; }
       to { transform: translateY(0); opacity: 1; }
     }
 
@@ -334,82 +819,144 @@
       display: flex;
       align-items: center;
       gap: 14px;
-      margin-bottom: 16px;
+      margin-bottom: 14px;
     }
+
     .modal-avatar {
-      width: 58px;
-      height: 58px;
+      width: 54px;
+      height: 54px;
       border-radius: 50%;
       border: 3px solid var(--primary);
       overflow: hidden;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 22px;
+      font-size: 1.3rem;
       font-weight: 800;
-      background: #252836;
+      background: #1e293b;
       color: #fff;
       box-shadow: 0 0 14px var(--primary-glow);
       flex-shrink: 0;
     }
+
     .modal-avatar img {
       width: 100%;
       height: 100%;
       object-fit: cover;
     }
 
+    .modal-name-group {
+      min-width: 0;
+      flex: 1;
+    }
+
     .modal-name {
-      font-size: 18px;
+      font-size: 1.1rem;
       font-weight: 800;
-      color: #fff;
+      color: var(--text);
     }
+
     .modal-email {
-      font-size: 12px;
-      color: #60a5fa;
+      font-size: 0.78rem;
+      color: var(--accent);
       font-weight: 600;
-      margin-top: 1px;
-    }
-    .modal-id {
-      font-size: 10px;
-      color: var(--text-muted);
-      font-family: 'JetBrains Mono', monospace;
       margin-top: 2px;
+    }
+
+    .modal-code-badge {
+      font-size: 0.7rem;
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--primary);
+      margin-top: 3px;
+    }
+
+    .modal-close-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 1.2rem;
+      padding: 4px;
+      line-height: 1;
     }
 
     .stats-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 8px;
-      margin-bottom: 16px;
+      margin-bottom: 14px;
     }
+
     .stat-box {
-      background: #111a2c;
+      background: var(--panel-secondary);
       border: 1px solid var(--panel-border);
-      border-radius: 10px;
-      padding: 10px;
+      border-radius: 8px;
+      padding: 8px 10px;
     }
+
     .stat-lbl {
-      font-size: 10px;
+      font-size: 0.65rem;
       color: var(--text-muted);
       text-transform: uppercase;
       font-weight: 600;
     }
+
     .stat-val {
-      font-size: 14px;
+      font-size: 0.88rem;
       font-weight: 700;
-      color: #fff;
+      color: var(--text);
       margin-top: 2px;
       font-family: 'JetBrains Mono', monospace;
     }
 
-    .nav-btn {
+    /* Dual Siren Remote Controls */
+    .siren-control-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .btn-action-ring {
+      background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+      color: #fff;
+      border: none;
+      padding: 10px;
+      border-radius: 10px;
+      font-size: 0.82rem;
+      font-weight: 800;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      box-shadow: 0 4px 12px rgba(245, 158, 11, 0.25);
+    }
+
+    .btn-action-stop-ring {
+      background: linear-gradient(135deg, #ef4444 0%, #b91c1c 100%);
+      color: #fff;
+      border: none;
+      padding: 10px;
+      border-radius: 10px;
+      font-size: 0.82rem;
+      font-weight: 800;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      box-shadow: 0 4px 12px rgba(239, 68, 68, 0.25);
+    }
+
+    .btn-action-nav {
       width: 100%;
       background: var(--accent);
       color: #fff;
       border: none;
-      padding: 12px;
-      border-radius: 12px;
-      font-size: 14px;
+      padding: 11px;
+      border-radius: 10px;
+      font-size: 0.85rem;
       font-weight: 700;
       cursor: pointer;
       display: flex;
@@ -417,43 +964,224 @@
       justify-content: center;
       gap: 8px;
       text-decoration: none;
-      transition: background 0.2s;
+      margin-bottom: 8px;
+      transition: background var(--transition-duration);
     }
-    .nav-btn:hover {
+
+    .btn-action-nav:hover {
       background: #2563eb;
     }
 
-    .siren-btn {
-      width: 100%;
-      background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
-      color: #fff;
-      border: none;
-      padding: 12px;
-      border-radius: 12px;
-      font-size: 14px;
-      font-weight: 700;
-      cursor: pointer;
+    .modal-bottom-actions {
       display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      margin-top: 8px;
-      box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
-      transition: all 0.2s;
-    }
-    .siren-btn:hover {
-      background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
-      transform: translateY(-1px);
-    }
-    .siren-btn:active {
-      transform: translateY(1px);
+      gap: 6px;
     }
 
-    /* Leaflet custom marker */
+    .btn-sub-action {
+      flex: 1;
+      background: transparent;
+      border: 1px solid var(--panel-border);
+      color: var(--text-muted);
+      padding: 8px;
+      border-radius: 8px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all var(--transition-duration);
+    }
+
+    .btn-sub-action:hover {
+      background: var(--panel-secondary);
+      color: var(--text);
+    }
+
+    /* ---------------- ACCESSIBILITY & DISPLAY MODAL ---------------- */
+    #a11y-dialog {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(6px);
+      z-index: 2000;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    #a11y-dialog.open {
+      display: flex;
+    }
+
+    .a11y-box {
+      width: 580px;
+      max-width: 95vw;
+      max-height: 85vh;
+      overflow-y: auto;
+      background: var(--panel);
+      border: 1px solid var(--panel-border-bright);
+      border-radius: 20px;
+      padding: 24px;
+      box-shadow: 0 20px 48px rgba(0, 0, 0, 0.8);
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .a11y-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--panel-border);
+      padding-bottom: 12px;
+    }
+
+    .a11y-header h2 {
+      font-size: 1.2rem;
+      font-weight: 800;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .a11y-section {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .a11y-section-title {
+      font-size: 0.78rem;
+      font-weight: 800;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .a11y-options-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 8px;
+    }
+
+    .a11y-choice-btn {
+      background: var(--panel-secondary);
+      border: 1px solid var(--panel-border);
+      color: var(--text);
+      padding: 10px;
+      border-radius: 8px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      cursor: pointer;
+      text-align: center;
+      transition: all var(--transition-duration);
+    }
+
+    .a11y-choice-btn.selected {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+      box-shadow: 0 0 10px var(--accent-glow);
+    }
+
+    .a11y-toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      background: var(--panel-secondary);
+      border: 1px solid var(--panel-border);
+      border-radius: 10px;
+    }
+
+    .a11y-toggle-lbl {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .a11y-toggle-name {
+      font-size: 0.84rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .a11y-toggle-desc {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+    }
+
+    /* Toggle Switch */
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 44px;
+      height: 24px;
+      flex-shrink: 0;
+    }
+
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      inset: 0;
+      background-color: #334155;
+      transition: .2s;
+      border-radius: 24px;
+    }
+
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 18px;
+      width: 18px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: .2s;
+      border-radius: 50%;
+    }
+
+    input:checked + .slider {
+      background-color: var(--primary);
+    }
+
+    input:checked + .slider:before {
+      transform: translateX(20px);
+    }
+
+    /* Keyboard Shortcuts Table */
+    .kbd-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.72rem;
+    }
+
+    .kbd-table td {
+      padding: 6px 4px;
+      border-bottom: 1px solid var(--panel-border);
+    }
+
+    kbd {
+      background: var(--bg);
+      border: 1px solid var(--panel-border-bright);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--primary);
+      font-weight: 700;
+    }
+
+    /* ---------------- LEAFLET CUSTOM MARKER STYLES ---------------- */
     .pinpulse-marker {
       background: transparent;
       border: none;
     }
+
     .pinpulse-marker-wrapper {
       position: relative;
       display: flex;
@@ -462,6 +1190,7 @@
       transform: translate(-50%, -50%);
       cursor: pointer;
     }
+
     .pulse-ring {
       position: absolute;
       top: 50%;
@@ -470,15 +1199,17 @@
       width: 60px;
       height: 60px;
       border-radius: 50%;
-      background: rgba(16, 185, 129, 0.4);
+      background: var(--primary-glow);
       z-index: 1;
-      animation: pulse-wave 2s infinite cubic-bezier(0.4, 0, 0.6, 1);
+      animation: pulseWave 2s infinite cubic-bezier(0.4, 0, 0.6, 1);
     }
-    @keyframes pulse-wave {
+
+    @keyframes pulseWave {
       0% { transform: translate(-50%, -50%) scale(0.8); opacity: 0.8; }
       70% { transform: translate(-50%, -50%) scale(1.6); opacity: 0; }
       100% { transform: translate(-50%, -50%) scale(1.8); opacity: 0; }
     }
+
     .avatar-bubble {
       position: relative;
       z-index: 2;
@@ -486,271 +1217,544 @@
       height: 48px;
       border-radius: 50%;
       border: 3px solid var(--primary);
-      box-shadow: 0 4px 14px rgba(0,0,0,0.5);
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
       background: #1e293b;
       overflow: hidden;
       display: flex;
       align-items: center;
       justify-content: center;
       color: #fff;
-      font-weight: 700;
-      font-size: 18px;
+      font-weight: 800;
+      font-size: 1.1rem;
     }
+
     .avatar-bubble img {
       width: 100%;
       height: 100%;
       object-fit: cover;
     }
+
     .name-pill {
       position: relative;
       z-index: 3;
       margin-top: 4px;
-      background: rgba(15, 23, 42, 0.92);
+      background: rgba(15, 23, 42, 0.94);
       color: #fff;
-      font-size: 11px;
+      font-size: 0.72rem;
       font-weight: 700;
       padding: 3px 8px;
       border-radius: 10px;
-      border: 1px solid rgba(255,255,255,0.15);
+      border: 1px solid rgba(255, 255, 255, 0.2);
       white-space: nowrap;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
     }
 
-    /* List tabs: On Map / Removed */
-    .list-tabs {
-      display: flex;
-      gap: 6px;
-      padding: 0 12px 4px 12px;
-    }
-    .list-tab {
-      flex: 1;
-      background: #151d2e;
-      border: 1px solid var(--panel-border);
-      color: var(--text-muted);
-      padding: 8px 10px;
-      border-radius: 10px;
-      font-size: 12px;
-      font-weight: 700;
+    /* Minimalist Dot Mode Marker (Clean non-interfering dot) */
+    .minimal-dot-wrapper {
+      position: relative;
+      width: 22px;
+      height: 22px;
+      transform: translate(-50%, -50%);
       cursor: pointer;
-      font-family: inherit;
-      transition: all 0.2s;
     }
-    .list-tab.active {
-      background: var(--accent);
-      border-color: var(--accent);
-      color: #fff;
-    }
-    .list-toolbar {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      font-size: 11px;
-      color: var(--text-muted);
-      padding: 2px 2px 4px 2px;
-    }
-    .toolbar-btn {
-      background: rgba(16, 185, 129, 0.15);
-      color: #34d399;
-      border: 1px solid rgba(16, 185, 129, 0.4);
-      padding: 5px 10px;
-      border-radius: 8px;
-      font-size: 11px;
-      font-weight: 700;
-      cursor: pointer;
-      font-family: inherit;
-    }
-    .toolbar-btn:hover { background: rgba(16, 185, 129, 0.28); }
 
-    /* Per-card remove / restore buttons */
-    .card-action {
-      flex-shrink: 0;
-      width: 30px;
-      height: 30px;
-      border-radius: 8px;
-      border: 1px solid var(--panel-border);
-      background: rgba(255,255,255,0.04);
-      color: var(--text-muted);
-      font-size: 14px;
-      font-weight: 700;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      transition: all 0.2s;
-    }
-    .card-action.remove:hover {
-      background: rgba(239, 68, 68, 0.18);
-      border-color: var(--danger);
-      color: #f87171;
-    }
-    .card-action.restore {
-      width: auto;
-      padding: 0 10px;
-      font-size: 11px;
-      color: #34d399;
-      border-color: rgba(16, 185, 129, 0.4);
-    }
-    .card-action.restore:hover { background: rgba(16, 185, 129, 0.2); }
-    .user-card.removed { opacity: 0.75; }
-    .user-card.removed .card-avatar { border-color: #64748b; filter: grayscale(0.6); }
-
-    .modal-remove-btn {
-      width: 100%;
-      margin-top: 8px;
-      background: transparent;
-      color: #f87171;
-      border: 1px solid rgba(239, 68, 68, 0.5);
-      padding: 10px;
-      border-radius: 12px;
-      font-size: 13px;
-      font-weight: 700;
-      cursor: pointer;
-      font-family: inherit;
-    }
-    .modal-remove-btn:hover { background: rgba(239, 68, 68, 0.12); }
-
-    /* Real-position dot shown when a marker is spread out to avoid overlapping */
-    .true-pos-dot {
-      background: transparent;
-      border: none;
+    .minimal-dot-core {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: var(--primary);
+      border: 2px solid #fff;
+      box-shadow: 0 0 10px var(--primary);
+      position: absolute;
+      top: 4px;
+      left: 4px;
     }
   </style>
+
+  <!-- SVG Filters for Colorblind simulation -->
+  <svg style="display: none;">
+    <filter id="cb-filter-protanopia">
+      <feColorMatrix type="matrix" values="0.567, 0.433, 0, 0, 0  0.558, 0.442, 0, 0, 0  0, 0.242, 0.758, 0, 0  0, 0, 0, 1, 0" />
+    </filter>
+    <filter id="cb-filter-deuteranopia">
+      <feColorMatrix type="matrix" values="0.625, 0.375, 0, 0, 0  0.7, 0.3, 0, 0, 0  0, 0.3, 0.7, 0, 0  0, 0, 0, 1, 0" />
+    </filter>
+    <filter id="cb-filter-tritanopia">
+      <feColorMatrix type="matrix" values="0.95, 0.05, 0, 0, 0  0, 0.433, 0.567, 0, 0  0, 0.475, 0.525, 0, 0  0, 0, 0, 1, 0" />
+    </filter>
+  </svg>
 </head>
 <body>
 
-  <!-- Sidebar -->
-  <aside id="sidebar">
-    <div class="header">
-      <div class="logo-badge">📍</div>
-      <div class="title-group">
-        <h1>PinPulse <span class="master-tag">Master Radar</span></h1>
-        <div class="subtitle">Global Network Monitor • Live Location & Battery</div>
+  <!-- ==================== TOP COMMAND BAR ==================== -->
+  <header id="top-bar" role="banner">
+    <div class="brand-section">
+      <div class="radar-brand-badge" aria-hidden="true">📡</div>
+      <div>
+        <div class="brand-title">
+          <h1>PinPulse</h1>
+          <span class="admin-pill">FLEET OPS ADMIN</span>
+        </div>
+        <div class="brand-subtitle">LIVE GPS RADAR & SECURITY COMMAND</div>
       </div>
     </div>
 
-    <div class="status-bar">
-      <div class="conn-status">
-        <span class="status-dot" id="conn-dot"></span>
-        <span id="conn-text">Connecting to Live Broker...</span>
+    <!-- Live Telemetry Ticker -->
+    <div class="telemetry-ticker" role="region" aria-label="Fleet Telemetry Metrics">
+      <div class="ticker-item">
+        <span class="ticker-lbl">Fleet Active:</span>
+        <span class="ticker-val" id="tk-live-count" style="color: var(--primary);">0 Online</span>
       </div>
-      <div class="user-counter" id="active-count">0 Live</div>
-    </div>
-
-    <div class="search-bar">
-      <input type="text" class="search-input" id="search-box" placeholder="Search name, email, or ID..." />
-    </div>
-
-    <div class="list-tabs">
-      <button class="list-tab active" id="tab-active" onclick="switchTab('active')">On Map (0)</button>
-      <button class="list-tab" id="tab-removed" onclick="switchTab('removed')">Removed (0)</button>
-    </div>
-
-    <div id="user-list">
-      <div style="padding: 40px 20px; text-align: center; color: var(--text-muted); font-size: 13px;">
-        Listening for devices transmitting GPS...
+      <div class="ticker-divider" aria-hidden="true"></div>
+      <div class="ticker-item">
+        <span class="ticker-lbl">Relay:</span>
+        <span class="ticker-val" id="tk-relay-status" style="color: #38bdf8;">Connecting...</span>
+      </div>
+      <div class="ticker-divider" aria-hidden="true"></div>
+      <div class="ticker-item">
+        <span class="ticker-lbl">Avg Battery:</span>
+        <span class="ticker-val" id="tk-battery-avg">--%</span>
+      </div>
+      <div class="siren-alert-indicator" id="tk-siren-alert" role="alert">
+        🚨 ACTIVE EMERGENCY SIREN TRIGGERED
       </div>
     </div>
-  </aside>
 
-  <!-- Map Canvas -->
-  <div id="map-wrapper">
-    <div class="map-style-switcher">
-      <button class="style-btn active" onclick="setMapLayer('streets', this)">Streets</button>
-      <button class="style-btn" onclick="setMapLayer('satellite', this)">Satellite</button>
-      <button class="style-btn" onclick="setMapLayer('hybrid', this)">Hybrid</button>
-    </div>
-
-    <div id="map"></div>
-
-    <!-- Selected Person Floating Card -->
-    <div id="person-modal">
-      <div class="modal-header">
-        <div class="modal-avatar" id="m-avatar">?</div>
-        <div style="min-width:0; flex:1;">
-          <div class="modal-name" id="m-name">User</div>
-          <div class="modal-email" id="m-email">user@gmail.com</div>
-          <div class="modal-id" id="m-id">ID: ---</div>
-        </div>
-      </div>
-
-      <div class="stats-grid">
-        <div class="stat-box">
-          <div class="stat-lbl">Battery</div>
-          <div class="stat-val" id="m-battery" style="color: #34d399;">100%</div>
-        </div>
-        <div class="stat-box">
-          <div class="stat-lbl">Live Speed</div>
-          <div class="stat-val" id="m-speed">0 km/h</div>
-        </div>
-        <div class="stat-box">
-          <div class="stat-lbl">Radar Status</div>
-          <div class="stat-val" id="m-status" style="color: var(--primary);">Live</div>
-        </div>
-        <div class="stat-box">
-          <div class="stat-lbl">Friend Sharing</div>
-          <div class="stat-val" id="m-sharing" style="font-size: 12px;">Active</div>
-        </div>
-        <div class="stat-box" style="grid-column: span 2;">
-          <div class="stat-lbl">GPS Coordinates</div>
-          <div class="stat-val" id="m-coords" style="font-size: 12px;">36.806500, 10.181500</div>
-        </div>
-      </div>
-
-      <a id="m-nav-link" href="#" target="_blank" class="nav-btn">
-        🚀 Open in Google Maps Turn-by-Turn
-      </a>
-      <button class="siren-btn" id="m-ring-btn" onclick="ringSelectedUser()">
-        🔊 Ring Phone (Emergency Siren)
+    <!-- Header Operations & Accessibility Buttons -->
+    <div class="header-actions">
+      <button class="btn-admin danger-btn" id="btn-fleet-silence" onclick="silenceAllFleetSirens()" title="Stop all ringing sirens remotely (Alt+M)" aria-label="Stop all sirens remotely">
+        🛑 Silence All Sirens
       </button>
-      <button class="modal-remove-btn" id="m-remove-btn" onclick="toggleRemoveSelected()">✕ Remove from map</button>
+
+      <button class="btn-admin accent-btn" onclick="fitAllMarkersOnMap()" title="Fit all devices on screen (Alt+F)" aria-label="Auto-fit all devices">
+        🎯 Fit Fleet
+      </button>
+
+      <button class="btn-admin" onclick="openA11yDialog()" title="Display & Accessibility settings (Alt+A)" aria-label="Open accessibility settings">
+        ♿ Accessibility
+      </button>
+    </div>
+  </header>
+
+  <!-- ==================== MAIN WORKSPACE ==================== -->
+  <main id="main-container">
+
+    <!-- SIDEBAR -->
+    <aside id="sidebar" role="region" aria-label="Admin Control Hub">
+      <!-- 4 Tab Navigation -->
+      <nav class="sidebar-tabs" role="tablist">
+        <button class="sidebar-tab active" id="tab-btn-active" role="tab" aria-selected="true" onclick="switchSidebarTab('active')">
+          <span>Fleet Nodes</span>
+          <span class="tab-badge" id="badge-active-count">0</span>
+        </button>
+        <button class="sidebar-tab" id="tab-btn-removed" role="tab" aria-selected="false" onclick="switchSidebarTab('removed')">
+          <span>Quarantine</span>
+          <span class="tab-badge" id="badge-removed-count">0</span>
+        </button>
+        <button class="sidebar-tab" id="tab-btn-audit" role="tab" aria-selected="false" onclick="switchSidebarTab('audit')">
+          <span>Audit Log</span>
+          <span class="tab-badge" id="badge-log-count">0</span>
+        </button>
+        <button class="sidebar-tab" id="tab-btn-diag" role="tab" aria-selected="false" onclick="switchSidebarTab('diag')">
+          <span>Relay Diag</span>
+          <span class="tab-badge" style="color: var(--primary);">OK</span>
+        </button>
+      </nav>
+
+      <!-- TAB 1: FLEET NODES -->
+      <div class="tab-pane active" id="pane-active">
+        <div class="search-section">
+          <div class="search-input-wrap">
+            <svg class="search-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <input type="text" class="search-input" id="search-box" placeholder="Search name, email, or friend code... (Press /)" aria-label="Search devices" />
+          </div>
+
+          <div class="filter-chips">
+            <button class="filter-chip active" data-filter="all" onclick="setNodeFilter('all', this)">All Nodes</button>
+            <button class="filter-chip" data-filter="live" onclick="setNodeFilter('live', this)">Live Now</button>
+            <button class="filter-chip" data-filter="moving" onclick="setNodeFilter('moving', this)">Moving (>5km/h)</button>
+            <button class="filter-chip" data-filter="lowbat" onclick="setNodeFilter('lowbat', this)">Low Battery (&lt;20%)</button>
+          </div>
+        </div>
+
+        <div id="user-list" role="list" aria-label="Active Fleet Devices">
+          <div style="padding: 40px 20px; text-align: center; color: var(--text-muted); font-size: 0.85rem;">
+            Awaiting live GPS telemetry from devices...
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 2: QUARANTINE / REMOVED -->
+      <div class="tab-pane" id="pane-removed">
+        <div style="padding: 12px 14px; border-bottom: 1px solid var(--panel-border); display: flex; justify-content: space-between; align-items: center;">
+          <span style="font-size: 0.78rem; font-weight: 700; color: var(--text-muted);">Quarantined / Blacklisted Devices</span>
+          <button class="btn-admin" onclick="restoreAll()" style="font-size: 0.7rem;">Restore All</button>
+        </div>
+        <div id="removed-list" style="padding: 10px 12px; display: flex; flex-direction: column; gap: 8px;"></div>
+      </div>
+
+      <!-- TAB 3: AUDIT LOG -->
+      <div class="tab-pane" id="pane-audit">
+        <div id="audit-log-pane">
+          <div class="log-toolbar">
+            <span>LIVE AUDIT STREAM (MQTT)</span>
+            <button class="btn-admin" onclick="clearAuditLog()" style="padding: 2px 8px; font-size: 0.65rem;">Clear Log</button>
+          </div>
+          <div id="log-stream" role="log" aria-live="polite"></div>
+        </div>
+      </div>
+
+      <!-- TAB 4: SYSTEM & RELAY DIAGNOSTICS -->
+      <div class="tab-pane" id="pane-diag">
+        <div id="diag-pane">
+          <div class="diag-card">
+            <div class="diag-title">Broker Telemetry & Uplink</div>
+            <div class="diag-grid">
+              <div class="diag-metric">
+                <div class="diag-lbl">Active Relay</div>
+                <div class="diag-val" id="diag-broker-name" style="font-size: 0.78rem;">EMQX</div>
+              </div>
+              <div class="diag-metric">
+                <div class="diag-lbl">Uplink Latency</div>
+                <div class="diag-val" id="diag-ping" style="color: var(--primary);">-- ms</div>
+              </div>
+              <div class="diag-metric">
+                <div class="diag-lbl">Packets Ingested</div>
+                <div class="diag-val" id="diag-pkt-count">0</div>
+              </div>
+              <div class="diag-metric">
+                <div class="diag-lbl">QoS Protocol</div>
+                <div class="diag-val" style="color: #38bdf8;">MQTT v5 WSS</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="diag-card">
+            <div class="diag-title">Failover & Relay Switcher</div>
+            <div style="display: flex; gap: 6px; margin-top: 6px;">
+              <button class="btn-admin accent-btn" onclick="forceBrokerSwitch(0)" style="flex:1;">Primary (EMQX)</button>
+              <button class="btn-admin" onclick="forceBrokerSwitch(1)" style="flex:1;">Backup (HiveMQ)</button>
+            </div>
+          </div>
+
+          <div class="diag-card">
+            <div class="diag-title">Fleet Security Protocol</div>
+            <div style="font-size: 0.72rem; color: var(--text-muted); line-height: 1.5;">
+              • Siren Ring Topic: <code style="color:var(--primary);">pinpulse/v1/ring/{id}</code><br>
+              • Remote Stop Signal: <code style="color:var(--danger);">STOP_RING</code><br>
+              • Geofence Precision: High-Accuracy GPS (WGS84)<br>
+              • Storage Protection: Auto-cleaned APK cache
+            </div>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- MAP CONTAINER -->
+    <section id="map-wrapper" aria-label="Interactive Radar Map">
+      <!-- Map Style HUD -->
+      <div class="map-style-switcher" role="toolbar" aria-label="Map Tile Style">
+        <button class="style-btn active" onclick="setMapLayer('streets', this)">Streets</button>
+        <button class="style-btn" onclick="setMapLayer('satellite', this)">Satellite</button>
+        <button class="style-btn" onclick="setMapLayer('hybrid', this)">Hybrid</button>
+        <button class="style-btn" onclick="setMapLayer('night', this)">Night Ops</button>
+      </div>
+
+      <!-- Leaflet Canvas -->
+      <div id="map"></div>
+
+      <!-- Coordinates & Zoom HUD -->
+      <div class="coords-hud" id="coords-hud" aria-hidden="true">
+        <span>LAT: <span id="hud-lat" style="color:var(--text);">--.------</span></span>
+        <span>LNG: <span id="hud-lng" style="color:var(--text);">--.------</span></span>
+        <span>ZOOM: <span id="hud-zoom" style="color:var(--text);">12</span></span>
+      </div>
+
+      <!-- FLOATING TARGET INSPECTOR (PERSON MODAL) -->
+      <div id="person-modal" role="dialog" aria-modal="true" aria-labelledby="m-name">
+        <div class="modal-header">
+          <div class="modal-avatar" id="m-avatar">?</div>
+          <div class="modal-name-group">
+            <div class="modal-name" id="m-name">Unit Name</div>
+            <div class="modal-email" id="m-email">unit@email.com</div>
+            <div class="modal-code-badge" id="m-code">CODE: ----</div>
+          </div>
+          <button class="modal-close-btn" onclick="closeModal()" aria-label="Close inspector">✕</button>
+        </div>
+
+        <div class="stats-grid">
+          <div class="stat-box">
+            <div class="stat-lbl">Battery & Power</div>
+            <div class="stat-val" id="m-battery" style="color: #34d399;">100%</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-lbl">Velocity / Speed</div>
+            <div class="stat-val" id="m-speed">0 km/h</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-lbl">Radar Health</div>
+            <div class="stat-val" id="m-status" style="color: var(--primary);">Live</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-lbl">Friend Sharing</div>
+            <div class="stat-val" id="m-sharing">Active</div>
+          </div>
+          <div class="stat-box" style="grid-column: span 2;">
+            <div class="stat-lbl">Precise GPS Coordinates</div>
+            <div class="stat-val" id="m-coords" style="font-size: 0.78rem;">36.806500, 10.181500</div>
+          </div>
+        </div>
+
+        <!-- DUAL SIREN EMERGENCY CONTROLS -->
+        <div class="siren-control-row">
+          <button class="btn-action-ring" id="m-ring-btn" onclick="ringSelectedUser()">
+            🔊 Ring Phone
+          </button>
+          <button class="btn-action-stop-ring" id="m-stop-ring-btn" onclick="stopRingSelectedUser()">
+            🛑 Stop Siren
+          </button>
+        </div>
+
+        <!-- Navigation Button -->
+        <a id="m-nav-link" href="#" target="_blank" rel="noopener" class="btn-action-nav">
+          🗺️ Turn-by-Turn Google Maps Navigation
+        </a>
+
+        <!-- Bottom Actions -->
+        <div class="modal-bottom-actions">
+          <button class="btn-sub-action" onclick="copySelectedCoords()">📋 Copy GPS</button>
+          <button class="btn-sub-action" id="m-remove-btn" onclick="toggleRemoveSelected()">🚫 Quarantine</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ==================== ACCESSIBILITY & DISPLAY DIALOG ==================== -->
+  <div id="a11y-dialog" role="dialog" aria-modal="true" aria-labelledby="a11y-title" onclick="handleDialogBackdrop(event)">
+    <div class="a11y-box">
+      <div class="a11y-header">
+        <h2 id="a11y-title">♿ Accessibility & Tactical Display</h2>
+        <button class="modal-close-btn" onclick="closeA11yDialog()" aria-label="Close settings">✕</button>
+      </div>
+
+      <!-- Section 1: Themes & Contrast -->
+      <div class="a11y-section">
+        <div class="a11y-section-title">Color Theme & Visual Contrast</div>
+        <div class="a11y-options-grid">
+          <button class="a11y-choice-btn selected" id="theme-btn-dark" onclick="setTheme('dark')">Tactical Dark</button>
+          <button class="a11y-choice-btn" id="theme-btn-high-contrast" onclick="setTheme('high-contrast')">High Contrast (AAA)</button>
+          <button class="a11y-choice-btn" id="theme-btn-daylight" onclick="setTheme('daylight')">Daylight White</button>
+          <button class="a11y-choice-btn" id="theme-btn-night-amber" onclick="setTheme('night-amber')">Night Amber</button>
+        </div>
+      </div>
+
+      <!-- Section 2: Text Size Scaling -->
+      <div class="a11y-section">
+        <div class="a11y-section-title">Interface & Text Scaling</div>
+        <div class="a11y-options-grid">
+          <button class="a11y-choice-btn selected" id="scale-btn-100" onclick="setFontScale(1)">100% Standard</button>
+          <button class="a11y-choice-btn" id="scale-btn-115" onclick="setFontScale(1.15)">115% Medium</button>
+          <button class="a11y-choice-btn" id="scale-btn-130" onclick="setFontScale(1.30)">130% Large</button>
+          <button class="a11y-choice-btn" id="scale-btn-150" onclick="setFontScale(1.50)">150% X-Large</button>
+        </div>
+      </div>
+
+      <!-- Section 3: Colorblind Palette Support -->
+      <div class="a11y-section">
+        <div class="a11y-section-title">Colorblind Safe Filter</div>
+        <div class="a11y-options-grid">
+          <button class="a11y-choice-btn selected" id="cb-btn-none" onclick="setColorblindFilter('none')">Standard</button>
+          <button class="a11y-choice-btn" id="cb-btn-protanopia" onclick="setColorblindFilter('protanopia')">Protanopia</button>
+          <button class="a11y-choice-btn" id="cb-btn-deuteranopia" onclick="setColorblindFilter('deuteranopia')">Deuteranopia</button>
+          <button class="a11y-choice-btn" id="cb-btn-tritanopia" onclick="setColorblindFilter('tritanopia')">Tritanopia</button>
+          <button class="a11y-choice-btn" id="cb-btn-mono" onclick="setColorblindFilter('mono')">Monochrome</button>
+        </div>
+      </div>
+
+      <!-- Section 4: Map Marker Presentation -->
+      <div class="a11y-section">
+        <div class="a11y-section-title">Map Marker Density & Style</div>
+        <div class="a11y-options-grid">
+          <button class="a11y-choice-btn selected" id="marker-btn-full" onclick="setMarkerStyle('full')">Full Avatar</button>
+          <button class="a11y-choice-btn" id="marker-btn-dot" onclick="setMarkerStyle('dot')">Discreet Dots</button>
+        </div>
+      </div>
+
+      <!-- Section 5: Motion & Sensory Toggles -->
+      <div class="a11y-section">
+        <div class="a11y-section-title">Sensory & Motion Preferences</div>
+        <div class="a11y-toggle-row">
+          <div class="a11y-toggle-lbl">
+            <span class="a11y-toggle-name">Reduce Motion & Animations</span>
+            <span class="a11y-toggle-desc">Disables pulsing rings and transitions for vestibular comfort.</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="toggle-reduce-motion" onchange="toggleReduceMotion(this.checked)" />
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div class="a11y-toggle-row" style="margin-top: 6px;">
+          <div class="a11y-toggle-lbl">
+            <span class="a11y-toggle-name">Auditory Cues & Sounds</span>
+            <span class="a11y-toggle-desc">Play synthesized audio chimes for GPS packets and alarms.</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="toggle-audio-cues" onchange="toggleAudioCues(this.checked)" checked />
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Section 6: Units of Measurement -->
+      <div class="a11y-section">
+        <div class="a11y-section-title">Telemetry Units</div>
+        <div class="a11y-options-grid">
+          <button class="a11y-choice-btn selected" id="unit-btn-metric" onclick="setUnits('metric')">Metric (km/h)</button>
+          <button class="a11y-choice-btn" id="unit-btn-imperial" onclick="setUnits('imperial')">Imperial (mph)</button>
+        </div>
+      </div>
+
+      <!-- Section 7: Keyboard Shortcuts Cheat Sheet -->
+      <div class="a11y-section">
+        <div class="a11y-section-title">Keyboard Shortcuts</div>
+        <table class="kbd-table">
+          <tr><td><kbd>/</kbd></td><td>Focus search bar</td></tr>
+          <tr><td><kbd>Alt</kbd> + <kbd>A</kbd></td><td>Toggle Accessibility & Settings</td></tr>
+          <tr><td><kbd>Alt</kbd> + <kbd>M</kbd></td><td>Emergency Fleet Silence (Stop Sirens)</td></tr>
+          <tr><td><kbd>Alt</kbd> + <kbd>F</kbd></td><td>Auto-fit all units on map</td></tr>
+          <tr><td><kbd>1</kbd> - <kbd>4</kbd></td><td>Switch Admin Tabs (Nodes, Quarantine, Logs, Diag)</td></tr>
+          <tr><td><kbd>Esc</kbd></td><td>Close inspector / modal dialog</td></tr>
+        </table>
+      </div>
     </div>
   </div>
 
+  <!-- ==================== JAVASCRIPT LOGIC ==================== -->
   <script>
+    // ---------- State Variables ----------
     var users = {};
     var markers = {};
     var selectedUserId = null;
     var client = null;
-    var map;
-    var currentLayer;
-    var legsLayer;            // dashed lines + dots showing real positions of spread-out markers
-    var currentTab = 'active';
-    var OVERLAP_PX = 64;      // markers closer than this (in screen pixels) get spread apart
+    var map = null;
+    var currentLayer = null;
+    var legsLayer = null;
+    var currentFilter = 'all';
+    var totalPacketsReceived = 0;
+    var auditLogs = [];
+    var pingStartTime = 0;
 
-    // Removed people are saved in this browser (localStorage) so they stay removed after refresh.
     var REMOVED_KEY = 'pinpulse_master_removed_v1';
-    var removedIds = loadRemoved();
+    var A11Y_KEY = 'pinpulse_admin_a11y_v1';
 
+    var removedIds = loadRemoved();
+    var a11ySettings = loadA11y();
+
+    // Map Layers
     var layers = {
       streets: L.tileLayer('https://mt{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', { subdomains: ['0','1','2','3'], maxZoom: 20 }),
       satellite: L.tileLayer('https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', { subdomains: ['0','1','2','3'], maxZoom: 20 }),
-      hybrid: L.tileLayer('https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', { subdomains: ['0','1','2','3'], maxZoom: 20 })
+      hybrid: L.tileLayer('https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', { subdomains: ['0','1','2','3'], maxZoom: 20 }),
+      night: L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { subdomains: 'abcd', maxZoom: 19 })
     };
 
-    // ---------- Helpers ----------
+    // Relay list
+    var brokerList = [
+      { name: 'EMQX Primary', url: 'wss://broker.emqx.io:8084/mqtt' },
+      { name: 'HiveMQ Backup', url: 'wss://broker.hivemq.com:8884/mqtt' }
+    ];
+    var currentBrokerIdx = 0;
+
+    // Web Audio Synthesizer
+    var audioCtx = null;
+    function getAudioCtx() {
+      if (!audioCtx) {
+        try {
+          var AudioContext = window.AudioContext || window.webkitAudioContext;
+          audioCtx = new AudioContext();
+        } catch (e) {}
+      }
+      return audioCtx;
+    }
+
+    function playTone(freq, type, durationMs) {
+      if (!a11ySettings.audioCues) return;
+      try {
+        var ctx = getAudioCtx();
+        if (!ctx) return;
+        if (ctx.state === 'suspended') ctx.resume();
+        var osc = ctx.createOscillator();
+        var gain = ctx.createGain();
+        osc.type = type || 'sine';
+        osc.frequency.setValueAtTime(freq, ctx.currentTime);
+        gain.gain.setValueAtTime(0.12, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + (durationMs / 1000));
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + (durationMs / 1000));
+      } catch (e) {}
+    }
+
+    // ---------- Storage Helpers ----------
     function loadRemoved() {
       try { return JSON.parse(localStorage.getItem(REMOVED_KEY)) || {}; } catch (e) { return {}; }
     }
     function saveRemoved() {
       try { localStorage.setItem(REMOVED_KEY, JSON.stringify(removedIds)); } catch (e) {}
     }
+    function loadA11y() {
+      var defaults = {
+        theme: 'dark',
+        fontScale: 1,
+        colorblind: 'none',
+        markerStyle: 'full',
+        reduceMotion: false,
+        audioCues: true,
+        units: 'metric'
+      };
+      try {
+        var s = JSON.parse(localStorage.getItem(A11Y_KEY));
+        return Object.assign(defaults, s || {});
+      } catch (e) {
+        return defaults;
+      }
+    }
+    function saveA11y() {
+      try { localStorage.setItem(A11Y_KEY, JSON.stringify(a11ySettings)); } catch (e) {}
+    }
+
     function esc(s) {
       return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) {
         return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
       });
     }
+
     function isRemoved(id) { return !!removedIds[id]; }
     function isLiveUser(u) { return !!u.timestamp && (Date.now() - u.timestamp < 90000); }
     function hasValidPos(u) { return !(isNaN(u.lat) || isNaN(u.lng) || (u.lat === 0 && u.lng === 0)); }
+
+    function formatSpeed(speedKmh) {
+      if (a11ySettings.units === 'imperial') {
+        var mph = Math.round(speedKmh * 0.621371);
+        return mph + ' mph';
+      }
+      return Math.round(speedKmh) + ' km/h';
+    }
+
     function batteryText(u) {
       return (typeof u.batteryPercent === 'number') ? (u.batteryPercent + '%' + (u.isCharging ? ' ⚡' : '')) : '--';
     }
+
     function avatarHtml(u) {
       return (u.avatar && u.avatar.length > 10)
-        ? '<img src="' + esc(u.avatar) + '" />'
+        ? '<img src="' + esc(u.avatar) + '" alt="' + esc(u.name) + '" />'
         : esc((u.name || '?').charAt(0).toUpperCase());
     }
-    // A removed person who hasn't transmitted yet this session is shown from the saved snapshot
+
     function getUser(id) {
       if (users[id]) return users[id];
       var s = removedIds[id];
@@ -758,7 +1762,8 @@
       return {
         id: id,
         name: s.name || 'User ' + id.substring(0, 5),
-        email: s.email || 'No email provided',
+        email: s.email || 'No email',
+        friendCode: s.friendCode || '----',
         avatar: null,
         lat: NaN, lng: NaN,
         speed: 0,
@@ -769,12 +1774,24 @@
         snapshotOnly: true
       };
     }
+
     function snapshotOf(u) {
-      return { name: u.name, email: u.email, batteryPercent: u.batteryPercent, lastSeen: u.timestamp, removedAt: Date.now() };
+      return {
+        name: u.name,
+        email: u.email,
+        friendCode: u.friendCode,
+        batteryPercent: u.batteryPercent,
+        lastSeen: u.timestamp,
+        removedAt: Date.now()
+      };
     }
 
-    // ---------- Init ----------
+    // ---------- Initialization ----------
+    window.addEventListener('DOMContentLoaded', init);
+
     function init() {
+      applyA11ySettings();
+
       map = L.map('map', {
         center: [36.8065, 10.1815],
         zoom: 12,
@@ -790,22 +1807,28 @@
 
       map.on('click', function() {
         closeModal();
-        renderUserList();
       });
-      // Pixel distances change with zoom, so re-spread overlapping markers after every zoom
-      map.on('zoomend', layoutMarkers);
 
-      document.getElementById('user-list').addEventListener('click', onListClick);
+      map.on('mousemove', function(e) {
+        document.getElementById('hud-lat').textContent = e.latlng.lat.toFixed(6);
+        document.getElementById('hud-lng').textContent = e.latlng.lng.toFixed(6);
+      });
+
+      map.on('zoomend', function() {
+        document.getElementById('hud-zoom').textContent = map.getZoom();
+        layoutMarkers();
+      });
 
       connectMqtt();
       setupSearch();
+      setupKeyboardShortcuts();
       renderUserList();
 
-      // Continuous live refresh: updates "Live now", relative seconds, and markers every 2 seconds
       setInterval(function() {
         Object.values(users).forEach(updateMarker);
         layoutMarkers();
         renderUserList();
+        updateTopTicker();
         if (selectedUserId) {
           var su = getUser(selectedUserId);
           if (su) showUserModal(su);
@@ -821,82 +1844,85 @@
       currentLayer.addTo(map);
     }
 
-    // ---------- Live data ----------
-    var brokerList = [
-      'wss://broker.emqx.io:8084/mqtt',
-      'wss://broker.hivemq.com:8884/mqtt'
-    ];
-    var currentBrokerIdx = 0;
-
+    // ---------- MQTT Uplink ----------
     function connectMqtt() {
-      var brokerWs = brokerList[currentBrokerIdx];
-      var clientId = 'pinpulse_web_' + Math.random().toString(16).substring(2, 8);
+      var broker = brokerList[currentBrokerIdx];
+      var clientId = 'pinpulse_admin_' + Math.random().toString(16).substring(2, 9);
 
-      client = mqtt.connect(brokerWs, {
+      document.getElementById('tk-relay-status').textContent = 'Connecting (' + broker.name + ')...';
+      document.getElementById('diag-broker-name').textContent = broker.name;
+
+      pingStartTime = Date.now();
+
+      client = mqtt.connect(broker.url, {
         clientId: clientId,
         clean: true,
-        keepalive: 15,
-        reconnectPeriod: 2000,
-        connectTimeout: 7000
+        keepalive: 20,
+        reconnectPeriod: 2500,
+        connectTimeout: 8000
       });
 
       client.on('connect', function() {
-        document.getElementById('conn-dot').className = 'status-dot connected';
-        document.getElementById('conn-text').textContent = 'Live Global Relay Active (' + brokerWs.split('//')[1].split(':')[0] + ')';
-        // Wildcard subscribe: catches every single user's location packet worldwide in real-time!
+        var latency = Math.max(8, Date.now() - pingStartTime);
+        document.getElementById('tk-relay-status').textContent = broker.name + ' • ' + latency + 'ms';
+        document.getElementById('tk-relay-status').style.color = 'var(--primary)';
+        document.getElementById('diag-ping').textContent = latency + ' ms';
+        addAuditEntry('Connected to live broker ' + broker.name, 'connect');
+        playTone(600, 'sine', 150);
+
+        // Wildcard subscriptions to monitor all global fleet nodes
         client.subscribe('pinpulse/v1/user/+/loc', { qos: 0 });
         client.subscribe('pinpulse/v1/network/live', { qos: 0 });
         client.subscribe('pinpulse/v1/user/+/status', { qos: 0 });
-        client.subscribe('pinpulse/v1/alerts/+', { qos: 0 });
+        client.subscribe('pinpulse/v1/alerts/+', { qos: 1 });
+        client.subscribe('pinpulse/v1/ring/+', { qos: 1 });
       });
 
       client.on('error', function(err) {
-        console.warn('MQTT Error on', brokerWs, err);
-        document.getElementById('conn-dot').className = 'status-dot disconnected';
-        document.getElementById('conn-text').textContent = 'Switching to backup relay...';
-        try { client.end(true); } catch(e) {}
-        currentBrokerIdx = (currentBrokerIdx + 1) % brokerList.length;
-        setTimeout(connectMqtt, 1500);
+        console.warn('MQTT Error:', err);
+        document.getElementById('tk-relay-status').textContent = 'Relay Error';
+        document.getElementById('tk-relay-status').style.color = 'var(--danger)';
+        addAuditEntry('Broker error: ' + err.message, 'alarm');
       });
 
       client.on('message', function(topic, payload) {
+        totalPacketsReceived++;
+        document.getElementById('diag-pkt-count').textContent = totalPacketsReceived;
+
         try {
           var data = JSON.parse(payload.toString());
           if (topic.indexOf('/status') !== -1) {
             handleStatusUpdate(data);
+          } else if (topic.indexOf('/ring/') !== -1 || (data.type && data.type.indexOf('RING') !== -1)) {
+            handleRingEvent(topic, data);
           } else {
             handleUserPacket(data);
           }
         } catch (e) {
-          console.error('Parse error:', e);
+          console.error('Parse error on payload:', e);
         }
       });
     }
 
-    function ringSelectedUser() {
-      if (!selectedUserId) {
-        alert("Please tap on a user on the map or in the sidebar first!");
-        return;
+    function forceBrokerSwitch(idx) {
+      if (client) {
+        try { client.end(true); } catch (e) {}
       }
-      if (!client || !client.connected) {
-        alert("Relay reconnecting... please wait a second and tap again.");
-        return;
-      }
-      var u = getUser(selectedUserId);
-      var payload = JSON.stringify({
-        type: "RING_PHONE",
-        callerName: "Web Radar Commander",
-        timestamp: Date.now()
-      });
-      try {
-        client.publish("pinpulse/v1/ring/" + selectedUserId, payload, { qos: 1 });
-        client.publish("pinpulse/v1/alerts/" + selectedUserId, payload, { qos: 1 });
-        if (u && u.friendCode) {
-          client.publish("pinpulse/v1/ring/" + u.friendCode, payload, { qos: 1 });
-        }
-        alert("🔊 Siren triggered on " + (u ? u.name : "target") + "'s phone! It will ring at max volume with vibration until they press Volume Down or tap Stop.");
-      } catch (err) {
-        alert("Failed to send siren signal: " + err.message);
+      currentBrokerIdx = idx;
+      connectMqtt();
+    }
+
+    function handleRingEvent(topic, data) {
+      var type = data.type || '';
+      var caller = data.callerName || 'Unknown Operator';
+      if (type === 'STOP_RING' || type === 'STOP_SIREN') {
+        addAuditEntry('🛑 Emergency STOP_RING received from ' + caller + ' on ' + topic, 'silence');
+        playTone(400, 'triangle', 250);
+        document.getElementById('tk-siren-alert').style.display = 'none';
+      } else {
+        addAuditEntry('🚨 EMERGENCY SIREN triggered by ' + caller + ' on ' + topic, 'alarm');
+        playTone(880, 'sawtooth', 400);
+        document.getElementById('tk-siren-alert').style.display = 'flex';
       }
     }
 
@@ -904,8 +1930,9 @@
       if (!data || !data.userId) return;
       var id = data.userId;
       if (users[id]) {
-        if (data.status === 'OFFLINE' || data.type === 'PHONE_OFFLINE' || data.type === 'PHONE_SHUTDOWN') {
+        if (data.status === 'OFFLINE' || data.type === 'PHONE_OFFLINE') {
           users[id].isSharing = false;
+          addAuditEntry('Device offline: ' + users[id].name + ' (' + id.substring(0, 8) + ')', 'normal');
           updateMarker(users[id]);
           renderUserList();
           if (selectedUserId === id) showUserModal(users[id]);
@@ -916,10 +1943,13 @@
     function handleUserPacket(data) {
       if (!data || !data.userId) return;
       var id = data.userId;
+      var isNew = !users[id];
+
       users[id] = {
         id: id,
-        name: data.displayName || 'User ' + id.substring(0, 5),
-        email: data.email || 'No email provided',
+        name: data.displayName || 'Unit ' + id.substring(0, 5),
+        email: data.email || 'No email',
+        friendCode: data.friendCode || '----',
         avatar: data.avatarBase64 || null,
         lat: parseFloat(data.latitude),
         lng: parseFloat(data.longitude),
@@ -930,7 +1960,11 @@
         timestamp: data.timestamp || Date.now()
       };
 
-      // Keep the saved snapshot of removed people up to date (name, battery, last seen)
+      if (isNew) {
+        addAuditEntry('New Node Registered: ' + users[id].name + ' [' + users[id].friendCode + ']', 'connect');
+        playTone(720, 'sine', 120);
+      }
+
       if (isRemoved(id)) {
         var keepRemovedAt = removedIds[id].removedAt;
         removedIds[id] = snapshotOf(users[id]);
@@ -941,13 +1975,14 @@
       updateMarker(users[id]);
       layoutMarkers();
       renderUserList();
+      updateTopTicker();
 
       if (selectedUserId === id) {
         showUserModal(users[id]);
       }
     }
 
-    // ---------- Markers ----------
+    // ---------- Markers & Canvas Layout ----------
     function updateMarker(u) {
       if (!hasValidPos(u) || isRemoved(u.id)) {
         removeMarker(u.id);
@@ -955,18 +1990,30 @@
       }
 
       var isLive = isLiveUser(u);
-      var iconHtml = '<div class="pinpulse-marker-wrapper">' +
-                       (isLive ? '<div class="pulse-ring"></div>' : '') +
-                       '<div class="avatar-bubble">' + avatarHtml(u) + '</div>' +
-                       '<div class="name-pill">' + esc(u.name) + ' (' + esc(batteryText(u)) + ')</div>' +
-                     '</div>';
+      var isDot = (a11ySettings.markerStyle === 'dot');
 
-      var customIcon = L.divIcon({
-        className: 'pinpulse-marker',
-        html: iconHtml,
-        iconSize: [60, 75],
-        iconAnchor: [30, 35]
-      });
+      var customIcon;
+      if (isDot) {
+        var dotHtml = '<div class="minimal-dot-wrapper"><div class="minimal-dot-core"></div></div>';
+        customIcon = L.divIcon({
+          className: 'pinpulse-marker',
+          html: dotHtml,
+          iconSize: [22, 22],
+          iconAnchor: [11, 11]
+        });
+      } else {
+        var iconHtml = '<div class="pinpulse-marker-wrapper">' +
+                         (isLive ? '<div class="pulse-ring"></div>' : '') +
+                         '<div class="avatar-bubble">' + avatarHtml(u) + '</div>' +
+                         '<div class="name-pill">' + esc(u.name) + ' (' + esc(batteryText(u)) + ')</div>' +
+                       '</div>';
+        customIcon = L.divIcon({
+          className: 'pinpulse-marker',
+          html: iconHtml,
+          iconSize: [60, 75],
+          iconAnchor: [30, 35]
+        });
+      }
 
       if (markers[u.id]) {
         markers[u.id].setIcon(customIcon);
@@ -987,11 +2034,11 @@
       }
     }
 
-    // Anti-overlap: people standing at (nearly) the same spot are fanned out in a circle around
-    // their shared position. A dashed line + small dot marks each person's REAL location.
     function layoutMarkers() {
       if (!map || !legsLayer) return;
       legsLayer.clearLayers();
+
+      var OVERLAP_PX = (a11ySettings.markerStyle === 'dot') ? 28 : 64;
 
       var items = Object.keys(markers).sort().map(function(id) {
         var u = users[id];
@@ -1003,7 +2050,6 @@
         if (assigned[items[i].id]) continue;
         var group = [items[i]];
         assigned[items[i].id] = true;
-        // Grow the group transitively (A near B, B near C => A, B, C together)
         for (var g = 0; g < group.length; g++) {
           for (var j = 0; j < items.length; j++) {
             if (assigned[items[j].id]) continue;
@@ -1029,7 +2075,7 @@
       cy /= group.length;
 
       var n = group.length;
-      var radius = Math.max(56, (n * 70) / (2 * Math.PI));
+      var radius = Math.max(50, (n * 60) / (2 * Math.PI));
       group.forEach(function(it, k) {
         var angle = (2 * Math.PI * k) / n - Math.PI / 2;
         var pos = L.point(cx + radius * Math.cos(angle), cy + radius * Math.sin(angle));
@@ -1039,69 +2085,80 @@
         L.polyline([[it.u.lat, it.u.lng], shown], {
           color: '#10b981', weight: 2, opacity: 0.8, dashArray: '4 5', interactive: false
         }).addTo(legsLayer);
-        L.circleMarker([it.u.lat, it.u.lng], {
-          radius: 4, color: '#ffffff', weight: 1.5, fillColor: '#10b981', fillOpacity: 1, interactive: false
-        }).addTo(legsLayer);
       });
     }
 
-    // ---------- Remove / Put back ----------
-    function removeUser(id) {
-      var u = getUser(id);
-      if (!u) return;
-      removedIds[id] = snapshotOf(u);
-      saveRemoved();
-      removeMarker(id);
-      layoutMarkers();
-      renderUserList();
-      if (selectedUserId === id) showUserModal(getUser(id));
-    }
-
-    function restoreUser(id) {
-      delete removedIds[id];
-      saveRemoved();
-      if (users[id]) updateMarker(users[id]);
-      layoutMarkers();
-      renderUserList();
-      if (selectedUserId === id) {
-        var u = getUser(id);
-        if (u) showUserModal(u); else closeModal();
-      }
-    }
-
-    function restoreAll() {
-      removedIds = {};
-      saveRemoved();
-      Object.values(users).forEach(updateMarker);
-      layoutMarkers();
-      renderUserList();
-      if (selectedUserId) {
-        var u = getUser(selectedUserId);
-        if (u) showUserModal(u); else closeModal();
-      }
-    }
-
-    function toggleRemoveSelected() {
+    // ---------- Remote Siren Controls ----------
+    function ringSelectedUser() {
       if (!selectedUserId) return;
-      if (isRemoved(selectedUserId)) restoreUser(selectedUserId);
-      else removeUser(selectedUserId);
+      var u = getUser(selectedUserId);
+      var payload = JSON.stringify({
+        type: 'RING_PHONE',
+        callerName: 'Web Admin Commander',
+        timestamp: Date.now()
+      });
+
+      try {
+        client.publish('pinpulse/v1/ring/' + selectedUserId, payload, { qos: 1 });
+        client.publish('pinpulse/v1/alerts/' + selectedUserId, payload, { qos: 1 });
+        if (u && u.friendCode) {
+          client.publish('pinpulse/v1/ring/' + u.friendCode, payload, { qos: 1 });
+        }
+        addAuditEntry('Triggered Emergency Siren on ' + (u ? u.name : selectedUserId), 'alarm');
+        alert('🔊 Emergency Siren dispatched to ' + (u ? u.name : 'Target') + '!\nRequires security PIN to stop locally.');
+      } catch (e) {
+        alert('Failed to send ring: ' + e.message);
+      }
     }
 
-    function switchTab(tab) {
-      currentTab = tab;
-      document.getElementById('tab-active').classList.toggle('active', tab === 'active');
-      document.getElementById('tab-removed').classList.toggle('active', tab === 'removed');
-      renderUserList();
+    function stopRingSelectedUser() {
+      if (!selectedUserId) return;
+      var u = getUser(selectedUserId);
+      var payload = JSON.stringify({
+        type: 'STOP_RING',
+        callerName: 'Web Admin Commander',
+        timestamp: Date.now()
+      });
+
+      try {
+        client.publish('pinpulse/v1/ring/' + selectedUserId, payload, { qos: 1 });
+        client.publish('pinpulse/v1/alerts/' + selectedUserId, payload, { qos: 1 });
+        if (u && u.friendCode) {
+          client.publish('pinpulse/v1/ring/' + u.friendCode, payload, { qos: 1 });
+        }
+        addAuditEntry('Dispatched STOP_RING (Remote Silence) for ' + (u ? u.name : selectedUserId), 'silence');
+        alert('🛑 Remote silence signal dispatched to ' + (u ? u.name : 'Target') + '!\nAlarm & vibration cut off immediately.');
+      } catch (e) {
+        alert('Failed to send stop signal: ' + e.message);
+      }
     }
 
-    // ---------- Selection & details ----------
+    function silenceAllFleetSirens() {
+      if (!confirm('Broadcast emergency STOP_RING to silence all active sirens worldwide?')) return;
+      var payload = JSON.stringify({
+        type: 'STOP_RING',
+        callerName: 'SuperAdmin Fleet Command',
+        timestamp: Date.now()
+      });
+      try {
+        client.publish('pinpulse/v1/alerts/broadcast', payload, { qos: 1 });
+        client.publish('pinpulse/v1/ring/broadcast', payload, { qos: 1 });
+        addAuditEntry('BROADCAST EMERGENCY SILENCE DISPATCHED TO ALL UNITS', 'silence');
+        document.getElementById('tk-siren-alert').style.display = 'none';
+        alert('🛑 Fleet silence signal broadcast successfully.');
+      } catch (e) {
+        alert('Broadcast failed: ' + e.message);
+      }
+    }
+
+    // ---------- Inspector Floating Modal ----------
     function selectUser(id) {
       var u = getUser(id);
       if (!u) return;
       selectedUserId = id;
 
       if (hasValidPos(u)) {
-        map.flyTo([u.lat, u.lng], Math.max(map.getZoom(), 16), { duration: 1.2 });
+        map.flyTo([u.lat, u.lng], Math.max(map.getZoom(), 16), { duration: 1.0 });
       }
       showUserModal(u);
       renderUserList();
@@ -1110,6 +2167,7 @@
     function closeModal() {
       document.getElementById('person-modal').style.display = 'none';
       selectedUserId = null;
+      renderUserList();
     }
 
     function showUserModal(u) {
@@ -1118,35 +2176,29 @@
 
       document.getElementById('m-name').textContent = u.name;
       document.getElementById('m-email').textContent = u.email;
-      document.getElementById('m-id').textContent = 'ID: ' + u.id;
+      document.getElementById('m-code').textContent = 'FRIEND CODE: ' + (u.friendCode || '----');
       document.getElementById('m-battery').textContent = batteryText(u);
-      document.getElementById('m-speed').textContent = Math.round(u.speed) + ' km/h';
+      document.getElementById('m-speed').textContent = formatSpeed(u.speed);
+
       document.getElementById('m-coords').textContent = hasValidPos(u)
         ? (u.lat.toFixed(6) + ', ' + u.lng.toFixed(6))
-        : 'Waiting for GPS...';
+        : 'Waiting for GPS fix...';
 
       var isLive = isLiveUser(u);
       var statusEl = document.getElementById('m-status');
       if (isLive) {
         statusEl.textContent = 'Live Now';
+        statusEl.style.color = 'var(--primary)';
       } else if (u.timestamp) {
         statusEl.textContent = 'Last Seen ' + Math.round((Date.now() - u.timestamp) / 1000) + 's ago';
+        statusEl.style.color = 'var(--text-muted)';
       } else {
-        statusEl.textContent = 'Not seen yet';
-      }
-      statusEl.style.color = isLive ? 'var(--primary)' : 'var(--text-muted)';
-
-      var sharingEl = document.getElementById('m-sharing');
-      if (u.isSharing) {
-        sharingEl.textContent = 'Visible to Friends';
-        sharingEl.style.color = 'var(--primary)';
-      } else {
-        sharingEl.textContent = 'Ghost Mode (Master Bypass Active)';
-        sharingEl.style.color = 'var(--warning)';
+        statusEl.textContent = 'Offline';
+        statusEl.style.color = 'var(--danger)';
       }
 
       var avatarEl = document.getElementById('m-avatar');
-      avatarEl.textContent = '';
+      avatarEl.innerHTML = '';
       if (u.avatar && u.avatar.length > 10) {
         var img = document.createElement('img');
         img.src = u.avatar;
@@ -1159,112 +2211,343 @@
         ? 'https://www.google.com/maps/dir/?api=1&destination=' + u.lat + ',' + u.lng
         : '#';
 
-      document.getElementById('m-remove-btn').textContent = isRemoved(u.id)
-        ? '↺ Put back on map'
-        : '✕ Remove from map';
+      document.getElementById('m-remove-btn').textContent = isRemoved(u.id) ? 'Restore Node' : 'Quarantine Node';
     }
 
-    // ---------- Sidebar list ----------
-    function onListClick(e) {
-      var el = e.target.closest('[data-action]');
-      if (!el) return;
-      var action = el.getAttribute('data-action');
-      var id = el.getAttribute('data-id');
-      if (action === 'remove') {
-        e.stopPropagation();
-        removeUser(id);
-      } else if (action === 'restore') {
-        e.stopPropagation();
-        restoreUser(id);
-      } else if (action === 'restore-all') {
-        restoreAll();
-      } else if (action === 'select') {
-        selectUser(id);
+    function copySelectedCoords() {
+      if (!selectedUserId) return;
+      var u = getUser(selectedUserId);
+      if (!u || !hasValidPos(u)) return;
+      var text = u.lat.toFixed(6) + ', ' + u.lng.toFixed(6);
+      navigator.clipboard.writeText(text).then(function() {
+        alert('Coordinates copied to clipboard:\n' + text);
+      });
+    }
+
+    function toggleRemoveSelected() {
+      if (!selectedUserId) return;
+      if (isRemoved(selectedUserId)) {
+        delete removedIds[selectedUserId];
+      } else {
+        var u = getUser(selectedUserId);
+        removedIds[selectedUserId] = snapshotOf(u || { name: 'Node ' + selectedUserId });
       }
+      saveRemoved();
+      Object.values(users).forEach(updateMarker);
+      layoutMarkers();
+      renderUserList();
+      if (selectedUserId) {
+        var refreshed = getUser(selectedUserId);
+        if (refreshed) showUserModal(refreshed);
+      }
+    }
+
+    function restoreAll() {
+      removedIds = {};
+      saveRemoved();
+      Object.values(users).forEach(updateMarker);
+      layoutMarkers();
+      renderUserList();
+      alert('All quarantined devices restored to live map.');
+    }
+
+    function fitAllMarkersOnMap() {
+      var latlngs = Object.values(users)
+        .filter(function(u) { return hasValidPos(u) && !isRemoved(u.id); })
+        .map(function(u) { return [u.lat, u.lng]; });
+      if (latlngs.length > 0) {
+        map.fitBounds(latlngs, { padding: [50, 50], maxZoom: 16 });
+      } else {
+        alert('No active GPS positions to fit.');
+      }
+    }
+
+    // ---------- Sidebar List & Tabs ----------
+    function switchSidebarTab(tab) {
+      document.querySelectorAll('.sidebar-tab').forEach(function(b) { b.classList.remove('active'); b.setAttribute('aria-selected', 'false'); });
+      document.querySelectorAll('.tab-pane').forEach(function(p) { p.classList.remove('active'); });
+
+      document.getElementById('tab-btn-' + tab).classList.add('active');
+      document.getElementById('tab-btn-' + tab).setAttribute('aria-selected', 'true');
+      document.getElementById('pane-' + tab).classList.add('active');
+
+      if (tab === 'removed') renderRemovedList();
+    }
+
+    function setNodeFilter(filter, btn) {
+      currentFilter = filter;
+      document.querySelectorAll('.filter-chip').forEach(function(c) { c.classList.remove('active'); });
+      if (btn) btn.classList.add('active');
+      renderUserList();
     }
 
     function renderUserList() {
       var listEl = document.getElementById('user-list');
-      var filter = document.getElementById('search-box').value.toLowerCase();
+      var filterText = document.getElementById('search-box').value.toLowerCase();
 
-      var activeArr = Object.values(users).filter(function(u) { return !isRemoved(u.id); });
-      var removedArr = Object.keys(removedIds).map(getUser).filter(Boolean);
-      var liveCount = activeArr.filter(isLiveUser).length;
+      var allNodes = Object.values(users).filter(function(u) { return !isRemoved(u.id); });
 
-      document.getElementById('active-count').textContent = liveCount + ' Live';
-      document.getElementById('tab-active').textContent = 'On Map (' + activeArr.length + ')';
-      document.getElementById('tab-removed').textContent = 'Removed (' + removedArr.length + ')';
+      var filtered = allNodes.filter(function(u) {
+        var matchesText = u.name.toLowerCase().includes(filterText) ||
+                          u.email.toLowerCase().includes(filterText) ||
+                          u.friendCode.toLowerCase().includes(filterText) ||
+                          u.id.toLowerCase().includes(filterText);
+        if (!matchesText) return false;
 
-      var source = (currentTab === 'active') ? activeArr : removedArr;
-      var filtered = source.filter(function(u) {
-        return u.name.toLowerCase().includes(filter) ||
-               u.email.toLowerCase().includes(filter) ||
-               u.id.toLowerCase().includes(filter);
+        if (currentFilter === 'live') return isLiveUser(u);
+        if (currentFilter === 'moving') return u.speed > 5;
+        if (currentFilter === 'lowbat') return u.batteryPercent <= 20;
+        return true;
       });
 
-      var html = '';
-      if (currentTab === 'removed' && removedArr.length > 0) {
-        html += '<div class="list-toolbar"><span>Hidden from map (saved in this browser)</span>' +
-                '<button class="toolbar-btn" data-action="restore-all">↺ Put all back</button></div>';
-      }
+      document.getElementById('badge-active-count').textContent = allNodes.length;
 
       if (filtered.length === 0) {
-        var msg;
-        if (currentTab === 'removed') {
-          msg = removedArr.length === 0 ? 'No removed people. Use ✕ on a person to remove them from the map.' : 'No match.';
-        } else if (Object.keys(users).length === 0) {
-          msg = 'Listening for devices transmitting GPS...';
-        } else if (activeArr.length === 0) {
-          msg = 'Everyone is removed. Open the "Removed" tab to put people back.';
-        } else {
-          msg = 'No match.';
-        }
-        listEl.innerHTML = html + '<div style="padding: 40px 20px; text-align: center; color: var(--text-muted); font-size: 13px;">' + msg + '</div>';
+        listEl.innerHTML = '<div style="padding: 30px 10px; text-align: center; color: var(--text-muted); font-size: 0.8rem;">No matching units found.</div>';
         return;
       }
 
-      html += filtered.map(function(u) {
+      var html = '';
+      filtered.forEach(function(u) {
+        var isSelected = (selectedUserId === u.id);
         var isLive = isLiveUser(u);
-        var activeClass = (selectedUserId === u.id) ? ' active' : '';
-        var removedClass = isRemoved(u.id) ? ' removed' : '';
-        var safeId = esc(u.id);
+        var batClass = (u.batteryPercent <= 20) ? 'low' : 'normal';
 
-        var statusBadge;
-        if (isLive) {
-          statusBadge = u.isSharing
-            ? '<span class="badge-live">● Live</span>'
-            : '<span class="badge-ghost">● Ghost (Master Tracked)</span>';
-        } else {
-          statusBadge = '<span class="badge-speed">○ Offline</span>';
-        }
-
-        var actionBtn = isRemoved(u.id)
-          ? '<button class="card-action restore" title="Put back on map" data-action="restore" data-id="' + safeId + '">↺ Put back</button>'
-          : '<button class="card-action remove" title="Remove from map" data-action="remove" data-id="' + safeId + '">✕</button>';
-
-        return '<div class="user-card' + activeClass + removedClass + '" data-action="select" data-id="' + safeId + '">' +
-                 '<div class="card-avatar">' + avatarHtml(u) + '</div>' +
-                 '<div class="card-info">' +
-                   '<div class="card-title">' + esc(u.name) + '</div>' +
-                   '<div class="card-email">' + esc(u.email) + '</div>' +
-                   '<div class="card-sub">' +
-                     statusBadge +
-                     '<span class="badge-speed">' + Math.round(u.speed) + ' km/h</span>' +
-                     '<span class="badge-battery">🔋 ' + esc(batteryText(u)) + '</span>' +
-                   '</div>' +
-                 '</div>' +
-                 actionBtn +
-               '</div>';
-      }).join('');
+        html += '<div class="user-card ' + (isSelected ? 'active' : '') + '" onclick="selectUser(\'' + u.id + '\')">';
+        html += '  <div class="card-avatar">' + avatarHtml(u) + '</div>';
+        html += '  <div class="card-info">';
+        html += '    <div class="card-title-row">';
+        html += '      <span class="card-title">' + esc(u.name) + '</span>';
+        html += '      <span class="card-code">' + esc(u.friendCode) + '</span>';
+        html += '    </div>';
+        html += '    <div class="card-email">' + esc(u.email) + '</div>';
+        html += '    <div class="card-telemetry">';
+        html += '      <span style="color:' + (isLive ? 'var(--primary)' : 'var(--text-muted)') + ';">' + (isLive ? '● Live' : '○ Idle') + '</span>';
+        html += '      <span class="badge-speed">' + formatSpeed(u.speed) + '</span>';
+        html += '      <span class="badge-battery ' + batClass + '">' + batteryText(u) + '</span>';
+        html += '    </div>';
+        html += '  </div>';
+        html += '  <div class="card-quick-actions">';
+        html += '    <button class="action-icon-btn ring" onclick="event.stopPropagation(); selectedUserId=\'' + u.id + '\'; ringSelectedUser();" title="Ring Siren">🔊</button>';
+        html += '    <button class="action-icon-btn stop" onclick="event.stopPropagation(); selectedUserId=\'' + u.id + '\'; stopRingSelectedUser();" title="Stop Siren">🛑</button>';
+        html += '  </div>';
+        html += '</div>';
+      });
 
       listEl.innerHTML = html;
     }
 
-    function setupSearch() {
-      document.getElementById('search-box').addEventListener('input', renderUserList);
+    function renderRemovedList() {
+      var listEl = document.getElementById('removed-list');
+      var keys = Object.keys(removedIds);
+      document.getElementById('badge-removed-count').textContent = keys.length;
+
+      if (keys.length === 0) {
+        listEl.innerHTML = '<div style="padding: 30px; text-align: center; color: var(--text-muted); font-size: 0.8rem;">No quarantined devices.</div>';
+        return;
+      }
+
+      var html = '';
+      keys.forEach(function(id) {
+        var s = removedIds[id];
+        html += '<div class="user-card">';
+        html += '  <div class="card-info">';
+        html += '    <div class="card-title">' + esc(s.name) + '</div>';
+        html += '    <div class="card-email">' + esc(s.email) + '</div>';
+        html += '  </div>';
+        html += '  <button class="btn-admin" onclick="delete removedIds[\'' + id + '\']; saveRemoved(); renderRemovedList(); Object.values(users).forEach(updateMarker);">Restore</button>';
+        html += '</div>';
+      });
+      listEl.innerHTML = html;
     }
 
-    window.addEventListener('DOMContentLoaded', init);
+    function updateTopTicker() {
+      var all = Object.values(users).filter(function(u) { return !isRemoved(u.id); });
+      var live = all.filter(isLiveUser).length;
+      document.getElementById('tk-live-count').textContent = live + ' Online';
+
+      if (all.length > 0) {
+        var totalBat = all.reduce(function(acc, u) { return acc + (u.batteryPercent || 100); }, 0);
+        var avg = Math.round(totalBat / all.length);
+        document.getElementById('tk-battery-avg').textContent = avg + '%';
+      }
+    }
+
+    // ---------- Audit Log ----------
+    function addAuditEntry(msg, type) {
+      var time = new Date().toLocaleTimeString();
+      var entry = { time: time, msg: msg, type: type || 'normal' };
+      auditLogs.push(entry);
+      if (auditLogs.length > 100) auditLogs.shift();
+
+      document.getElementById('badge-log-count').textContent = auditLogs.length;
+
+      var stream = document.getElementById('log-stream');
+      var div = document.createElement('div');
+      div.className = 'log-entry ' + entry.type;
+      div.innerHTML = '<span class="log-time">[' + time + ']</span> ' + esc(msg);
+      stream.appendChild(div);
+      stream.scrollTop = stream.scrollHeight;
+    }
+
+    function clearAuditLog() {
+      auditLogs = [];
+      document.getElementById('log-stream').innerHTML = '';
+      document.getElementById('badge-log-count').textContent = '0';
+    }
+
+    // ---------- Accessibility System ----------
+    function openA11yDialog() {
+      document.getElementById('a11y-dialog').classList.add('open');
+    }
+
+    function closeA11yDialog() {
+      document.getElementById('a11y-dialog').classList.remove('open');
+    }
+
+    function handleDialogBackdrop(e) {
+      if (e.target.id === 'a11y-dialog') closeA11yDialog();
+    }
+
+    function applyA11ySettings() {
+      // 1. Theme
+      document.body.classList.remove('theme-high-contrast', 'theme-daylight', 'theme-night-amber');
+      if (a11ySettings.theme !== 'dark') {
+        document.body.classList.add('theme-' + a11ySettings.theme);
+      }
+      document.querySelectorAll('.a11y-options-grid button[id^="theme-btn-"]').forEach(function(b) {
+        b.classList.toggle('selected', b.id === 'theme-btn-' + a11ySettings.theme);
+      });
+
+      // 2. Font Scale
+      document.documentElement.style.setProperty('--font-scale', a11ySettings.fontScale);
+      var scaleId = 'scale-btn-' + Math.round(a11ySettings.fontScale * 100);
+      document.querySelectorAll('.a11y-options-grid button[id^="scale-btn-"]').forEach(function(b) {
+        b.classList.toggle('selected', b.id === scaleId);
+      });
+
+      // 3. Colorblind
+      document.body.classList.remove('cb-protanopia', 'cb-deuteranopia', 'cb-tritanopia', 'cb-mono');
+      if (a11ySettings.colorblind !== 'none') {
+        document.body.classList.add('cb-' + a11ySettings.colorblind);
+      }
+      document.querySelectorAll('.a11y-options-grid button[id^="cb-btn-"]').forEach(function(b) {
+        b.classList.toggle('selected', b.id === 'cb-btn-' + a11ySettings.colorblind);
+      });
+
+      // 4. Marker Style
+      document.querySelectorAll('.a11y-options-grid button[id^="marker-btn-"]').forEach(function(b) {
+        b.classList.toggle('selected', b.id === 'marker-btn-' + a11ySettings.markerStyle);
+      });
+
+      // 5. Reduce Motion
+      document.body.classList.toggle('reduce-motion', !!a11ySettings.reduceMotion);
+      var rmCheck = document.getElementById('toggle-reduce-motion');
+      if (rmCheck) rmCheck.checked = !!a11ySettings.reduceMotion;
+
+      // 6. Audio cues
+      var acCheck = document.getElementById('toggle-audio-cues');
+      if (acCheck) acCheck.checked = !!a11ySettings.audioCues;
+
+      // 7. Units
+      document.querySelectorAll('.a11y-options-grid button[id^="unit-btn-"]').forEach(function(b) {
+        b.classList.toggle('selected', b.id === 'unit-btn-' + a11ySettings.units);
+      });
+    }
+
+    function setTheme(theme) {
+      a11ySettings.theme = theme;
+      saveA11y();
+      applyA11ySettings();
+    }
+
+    function setFontScale(scale) {
+      a11ySettings.fontScale = scale;
+      saveA11y();
+      applyA11ySettings();
+    }
+
+    function setColorblindFilter(filter) {
+      a11ySettings.colorblind = filter;
+      saveA11y();
+      applyA11ySettings();
+    }
+
+    function setMarkerStyle(style) {
+      a11ySettings.markerStyle = style;
+      saveA11y();
+      applyA11ySettings();
+      Object.values(users).forEach(updateMarker);
+      layoutMarkers();
+    }
+
+    function toggleReduceMotion(enabled) {
+      a11ySettings.reduceMotion = enabled;
+      saveA11y();
+      applyA11ySettings();
+    }
+
+    function toggleAudioCues(enabled) {
+      a11ySettings.audioCues = enabled;
+      saveA11y();
+      applyA11ySettings();
+      if (enabled) playTone(520, 'sine', 150);
+    }
+
+    function setUnits(unit) {
+      a11ySettings.units = unit;
+      saveA11y();
+      applyA11ySettings();
+      renderUserList();
+      if (selectedUserId) {
+        var u = getUser(selectedUserId);
+        if (u) showUserModal(u);
+      }
+    }
+
+    // ---------- Keyboard Shortcuts ----------
+    function setupKeyboardShortcuts() {
+      window.addEventListener('keydown', function(e) {
+        // Ignore typing in input fields
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+          if (e.key === 'Escape') {
+            e.target.blur();
+          }
+          return;
+        }
+
+        if (e.key === '/') {
+          e.preventDefault();
+          document.getElementById('search-box').focus();
+        } else if (e.altKey && (e.key === 'a' || e.key === 'A')) {
+          e.preventDefault();
+          var dlg = document.getElementById('a11y-dialog');
+          if (dlg.classList.contains('open')) closeA11yDialog(); else openA11yDialog();
+        } else if (e.altKey && (e.key === 'm' || e.key === 'M')) {
+          e.preventDefault();
+          silenceAllFleetSirens();
+        } else if (e.altKey && (e.key === 'f' || e.key === 'F')) {
+          e.preventDefault();
+          fitAllMarkersOnMap();
+        } else if (e.key === '1') {
+          switchSidebarTab('active');
+        } else if (e.key === '2') {
+          switchSidebarTab('removed');
+        } else if (e.key === '3') {
+          switchSidebarTab('audit');
+        } else if (e.key === '4') {
+          switchSidebarTab('diag');
+        } else if (e.key === 'Escape') {
+          closeModal();
+          closeA11yDialog();
+        }
+      });
+    }
+
+    function setupSearch() {
+      var box = document.getElementById('search-box');
+      box.addEventListener('input', renderUserList);
+    }
   </script>
 </body>
 </html>

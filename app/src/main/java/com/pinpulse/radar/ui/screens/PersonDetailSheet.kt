@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Directions
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.PersonRemove
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Visibility
@@ -271,28 +272,57 @@ fun PersonDetailSheet(
                 Spacer(modifier = Modifier.height(10.dp))
             }
 
-            // REMOTE SIREN / RING PHONE BUTTON
+            // REMOTE SIREN / RING PHONE & STOP BUTTONS
             if (!isSelf) {
-                Button(
-                    onClick = { viewModel.ringPersonPhone(targetUser) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD97706)),
-                    shape = RoundedCornerShape(14.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Icon(
-                        Icons.Default.NotificationsActive,
-                        contentDescription = "Ring Phone",
-                        tint = Color.White
-                    )
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Text(
-                        text = "🔊 Ring Phone (Emergency Siren)",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White
-                    )
+                    Button(
+                        onClick = { viewModel.ringPersonPhone(targetUser) },
+                        modifier = Modifier
+                            .weight(1.1f)
+                            .height(48.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD97706)),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.NotificationsActive,
+                            contentDescription = "Ring Phone",
+                            tint = Color.White,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Ring Siren",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    }
+
+                    Button(
+                        onClick = { viewModel.stopPersonPhone(targetUser) },
+                        modifier = Modifier
+                            .weight(0.9f)
+                            .height(48.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = DangerRed),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.NotificationsOff,
+                            contentDescription = "Stop Siren",
+                            tint = Color.White,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Stop Siren",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    }
                 }
                 Spacer(modifier = Modifier.height(12.dp))
             }

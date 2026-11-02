@@ -138,6 +138,9 @@ object UpdateManager {
         val apkUrl = _updateState.value.apkUrl
         if (apkUrl.isBlank()) return@withContext
 
+        // Pre-clean any leftover APKs so storage doesn't bloat
+        cleanupDownloadedApks(context)
+
         _updateState.value = _updateState.value.copy(
             isDownloading = true,
             downloadProgress = 0f,
@@ -228,5 +231,70 @@ object UpdateManager {
         } catch (e: Exception) {
             Log.e(TAG, "Install intent failed: ${e.message}")
         }
+    }
+
+    /**
+     * Delete any downloaded update APKs from internal and external cache.
+     * Prevents downloaded installers from accumulating and consuming disk storage.
+     * Returns the total number of bytes freed.
+     */
+    fun cleanupDownloadedApks(context: Context): Long {
+        var totalFreed = 0L
+        try {
+            // 1. Check internal cache
+            context.cacheDir?.listFiles()?.forEach { file ->
+                if (file.isFile && file.name.endsWith(".apk", ignoreCase = true)) {
+                    val len = file.length()
+                    if (file.delete()) {
+                        totalFreed += len
+                        Log.d(TAG, "Pruned update APK: ${file.name} (${len / 1024} KB)")
+                    }
+                }
+            }
+            // 2. Check external cache
+            context.externalCacheDir?.listFiles()?.forEach { file ->
+                if (file.isFile && file.name.endsWith(".apk", ignoreCase = true)) {
+                    val len = file.length()
+                    if (file.delete()) {
+                        totalFreed += len
+                        Log.d(TAG, "Pruned external update APK: ${file.name}")
+                    }
+                }
+            }
+            // 3. Check updates subdirectory
+            val updatesDir = File(context.cacheDir, "updates")
+            if (updatesDir.exists()) {
+                updatesDir.listFiles()?.forEach { f ->
+                    if (f.isFile && f.name.endsWith(".apk", ignoreCase = true)) {
+                        totalFreed += f.length()
+                        f.delete()
+                    }
+                }
+                updatesDir.delete()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error cleaning cached update APKs: ${e.message}")
+        }
+        return totalFreed
+    }
+
+    /**
+     * Calculate current storage used by downloaded update APKs.
+     */
+    fun getCachedApkSizeBytes(context: Context): Long {
+        var total = 0L
+        try {
+            context.cacheDir?.listFiles()?.forEach { file ->
+                if (file.isFile && file.name.endsWith(".apk", ignoreCase = true)) {
+                    total += file.length()
+                }
+            }
+            context.externalCacheDir?.listFiles()?.forEach { file ->
+                if (file.isFile && file.name.endsWith(".apk", ignoreCase = true)) {
+                    total += file.length()
+                }
+            }
+        } catch (e: Exception) {}
+        return total
     }
 }

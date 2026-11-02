@@ -335,17 +335,45 @@ class RealtimeService private constructor(private val context: Context) {
         }
     }
 
+    fun sendStopRingCommand(targetUserId: String, targetFriendCode: String, callerName: String) {
+        val payload = """{"type":"STOP_RING","callerName":"$callerName","timestamp":${System.currentTimeMillis()}}"""
+        if (targetUserId.isNotBlank()) {
+            publish("pinpulse/v1/ring/$targetUserId", payload, qosLevel = 1)
+            publish("pinpulse/v1/alerts/$targetUserId", payload, qosLevel = 1)
+        }
+        if (targetFriendCode.isNotBlank()) {
+            publish("pinpulse/v1/ring/$targetFriendCode", payload, qosLevel = 1)
+            publish("pinpulse/v1/alerts/$targetFriendCode", payload, qosLevel = 1)
+        }
+    }
+
     private fun handleIncomingMessage(topic: String, payload: String) {
         scope.launch {
             try {
                 when {
-                    topic.contains("/ring/") || payload.contains("\"RING_PHONE\"") -> {
+                    topic.contains("/ring/") || payload.contains("RING") -> {
                         try {
                             val map = gson.fromJson(payload, Map::class.java)
+                            val type = map["type"]?.toString() ?: ""
                             val caller = map["callerName"]?.toString() ?: "A friend"
-                            com.pinpulse.radar.util.SirenHelper.ring(context, caller)
+                            if (type == "STOP_RING" || type == "STOP_SIREN" || payload.contains("\"STOP_RING\"")) {
+                                Log.d(TAG, "Remote silence command received from $caller")
+                                com.pinpulse.radar.util.SirenHelper.stop(context)
+                                _alerts.emit(AlertMessage(
+                                    senderId = "system",
+                                    senderName = caller,
+                                    type = "SIREN_STOPPED_REMOTELY",
+                                    message = "🛑 Alarm silenced remotely by $caller."
+                                ))
+                            } else {
+                                com.pinpulse.radar.util.SirenHelper.ring(context, caller)
+                            }
                         } catch (e: Exception) {
-                            com.pinpulse.radar.util.SirenHelper.ring(context, "A friend")
+                            if (payload.contains("\"STOP_RING\"")) {
+                                com.pinpulse.radar.util.SirenHelper.stop(context)
+                            } else {
+                                com.pinpulse.radar.util.SirenHelper.ring(context, "A friend")
+                            }
                         }
                     }
                     topic.contains("/loc") || topic.contains("/network/live") -> {
