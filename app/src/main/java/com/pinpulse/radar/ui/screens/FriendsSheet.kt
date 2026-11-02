@@ -351,7 +351,7 @@ fun FriendsSheet(
                     }
                     else -> {
                         Text(
-                            text = if (isCodeMode) "❌ Code \"$addFriendInput\" not found in database" else "❌ Email \"$addFriendInput\" not found in database",
+                            text = if (isCodeMode) "❌ Friend Code \"$addFriendInput\" not found" else "❌ Account with email \"$addFriendInput\" not found",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Medium,
                             color = DangerRed,
