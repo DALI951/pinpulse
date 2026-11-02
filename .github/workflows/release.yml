@@ -5,12 +5,6 @@ on:
     branches:
       - main
       - master
-    paths:
-      - 'app/src/**'
-      - 'app/build.gradle.kts'
-      - 'build.gradle.kts'
-      - 'settings.gradle.kts'
-      - 'gradle/**'
   workflow_dispatch:
 
 permissions:
@@ -56,7 +50,8 @@ jobs:
 
       - name: Build Signed Release APK
         run: |
-          gradle assembleRelease -PversionCode=${{ env.VERSION_CODE }} -PversionName=${{ env.VERSION_NAME }} --no-daemon
+          chmod +x ./gradlew || true
+          ./gradlew assembleRelease -PversionCode=${{ env.VERSION_CODE }} -PversionName=${{ env.VERSION_NAME }} --no-daemon || gradle assembleRelease -PversionCode=${{ env.VERSION_CODE }} -PversionName=${{ env.VERSION_NAME }} --no-daemon
 
       - name: Stage Release APK Asset
         run: |
