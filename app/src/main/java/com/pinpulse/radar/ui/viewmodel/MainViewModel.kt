@@ -681,20 +681,50 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         if (found != null) return found
 
-        // Search in registry user list directly
-        return map.values.firstOrNull { u ->
-            u.friendCode.equals(clean, ignoreCase = true) ||
-            u.friendCode.replace("-", "").equals(clean.replace("-", ""), ignoreCase = true) ||
-            (u.email.isNotBlank() && u.email.equals(clean, ignoreCase = true)) ||
-            u.id == clean
+        // Direct search across map values, group members, and visible users!
+        val allUsers = (map.values + _groupMembers.value.values + visibleUsers.value).distinctBy { it.id }
+
+        // 1. Exact friendCode match
+        found = allUsers.firstOrNull { u ->
+            u.friendCode.isNotBlank() && (
+                u.friendCode.equals(clean, ignoreCase = true) ||
+                u.friendCode.replace("-", "").equals(clean.replace("-", ""), ignoreCase = true)
+            )
+        }
+        if (found != null) return found
+
+        // 2. Email match
+        found = allUsers.firstOrNull { u ->
+            u.email.isNotBlank() && u.email.equals(clean, ignoreCase = true)
+        }
+        if (found != null) return found
+
+        // 3. User ID match
+        found = allUsers.firstOrNull { u -> u.id == clean }
+        if (found != null) return found
+
+        // 4. Display Name exact match
+        found = allUsers.firstOrNull { u ->
+            u.displayName.isNotBlank() && u.displayName.equals(clean, ignoreCase = true)
+        }
+        if (found != null) return found
+
+        // 5. Display Name substring match (e.g. "Dali" in "Dali95")
+        return allUsers.firstOrNull { u ->
+            u.displayName.isNotBlank() && (
+                u.displayName.contains(clean, ignoreCase = true) ||
+                clean.contains(u.displayName, ignoreCase = true)
+            )
         }
     }
 
     fun queryUserOnDemand(codeOrEmail: String) {
         val clean = codeOrEmail.trim()
-        if (clean.length in 4..20) {
+        if (clean.length in 2..30) {
             val upper = clean.uppercase()
             realtime.subscribe("pinpulse/v1/registry/code/$upper")
+            realtime.subscribe("pinpulse/v1/user/$clean/loc")
+            realtime.subscribe("pinpulse/v1/user/$clean/status")
             if (clean.contains("-")) {
                 realtime.subscribe("pinpulse/v1/registry/code/${clean.replace("-", "").uppercase()}")
             }

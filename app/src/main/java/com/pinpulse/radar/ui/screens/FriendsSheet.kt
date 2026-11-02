@@ -79,25 +79,25 @@ fun FriendsSheet(
     val registeredUsers by viewModel.registeredUsers.collectAsState()
 
     LaunchedEffect(addFriendInput) {
-        if (addFriendInput.length >= 4) {
+        if (addFriendInput.length >= 2) {
             viewModel.queryUserOnDemand(addFriendInput)
         }
     }
 
     val foundUser = remember(addFriendInput, registeredUsers) {
-        if (addFriendInput.length >= 4) viewModel.lookupUser(addFriendInput) else null
+        if (addFriendInput.length >= 2) viewModel.lookupUser(addFriendInput) else null
     }
 
     val isSelf = foundUser != null && (
         foundUser.id == currentUser?.id ||
         (foundUser.friendCode.isNotBlank() && foundUser.friendCode.equals(currentUser?.friendCode, ignoreCase = true)) ||
-        (foundUser.email.isNotBlank() && currentUser?.email?.isNotBlank() == true && foundUser.email.equals(currentUser.email, ignoreCase = true))
+        (foundUser.email.isNotBlank() && currentUser?.email?.isNotBlank() == true && foundUser.email.equals(currentUser.email, ignoreCase = true)) ||
+        (currentUser?.displayName?.isNotBlank() == true && addFriendInput.trim().equals(currentUser.displayName, ignoreCase = true))
     )
     val isAlreadyFriend = foundUser != null && friends.any {
         it.id == foundUser.id || (foundUser.friendCode.isNotBlank() && it.friendCode.equals(foundUser.friendCode, ignoreCase = true))
     }
-    val canSend = foundUser != null && !isSelf && !isAlreadyFriend
-    val isInvalid = (addFriendInput.length >= 8 || (addFriendInput.contains("@") && addFriendInput.length >= 6)) && foundUser == null
+    val canSend = addFriendInput.trim().length >= 2 && !isSelf && !isAlreadyFriend
 
     Column(
         modifier = modifier
@@ -159,12 +159,12 @@ fun FriendsSheet(
                     onValueChange = { newValue ->
                         addFriendInput = formatFriendCodeInput(newValue, addFriendInput)
                     },
-                    placeholder = { Text("Friend Code (e.g. DALI-9510)", color = TextMuted) },
+                    placeholder = { Text("Friend Code, Name, or Email", color = TextMuted) },
                     modifier = Modifier.weight(1f),
                     singleLine = true,
                     colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = if (canSend) PulseGreen else if (isInvalid) DangerRed else RadarBlue,
-                        unfocusedBorderColor = if (canSend) PulseGreen.copy(alpha = 0.6f) else if (isInvalid) DangerRed.copy(alpha = 0.6f) else RadarCardBorder,
+                        focusedBorderColor = if (foundUser != null) PulseGreen else RadarBlue,
+                        unfocusedBorderColor = if (foundUser != null) PulseGreen.copy(alpha = 0.6f) else RadarCardBorder,
                         focusedTextColor = Color.White,
                         unfocusedTextColor = Color.White
                     ),
@@ -173,10 +173,11 @@ fun FriendsSheet(
                 Spacer(modifier = Modifier.width(8.dp))
                 Button(
                     onClick = {
-                        if (canSend && foundUser != null) {
-                            val codeToSend = foundUser.friendCode.ifBlank { addFriendInput }
-                            viewModel.sendFriendRequest(codeToSend)
-                            Toast.makeText(context, "Friend request sent to ${foundUser.displayName}!", Toast.LENGTH_SHORT).show()
+                        if (canSend) {
+                            val target = foundUser?.friendCode?.ifBlank { null } ?: addFriendInput.trim()
+                            viewModel.sendFriendRequest(target)
+                            val targetName = foundUser?.displayName ?: target
+                            Toast.makeText(context, "Friend request sent to $targetName!", Toast.LENGTH_SHORT).show()
                             addFriendInput = ""
                         }
                     },
@@ -195,22 +196,13 @@ fun FriendsSheet(
                 }
             }
 
-            // Realtime Registry Feedback
+            // Realtime Registry & Network Feedback
             if (addFriendInput.isNotBlank()) {
                 Spacer(modifier = Modifier.height(6.dp))
                 when {
-                    canSend && foundUser != null -> {
-                        Text(
-                            text = "✅ Found: ${foundUser.displayName} (${foundUser.friendCode})",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = PulseGreen,
-                            modifier = Modifier.padding(start = 4.dp)
-                        )
-                    }
                     isSelf -> {
                         Text(
-                            text = "⚠️ You cannot add your own friend code",
+                            text = "⚠️ You cannot add your own account",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Medium,
                             color = Color(0xFFF59E0B),
@@ -226,20 +218,21 @@ fun FriendsSheet(
                             modifier = Modifier.padding(start = 4.dp)
                         )
                     }
-                    isInvalid -> {
+                    foundUser != null -> {
                         Text(
-                            text = "❌ Code \"$addFriendInput\" not found in database",
+                            text = "✅ Found in database: ${foundUser.displayName} (${foundUser.friendCode.ifBlank { "User ID: " + foundUser.id.take(8) }})",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Medium,
-                            color = DangerRed,
+                            color = PulseGreen,
                             modifier = Modifier.padding(start = 4.dp)
                         )
                     }
-                    addFriendInput.length >= 4 -> {
+                    addFriendInput.trim().length >= 2 -> {
                         Text(
-                            text = "🔍 Checking database...",
+                            text = "📡 Ready to send invite to \"$addFriendInput\". Tap Add to send.",
                             fontSize = 12.sp,
-                            color = TextMuted,
+                            fontWeight = FontWeight.Medium,
+                            color = Color(0xFF38BDF8),
                             modifier = Modifier.padding(start = 4.dp)
                         )
                     }
@@ -378,12 +371,9 @@ private fun formatFriendCodeInput(input: String, previous: String): String {
         return input
     }
 
-    // Preserve dash if explicitly entered after 3-4 letters
+    // Preserve dash if explicitly entered
     if (input.endsWith("-") && input.count { it == '-' } == 1) {
-        val prefix = input.dropLast(1).filter { it.isLetterOrDigit() }.uppercase()
-        if (prefix.length in 3..4) {
-            return "$prefix-"
-        }
+        return input.uppercase()
     }
 
     // Preserve existing hyphen structure if pasted e.g. DALI-9510 or PIN-1234
@@ -392,26 +382,27 @@ private fun formatFriendCodeInput(input: String, previous: String): String {
         if (parts.size == 2) {
             val p1 = parts[0].filter { it.isLetterOrDigit() }.uppercase()
             val p2 = parts[1].filter { it.isLetterOrDigit() }.uppercase().take(4)
-            if (p1.length in 3..4) {
-                return "$p1-$p2"
-            }
+            return "$p1-$p2"
         }
     }
 
-    val lettersAndDigits = input.filter { it.isLetterOrDigit() }.uppercase()
-    return when {
-        lettersAndDigits.length < 4 -> lettersAndDigits
-        lettersAndDigits.length == 4 -> {
-            if (previous.length < input.length && !previous.endsWith("-")) {
-                "$lettersAndDigits-"
-            } else {
-                lettersAndDigits
-            }
-        }
-        else -> {
-            val p1 = lettersAndDigits.take(4)
-            val p2 = lettersAndDigits.drop(4).take(4)
-            "$p1-$p2"
-        }
+    // If input contains spaces, it's definitely a name! Keep as typed
+    if (input.contains(" ")) {
+        return input
     }
+
+    // Check if input has digits
+    val hasDigits = input.any { it.isDigit() }
+    val lettersAndDigits = input.filter { it.isLetterOrDigit() }
+
+    // If user is entering a code (contains digits, e.g. DALI9510, PIN1234)
+    if (hasDigits && lettersAndDigits.length >= 4) {
+        val upper = lettersAndDigits.uppercase()
+        val p1 = upper.take(4)
+        val p2 = upper.drop(4).take(4)
+        return if (p2.isNotEmpty()) "$p1-$p2" else "$p1-"
+    }
+
+    // Pure letters (names like "Dali", "Alexander"): keep as typed so names are not distorted
+    return input
 }
