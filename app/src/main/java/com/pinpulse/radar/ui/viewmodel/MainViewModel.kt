@@ -143,9 +143,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        // Observe incoming alerts (e.g. someone turned off their location, shutdown, offline)
+        val appStartTime = System.currentTimeMillis()
+        // Observe incoming alerts (e.g. emergency alert or location toggle)
         viewModelScope.launch {
             realtime.alerts.collect { alert ->
+                val me = prefs.loadCurrentUser()
+                if (alert.senderId == me?.id) return@collect
+
+                // 1. Only show alerts for confirmed friends (or group events)
+                val currentFriends = prefs.loadFriends()
+                val isFriend = currentFriends.any {
+                    it.id == alert.senderId ||
+                    (it.friendCode.isNotBlank() && it.friendCode.equals(alert.senderId, ignoreCase = true))
+                }
+                if (!isFriend && alert.senderId != "system" && !alert.type.contains("KICKED")) {
+                    // Non-friends MUST NEVER trigger alert notifications!
+                    return@collect
+                }
+
+                // 2. Suppress alerts during startup sync (first 15 seconds) so stale broker messages never popup
+                if (System.currentTimeMillis() - appStartTime < 15_000L) {
+                    return@collect
+                }
+
+                // 3. Suppress stale alerts older than 20 seconds
+                if (alert.timestamp > 0 && (System.currentTimeMillis() - alert.timestamp > 20_000L)) {
+                    return@collect
+                }
+
                 _activeAlert.value = alert
                 // Auto dismiss banner after 7 seconds without corrupting saved friends
                 delay(7000)
@@ -400,6 +425,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         message = "You were removed from the group."
                     )
                 }
+            } else if (topic.endsWith("/status")) {
+                try {
+                    val jsonMap = gson.fromJson(payload, Map::class.java)
+                    val uid = jsonMap["userId"]?.toString() ?: jsonMap["senderId"]?.toString() ?: ""
+                    val status = jsonMap["status"]?.toString() ?: ""
+                    if (uid.isNotBlank()) {
+                        val currentFriends = prefs.loadFriends().toMutableList()
+                        val idx = currentFriends.indexOfFirst { it.id == uid }
+                        if (idx >= 0) {
+                            val f = currentFriends[idx]
+                            val isOnline = status.equals("ONLINE", ignoreCase = true)
+                            val updated = f.copy(
+                                isSharingLocation = if (isOnline) true else f.isSharingLocation,
+                                lastUpdated = if (isOnline) System.currentTimeMillis() else f.lastUpdated
+                            )
+                            currentFriends[idx] = updated
+                            prefs.saveFriends(currentFriends)
+                        }
+                    }
+                } catch (e: Exception) {}
             }
         } catch (e: Exception) {
             Log.e("MainViewModel", "Error parsing raw message: ${e.message}")
@@ -660,90 +705,83 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // --- 1-on-1 Friends & Verification ---
 
-    fun lookupUser(query: String): User? {
-        val clean = query.trim()
-        if (clean.isBlank()) return null
-        val upper = clean.uppercase()
-        val lower = clean.lowercase()
-        val emailTag = realtime.cleanEmail(clean)
+    fun lookupUserByCode(code: String): User? {
+        val clean = code.trim().uppercase()
+        val noHyphen = clean.replace("-", "")
+        if (noHyphen.length != 8) return null
+
         val map = realtime.registeredUsers.value
-
-        var found = map[upper] ?: map[lower] ?: map[emailTag] ?: map[clean]
-        if (found != null) return found
-
-        // Normalize hyphen variants e.g. DALI9510 vs DALI-9510
-        if (clean.contains("-")) {
-            val noHyphen = clean.replace("-", "").uppercase()
-            found = map[noHyphen]
-        } else if (clean.length in 7..8) {
-            val withHyphen = "${clean.take(4).uppercase()}-${clean.drop(4).uppercase()}"
-            found = map[withHyphen]
+        val direct = map[clean] ?: map[noHyphen]
+        if (direct != null && direct.friendCode.replace("-", "").equals(noHyphen, ignoreCase = true)) {
+            return direct
         }
-        if (found != null) return found
 
-        // Direct search across map values, group members, and visible users!
-        val allUsers = (map.values + _groupMembers.value.values + visibleUsers.value).distinctBy { it.id }
-
-        // 1. Exact friendCode match
-        found = allUsers.firstOrNull { u ->
-            u.friendCode.isNotBlank() && (
-                u.friendCode.equals(clean, ignoreCase = true) ||
-                u.friendCode.replace("-", "").equals(clean.replace("-", ""), ignoreCase = true)
-            )
+        val allKnown = (map.values + prefs.loadFriends() + _groupMembers.value.values).distinctBy { it.id }
+        return allKnown.firstOrNull { u ->
+            u.friendCode.isNotBlank() && u.friendCode.replace("-", "").equals(noHyphen, ignoreCase = true)
         }
-        if (found != null) return found
+    }
 
-        // 2. Email match
-        found = allUsers.firstOrNull { u ->
+    fun lookupUserByEmail(email: String): User? {
+        val clean = email.trim().lowercase()
+        if (!clean.contains("@") || !clean.substringAfter("@").contains(".")) return null
+
+        val map = realtime.registeredUsers.value
+        val emailTag = realtime.cleanEmail(clean)
+        val direct = map[clean] ?: map[emailTag]
+        if (direct != null && direct.email.equals(clean, ignoreCase = true)) {
+            return direct
+        }
+
+        val allKnown = (map.values + prefs.loadFriends() + _groupMembers.value.values).distinctBy { it.id }
+        return allKnown.firstOrNull { u ->
             u.email.isNotBlank() && u.email.equals(clean, ignoreCase = true)
         }
-        if (found != null) return found
+    }
 
-        // 3. User ID match
-        found = allUsers.firstOrNull { u -> u.id == clean }
-        if (found != null) return found
-
-        // 4. Display Name exact match
-        found = allUsers.firstOrNull { u ->
-            u.displayName.isNotBlank() && u.displayName.equals(clean, ignoreCase = true)
+    fun lookupUser(query: String): User? {
+        val clean = query.trim()
+        return if (clean.contains("@")) {
+            lookupUserByEmail(clean)
+        } else {
+            lookupUserByCode(clean)
         }
-        if (found != null) return found
+    }
 
-        // 5. Display Name substring match (e.g. "Dali" in "Dali95")
-        return allUsers.firstOrNull { u ->
-            u.displayName.isNotBlank() && (
-                u.displayName.contains(clean, ignoreCase = true) ||
-                clean.contains(u.displayName, ignoreCase = true)
-            )
+    fun queryUserByCode(code: String) {
+        val clean = code.trim().uppercase()
+        val noHyphen = clean.replace("-", "")
+        if (noHyphen.length >= 8) {
+            realtime.subscribe("pinpulse/v1/registry/code/$clean")
+            realtime.subscribe("pinpulse/v1/registry/code/$noHyphen")
+        }
+    }
+
+    fun queryUserByEmail(email: String) {
+        val clean = email.trim().lowercase()
+        if (clean.contains("@") && clean.substringAfter("@").contains(".")) {
+            val emailTag = realtime.cleanEmail(clean)
+            realtime.subscribe("pinpulse/v1/registry/email/$emailTag")
         }
     }
 
     fun queryUserOnDemand(codeOrEmail: String) {
-        val clean = codeOrEmail.trim()
-        if (clean.length in 2..30) {
-            val upper = clean.uppercase()
-            realtime.subscribe("pinpulse/v1/registry/code/$upper")
-            realtime.subscribe("pinpulse/v1/user/$clean/loc")
-            realtime.subscribe("pinpulse/v1/user/$clean/status")
-            if (clean.contains("-")) {
-                realtime.subscribe("pinpulse/v1/registry/code/${clean.replace("-", "").uppercase()}")
-            }
-            if (clean.contains("@")) {
-                val emailTag = realtime.cleanEmail(clean)
-                realtime.subscribe("pinpulse/v1/registry/email/$emailTag")
-            }
+        if (codeOrEmail.contains("@")) {
+            queryUserByEmail(codeOrEmail)
+        } else {
+            queryUserByCode(codeOrEmail)
         }
     }
 
-    fun sendFriendRequest(targetFriendCodeOrEmail: String) {
+    fun sendFriendRequest(targetFriendCodeOrEmail: String, isEmail: Boolean = false) {
         val me = prefs.loadCurrentUser() ?: return
         val rawInput = targetFriendCodeOrEmail.trim()
-        val isEmail = rawInput.contains("@")
-        val found = lookupUser(rawInput)
+        val actualIsEmail = isEmail || rawInput.contains("@")
+        val found = if (actualIsEmail) lookupUserByEmail(rawInput) else lookupUserByCode(rawInput)
 
-        val cleanCode = (found?.friendCode?.ifBlank { null } ?: rawInput).uppercase()
-        val targetUserId = found?.id ?: if (isEmail) prefs.generateDeterministicUserId(rawInput) else cleanCode
-        val targetEmail = found?.email ?: if (isEmail) rawInput else ""
+        val cleanCode = (found?.friendCode?.ifBlank { null } ?: if (!actualIsEmail) rawInput.uppercase() else "").uppercase()
+        val targetUserId = found?.id ?: if (actualIsEmail) prefs.generateDeterministicUserId(rawInput) else cleanCode
+        val targetEmail = found?.email?.ifBlank { null } ?: if (actualIsEmail) rawInput.lowercase() else ""
 
         val req = FriendRequest(
             id = "req_" + UUID.randomUUID().toString().take(8),

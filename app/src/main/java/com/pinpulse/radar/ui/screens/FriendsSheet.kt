@@ -65,6 +65,11 @@ import com.pinpulse.radar.ui.theme.TextPrimary
 import com.pinpulse.radar.ui.theme.TextSecondary
 import com.pinpulse.radar.ui.viewmodel.MainViewModel
 
+enum class AddFriendMode {
+    CODE,
+    EMAIL
+}
+
 @Composable
 fun FriendsSheet(
     friends: List<User>,
@@ -75,30 +80,43 @@ fun FriendsSheet(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    var addMode by remember { mutableStateOf(AddFriendMode.CODE) }
     var addFriendInput by remember { mutableStateOf("") }
     val registeredUsers by viewModel.registeredUsers.collectAsState()
 
-    LaunchedEffect(addFriendInput) {
-        if (addFriendInput.length >= 2) {
-            viewModel.queryUserOnDemand(addFriendInput)
+    val isCodeMode = addMode == AddFriendMode.CODE
+    val cleanCode = addFriendInput.replace("-", "").trim().uppercase()
+    val isCompleteCode = isCodeMode && cleanCode.length == 8 && cleanCode.all { it.isLetterOrDigit() }
+    val isCompleteEmail = !isCodeMode && addFriendInput.contains("@") && addFriendInput.substringAfter("@").contains(".") && android.util.Patterns.EMAIL_ADDRESS.matcher(addFriendInput.trim()).matches()
+    val isComplete = if (isCodeMode) isCompleteCode else isCompleteEmail
+
+    LaunchedEffect(addFriendInput, addMode) {
+        if (isCodeMode && isCompleteCode) {
+            viewModel.queryUserByCode(addFriendInput)
+        } else if (!isCodeMode && isCompleteEmail) {
+            viewModel.queryUserByEmail(addFriendInput)
         }
     }
 
-    val foundUser = remember(addFriendInput, registeredUsers) {
-        if (addFriendInput.length >= 2) viewModel.lookupUser(addFriendInput) else null
+    val foundUser = remember(addFriendInput, addMode, registeredUsers) {
+        if (isCodeMode) {
+            if (isCompleteCode) viewModel.lookupUserByCode(addFriendInput) else null
+        } else {
+            if (isCompleteEmail) viewModel.lookupUserByEmail(addFriendInput) else null
+        }
     }
 
-    val isSelf = foundUser != null && (
-        foundUser.id == currentUser?.id ||
-        (foundUser.friendCode.isNotBlank() && foundUser.friendCode.equals(currentUser?.friendCode, ignoreCase = true)) ||
-        (foundUser.email.isNotBlank() && currentUser?.email?.isNotBlank() == true && foundUser.email.equals(currentUser.email, ignoreCase = true)) ||
-        (currentUser?.displayName?.isNotBlank() == true && addFriendInput.trim().equals(currentUser.displayName, ignoreCase = true))
+    val isSelf = isComplete && (
+        (isCodeMode && cleanCode.equals(currentUser?.friendCode?.replace("-", "")?.trim(), ignoreCase = true)) ||
+        (!isCodeMode && addFriendInput.trim().equals(currentUser?.email?.trim(), ignoreCase = true)) ||
+        (foundUser != null && foundUser.id == currentUser?.id)
     )
-    val isAlreadyFriend = foundUser != null && friends.any {
-        it.id == foundUser.id || (foundUser.friendCode.isNotBlank() && it.friendCode.equals(foundUser.friendCode, ignoreCase = true))
+    val isAlreadyFriend = isComplete && foundUser != null && friends.any {
+        it.id == foundUser.id ||
+        (isCodeMode && it.friendCode.replace("-", "").equals(cleanCode, ignoreCase = true)) ||
+        (!isCodeMode && it.email.isNotBlank() && it.email.equals(addFriendInput.trim(), ignoreCase = true))
     }
-    val isCompleteCodeFormat = addFriendInput.length >= 8 || addFriendInput.contains("@")
-    val canSend = foundUser != null && !isSelf && !isAlreadyFriend
+    val canSend = isComplete && foundUser != null && !isSelf && !isAlreadyFriend
 
     Column(
         modifier = modifier
@@ -149,6 +167,63 @@ fun FriendsSheet(
 
         Spacer(modifier = Modifier.height(14.dp))
 
+        // Mode Selector: Friend Code vs Email
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(Color(0xFF131D2E))
+                .border(1.dp, RadarCardBorder, RoundedCornerShape(12.dp))
+                .padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(if (isCodeMode) RadarBlue else Color.Transparent)
+                    .clickable {
+                        if (addMode != AddFriendMode.CODE) {
+                            addMode = AddFriendMode.CODE
+                            addFriendInput = ""
+                        }
+                    }
+                    .padding(vertical = 8.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "Friend Code",
+                    fontSize = 13.sp,
+                    fontWeight = if (isCodeMode) FontWeight.Bold else FontWeight.Medium,
+                    color = if (isCodeMode) Color.White else TextMuted
+                )
+            }
+
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(if (!isCodeMode) RadarBlue else Color.Transparent)
+                    .clickable {
+                        if (addMode != AddFriendMode.EMAIL) {
+                            addMode = AddFriendMode.EMAIL
+                            addFriendInput = ""
+                        }
+                    }
+                    .padding(vertical = 8.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "Email Address",
+                    fontSize = 13.sp,
+                    fontWeight = if (!isCodeMode) FontWeight.Bold else FontWeight.Medium,
+                    color = if (!isCodeMode) Color.White else TextMuted
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
         // Add Friend Input
         Column(modifier = Modifier.fillMaxWidth()) {
             Row(
@@ -158,9 +233,18 @@ fun FriendsSheet(
                 OutlinedTextField(
                     value = addFriendInput,
                     onValueChange = { newValue ->
-                        addFriendInput = formatFriendCodeInput(newValue, addFriendInput)
+                        addFriendInput = if (isCodeMode) {
+                            formatFriendCodeInput(newValue, addFriendInput)
+                        } else {
+                            newValue.trim().lowercase()
+                        }
                     },
-                    placeholder = { Text("Friend Code, Name, or Email", color = TextMuted) },
+                    placeholder = {
+                        Text(
+                            if (isCodeMode) "Enter 8-digit Code (e.g. ABCD-1234)" else "Enter Email (e.g. friend@email.com)",
+                            color = TextMuted
+                        )
+                    },
                     modifier = Modifier.weight(1f),
                     singleLine = true,
                     colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
@@ -175,8 +259,8 @@ fun FriendsSheet(
                 Button(
                     onClick = {
                         if (canSend) {
-                            val target = foundUser?.friendCode?.ifBlank { null } ?: addFriendInput.trim()
-                            viewModel.sendFriendRequest(target)
+                            val target = addFriendInput.trim()
+                            viewModel.sendFriendRequest(target, isEmail = !isCodeMode)
                             val targetName = foundUser?.displayName ?: target
                             Toast.makeText(context, "Friend request sent to $targetName!", Toast.LENGTH_SHORT).show()
                             addFriendInput = ""
@@ -197,13 +281,13 @@ fun FriendsSheet(
                 }
             }
 
-            // Realtime Registry Feedback
-            if (addFriendInput.isNotBlank()) {
+            // Realtime Feedback: ONLY shown when code or email is complete!
+            if (isComplete) {
                 Spacer(modifier = Modifier.height(6.dp))
                 when {
                     isSelf -> {
                         Text(
-                            text = "⚠️ You cannot add your own code / account",
+                            text = if (isCodeMode) "⚠️ You cannot add your own Friend Code" else "⚠️ You cannot add your own email address",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Medium,
                             color = Color(0xFFF59E0B),
@@ -220,28 +304,55 @@ fun FriendsSheet(
                         )
                     }
                     foundUser != null -> {
-                        Text(
-                            text = "✅ Found in database: ${foundUser.displayName} (${foundUser.friendCode.ifBlank { "User" }})",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = PulseGreen,
-                            modifier = Modifier.padding(start = 4.dp)
-                        )
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF0D2818)),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, PulseGreen.copy(alpha = 0.7f)),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 2.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(0xFF1B4D2E)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        foundUser.displayName.take(1).uppercase(),
+                                        fontWeight = FontWeight.Bold,
+                                        color = PulseGreen,
+                                        fontSize = 14.sp
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column {
+                                    Text(
+                                        foundUser.displayName,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White,
+                                        fontSize = 13.sp
+                                    )
+                                    Text(
+                                        if (isCodeMode) "Friend Code: ${foundUser.friendCode.ifBlank { addFriendInput }}" else "Email: ${foundUser.email.ifBlank { addFriendInput }}",
+                                        fontSize = 11.sp,
+                                        color = PulseGreen
+                                    )
+                                }
+                            }
+                        }
                     }
-                    isCompleteCodeFormat -> {
+                    else -> {
                         Text(
-                            text = "❌ Code \"$addFriendInput\" not found in database",
+                            text = if (isCodeMode) "❌ Code \"$addFriendInput\" not found in database" else "❌ Email \"$addFriendInput\" not found in database",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Medium,
                             color = DangerRed,
-                            modifier = Modifier.padding(start = 4.dp)
-                        )
-                    }
-                    addFriendInput.trim().length >= 2 -> {
-                        Text(
-                            text = "🔍 Checking database...",
-                            fontSize = 12.sp,
-                            color = TextMuted,
                             modifier = Modifier.padding(start = 4.dp)
                         )
                     }
@@ -373,45 +484,15 @@ fun FriendsSheet(
 }
 
 private fun formatFriendCodeInput(input: String, previous: String): String {
-    if (input.contains("@")) return input.trim()
-
     // Allow backspacing past the hyphen
     if (previous.endsWith("-") && input == previous.dropLast(1)) {
-        return input
+        return input.dropLast(1)
     }
 
-    // Preserve dash if explicitly entered
-    if (input.endsWith("-") && input.count { it == '-' } == 1) {
-        return input.uppercase()
+    val clean = input.filter { it.isLetterOrDigit() }.uppercase().take(8)
+    return when {
+        clean.length > 4 -> "${clean.take(4)}-${clean.drop(4)}"
+        clean.length == 4 -> if (previous.length == 5 && previous.endsWith("-")) clean else "$clean-"
+        else -> clean
     }
-
-    // Preserve existing hyphen structure if pasted e.g. DALI-9510 or PIN-1234
-    if (input.contains("-")) {
-        val parts = input.split("-")
-        if (parts.size == 2) {
-            val p1 = parts[0].filter { it.isLetterOrDigit() }.uppercase()
-            val p2 = parts[1].filter { it.isLetterOrDigit() }.uppercase().take(4)
-            return "$p1-$p2"
-        }
-    }
-
-    // If input contains spaces, it's definitely a name! Keep as typed
-    if (input.contains(" ")) {
-        return input
-    }
-
-    // Check if input has digits
-    val hasDigits = input.any { it.isDigit() }
-    val lettersAndDigits = input.filter { it.isLetterOrDigit() }
-
-    // If user is entering a code (contains digits, e.g. DALI9510, PIN1234)
-    if (hasDigits && lettersAndDigits.length >= 4) {
-        val upper = lettersAndDigits.uppercase()
-        val p1 = upper.take(4)
-        val p2 = upper.drop(4).take(4)
-        return if (p2.isNotEmpty()) "$p1-$p2" else "$p1-"
-    }
-
-    // Pure letters (names like "Dali", "Alexander"): keep as typed so names are not distorted
-    return input
 }
