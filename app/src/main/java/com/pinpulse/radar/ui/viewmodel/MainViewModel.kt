@@ -252,6 +252,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         LocationTrackingService.start(getApplication())
     }
 
+    fun updateMyLocation(lat: Double, lng: Double, speed: Float) {
+        val current = prefs.loadCurrentUser() ?: return
+        val updated = current.copy(
+            latitude = lat,
+            longitude = lng,
+            speedKmh = speed * 3.6f,
+            isSharingLocation = true,
+            lastUpdated = System.currentTimeMillis()
+        )
+        prefs.saveCurrentUser(updated)
+
+        val packet = LocationPacket(
+            userId = updated.id,
+            displayName = updated.displayName,
+            avatarBase64 = updated.avatarBase64,
+            latitude = lat,
+            longitude = lng,
+            speedKmh = speed * 3.6f,
+            isSharingLocation = true,
+            timestamp = System.currentTimeMillis()
+        )
+        realtime.publishLocation(packet)
+    }
+
     fun updatePersonalAvatar(uri: Uri, context: Context) {
         val base64 = compressImageToBase64(uri, context) ?: return
         val current = prefs.loadCurrentUser() ?: return

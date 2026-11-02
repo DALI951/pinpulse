@@ -89,9 +89,8 @@ fun MapViewComponent(
     }
 
     // Update markers whenever visible users change
-    LaunchedEffect(visibleUsers, currentUserId) {
+    LaunchedEffect(visibleUsers, currentUserId, centerTarget) {
         val webView = webViewRef ?: return@LaunchedEffect
-        // First clear out obsolete markers
         val userMapData = visibleUsers.map { u ->
             mapOf(
                 "id" to u.id,
@@ -110,14 +109,14 @@ fun MapViewComponent(
             val json = gson.toJson(data)
             webView.evaluateJavascript("updateUserMarker($json);", null)
         }
-    }
 
-    // Center on selected user or self
-    LaunchedEffect(centerTarget) {
-        val target = centerTarget ?: return@LaunchedEffect
-        val webView = webViewRef ?: return@LaunchedEffect
-        if (target.latitude != 0.0 && target.longitude != 0.0) {
-            webView.evaluateJavascript("centerOn(${target.latitude}, ${target.longitude}, 16);", null)
+        if (centerTarget != null && centerTarget.latitude != 0.0 && centerTarget.longitude != 0.0) {
+            webView.evaluateJavascript("centerOn(${centerTarget.latitude}, ${centerTarget.longitude}, 16);", null)
+        } else {
+            val self = visibleUsers.find { it.id == currentUserId }
+            if (self != null && self.latitude != 0.0 && self.longitude != 0.0) {
+                webView.evaluateJavascript("centerOn(${self.latitude}, ${self.longitude}, 16);", null)
+            }
         }
     }
 }

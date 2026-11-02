@@ -115,6 +115,14 @@ class LocationTrackingService : Service() {
         }
 
         requestLocationUpdates()
+
+        try {
+            fusedLocationClient.lastLocation.addOnSuccessListener { loc ->
+                if (loc != null) handleNewLocation(loc)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getting immediate last location: ${e.message}")
+        }
     }
 
     @SuppressLint("MissingPermission")

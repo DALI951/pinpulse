@@ -9,6 +9,7 @@
 .cxx
 local.properties
 app/build/
+*.apk
 
 # Keep persistent release keystore tracked so APK updates never fail with signature mismatch
 !app/keystore/pinpulse.jks

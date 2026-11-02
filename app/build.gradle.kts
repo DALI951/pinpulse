@@ -92,6 +92,7 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
 
     implementation(libs.play.services.location)
+    implementation(libs.play.services.auth)
     implementation(libs.coil.compose)
     implementation(libs.gson)
     implementation(libs.okhttp)

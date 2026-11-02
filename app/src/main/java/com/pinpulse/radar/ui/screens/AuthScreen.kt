@@ -1,10 +1,14 @@
 package com.pinpulse.radar.ui.screens
 
+import android.accounts.AccountManager
+import android.app.Activity
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.Base64
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -33,9 +37,9 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -52,6 +56,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.pinpulse.radar.ui.theme.PulseGreen
 import com.pinpulse.radar.ui.theme.RadarBlue
 import com.pinpulse.radar.ui.theme.RadarDarkBg
@@ -70,12 +76,81 @@ fun AuthScreen(
     var emailInput by remember { mutableStateOf("") }
     var nameInput by remember { mutableStateOf("") }
     var avatarBase64 by remember { mutableStateOf<String?>(null) }
+    var isGoogleAccountSelected by remember { mutableStateOf(false) }
 
+    // Photo picker for custom avatar from phone
     val photoPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         if (uri != null) {
             avatarBase64 = compressImageToBase64(uri, context)
+        }
+    }
+
+    // Fallback Android native Account Picker (selects actual Google Account on device)
+    val nativeAccountPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            val accountName = result.data?.getStringExtra(AccountManager.KEY_ACCOUNT_NAME)
+            if (!accountName.isNullOrBlank()) {
+                val cleanName = accountName.substringBefore("@").replace(".", " ")
+                    .split(" ").joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }
+                emailInput = accountName
+                nameInput = cleanName
+                isGoogleAccountSelected = true
+                onSignIn(accountName, cleanName, avatarBase64)
+            }
+        }
+    }
+
+    // Google Sign-In Client Intent Launcher
+    val googleSignInLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
+        try {
+            val account = task.result
+            if (account != null && !account.email.isNullOrBlank()) {
+                val realEmail = account.email ?: ""
+                val realName = account.displayName ?: realEmail.substringBefore("@")
+                val photoUrl = account.photoUrl?.toString()
+                emailInput = realEmail
+                nameInput = realName
+                isGoogleAccountSelected = true
+                onSignIn(realEmail, realName, photoUrl ?: avatarBase64)
+                return@rememberLauncherForActivityResult
+            }
+        } catch (e: Exception) {
+            // Google Play Services client not configured with web client ID, launch native Android Account Picker
+        }
+
+        // Launch native Account Picker as reliable fallback
+        try {
+            val intent = AccountManager.newChooseAccountIntent(
+                null, null, arrayOf("com.google"), null, null, null, null
+            )
+            nativeAccountPicker.launch(intent)
+        } catch (e: Exception) {
+            Toast.makeText(context, "Please choose your Google Account", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun startGoogleSignIn() {
+        try {
+            val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+                .requestEmail()
+                .requestProfile()
+                .build()
+            val client = GoogleSignIn.getClient(context, gso)
+            client.signOut() // Clear previous cache to always allow account selection
+            googleSignInLauncher.launch(client.signInIntent)
+        } catch (e: Exception) {
+            // Native account picker fallback
+            val intent = AccountManager.newChooseAccountIntent(
+                null, null, arrayOf("com.google"), null, null, null, null
+            )
+            nativeAccountPicker.launch(intent)
         }
     }
 
@@ -164,6 +239,49 @@ fun AuthScreen(
 
                 Spacer(modifier = Modifier.height(20.dp))
 
+                // 1. PRIMARY: Sign In with Google Account Picker Button
+                Button(
+                    onClick = { startGoogleSignIn() },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(54.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.White),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        // Google 'G' styling badge
+                        Text(
+                            text = "G ",
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Black,
+                            color = Color(0xFF4285F4)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Sign in with Google",
+                            color = Color(0xFF1F2937),
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(18.dp))
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Box(modifier = Modifier.weight(1f).height(1.dp).background(Color(0xFF334155)))
+                    Text(" or enter custom ", fontSize = 11.sp, color = TextMuted, modifier = Modifier.padding(horizontal = 8.dp))
+                    Box(modifier = Modifier.weight(1f).height(1.dp).background(Color(0xFF334155)))
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
                 // Name Input
                 OutlinedTextField(
                     value = nameInput,
@@ -175,7 +293,7 @@ fun AuthScreen(
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(10.dp))
 
                 // Google Email Input
                 OutlinedTextField(
@@ -188,9 +306,9 @@ fun AuthScreen(
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(16.dp))
 
-                // Continue with Google Button
+                // Manual Continue Button
                 Button(
                     onClick = {
                         val finalName = nameInput.trim().ifEmpty { "Friend" }
@@ -199,24 +317,17 @@ fun AuthScreen(
                     },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(52.dp),
+                        .height(48.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = PulseGreen),
-                    shape = RoundedCornerShape(14.dp)
+                    shape = RoundedCornerShape(12.dp)
                 ) {
                     Text(
-                        text = "Sign In with Google",
+                        text = "Continue",
                         color = Color.Black,
-                        fontSize = 16.sp,
+                        fontSize = 15.sp,
                         fontWeight = FontWeight.Bold
                     )
                 }
-
-                Spacer(modifier = Modifier.height(10.dp))
-                Text(
-                    text = "Zero setup required • Instant live tracking",
-                    fontSize = 11.sp,
-                    color = TextMuted
-                )
             }
         }
     }

@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>PinPulse Radar Map</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <link rel="stylesheet" href="leaflet.css" />
+  <script src="leaflet.js"></script>
   <style>
     * {
       box-sizing: border-box;
@@ -56,6 +56,9 @@
       pointer-events: none;
       animation: pulse-animation 2s infinite cubic-bezier(0.4, 0, 0.6, 1);
     }
+    .pulse-ring.is-self {
+      background: rgba(59, 130, 246, 0.45);
+    }
     .pulse-ring.offline {
       display: none;
     }
@@ -92,6 +95,7 @@
     }
     .avatar-circle.is-self {
       border-color: #3b82f6; /* Blue for self */
+      box-shadow: 0 0 16px rgba(59, 130, 246, 0.6);
     }
     .avatar-circle.offline {
       border-color: #64748b; /* Slate for offline */
@@ -118,7 +122,7 @@
       position: relative;
       z-index: 3;
       margin-top: 4px;
-      background: rgba(15, 23, 42, 0.88);
+      background: rgba(15, 23, 42, 0.92);
       color: #ffffff;
       font-size: 11px;
       font-weight: 600;
@@ -128,10 +132,15 @@
       box-shadow: 0 2px 8px rgba(0,0,0,0.4);
       border: 1px solid rgba(255,255,255,0.15);
       pointer-events: none;
-      max-width: 90px;
+      max-width: 100px;
       overflow: hidden;
       text-overflow: ellipsis;
       text-align: center;
+    }
+    .name-badge.is-self {
+      border-color: #3b82f6;
+      color: #60a5fa;
+      font-weight: 700;
     }
   </style>
 </head>
@@ -142,6 +151,7 @@
     var map;
     var markers = {};
     var currentLayer;
+    var hasAutoCentered = false;
     var tileLayers = {
       streets: L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', { maxZoom: 20 }),
       satellite: L.tileLayer('https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', { maxZoom: 20 }),
@@ -150,10 +160,9 @@
     };
 
     function initMap() {
-      // Default to Tunis / Centered until GPS fixes
       map = L.map('map', {
         center: [36.8065, 10.1815],
-        zoom: 14,
+        zoom: 15,
         zoomControl: false
       });
 
@@ -191,12 +200,17 @@
         avatarContent = '<span class="avatar-initials">' + initial + '</span>';
       }
 
+      var displayName = user.name || 'Friend';
+      if (user.isSelf) {
+        displayName = user.name + ' (You)';
+      }
+
       var html = '<div class="pinpulse-marker-wrapper">' +
-                   '<div class="pulse-ring' + isOfflineClass + '"></div>' +
+                   '<div class="pulse-ring' + isSelfClass + isOfflineClass + '"></div>' +
                    '<div class="avatar-circle' + isSelfClass + isOfflineClass + '">' +
                      avatarContent +
                    '</div>' +
-                   '<div class="name-badge">' + (user.name || 'Friend') + '</div>' +
+                   '<div class="name-badge' + isSelfClass + '">' + displayName + '</div>' +
                  '</div>';
       return html;
     }
@@ -208,6 +222,8 @@
 
         var lat = parseFloat(user.lat);
         var lng = parseFloat(user.lng);
+        if (isNaN(lat) || isNaN(lng) || (lat === 0 && lng === 0)) return;
+
         var userId = user.id;
 
         var customIcon = L.divIcon({
@@ -231,6 +247,12 @@
           marker.addTo(map);
           markers[userId] = marker;
         }
+
+        // Auto-center on self GPS location if not yet centered!
+        if (user.isSelf && !hasAutoCentered && lat !== 0 && lng !== 0) {
+          map.setView([lat, lng], 16);
+          hasAutoCentered = true;
+        }
       } catch (err) {
         console.error("Error updating marker: " + err);
       }
@@ -252,7 +274,7 @@
 
     function centerOn(lat, lng, zoomLevel) {
       if (!map) return;
-      var z = zoomLevel || map.getZoom();
+      var z = zoomLevel || map.getZoom() || 16;
       map.flyTo([parseFloat(lat), parseFloat(lng)], z, {
         duration: 1.2,
         easeLinearity: 0.25

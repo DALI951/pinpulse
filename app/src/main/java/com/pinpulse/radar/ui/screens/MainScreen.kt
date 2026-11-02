@@ -109,6 +109,7 @@ fun MainScreen(
     val locationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
+        (context as? com.pinpulse.radar.MainActivity)?.fetchImmediateLocation()
         // Battery optimizations prompt for non-stop background tracking
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
