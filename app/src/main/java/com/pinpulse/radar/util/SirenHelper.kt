@@ -37,7 +37,10 @@ object SirenHelper {
 
     private var volumeReceiver: BroadcastReceiver? = null
     private var volumeObserver: ContentObserver? = null
-    private var initialAlarmVolume: Int = -1
+    private var previousAlarmVolume: Int = -1
+    private var targetAlarmVolume: Int = -1
+    private var sirenStartTime: Long = 0L
+    private var ringtoneFallback: android.media.Ringtone? = null
 
     private val _isSirenActive = MutableStateFlow(false)
     val isSirenActive: StateFlow<Boolean> = _isSirenActive.asStateFlow()
@@ -48,27 +51,40 @@ object SirenHelper {
         if (isPlaying) return
         isPlaying = true
         _isSirenActive.value = true
+        sirenStartTime = System.currentTimeMillis()
 
         try {
             val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
             val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM)
-            initialAlarmVolume = maxVol
+            previousAlarmVolume = audioManager.getStreamVolume(AudioManager.STREAM_ALARM)
+            targetAlarmVolume = maxVol
             audioManager.setStreamVolume(AudioManager.STREAM_ALARM, maxVol, 0)
 
             val alarmUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
                 ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+                ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
 
-            mediaPlayer = MediaPlayer().apply {
-                setDataSource(context, alarmUri)
-                setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_ALARM)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .build()
-                )
-                isLooping = true
-                prepare()
-                start()
+            try {
+                mediaPlayer = MediaPlayer().apply {
+                    setDataSource(context, alarmUri)
+                    setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_ALARM)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                            .build()
+                    )
+                    isLooping = true
+                    prepare()
+                    start()
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "MediaPlayer init error: ${e.message}, attempting RingtoneManager fallback")
+                val ringtone = RingtoneManager.getRingtone(context, alarmUri)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    ringtone?.isLooping = true
+                }
+                ringtone?.play()
+                ringtoneFallback = ringtone
             }
 
             // Vibrate pattern
@@ -109,8 +125,15 @@ object SirenHelper {
             val receiver = object : BroadcastReceiver() {
                 override fun onReceive(c: Context?, intent: Intent?) {
                     if (intent?.action == "android.media.VOLUME_CHANGED_ACTION") {
-                        Log.d(TAG, "Hardware volume change detected -> Silencing siren and vibration")
-                        stop(context)
+                        // Ignore broadcast for first 2.5 seconds while initial max volume level settles
+                        if (System.currentTimeMillis() - sirenStartTime < 2500L) return
+
+                        val newVol = intent.getIntExtra("android.media.EXTRA_VOLUME_STREAM_VALUE", -1)
+                        val prevVol = intent.getIntExtra("android.media.EXTRA_PREV_VOLUME_STREAM_VALUE", -1)
+                        if (newVol in 0 until prevVol) {
+                            Log.d(TAG, "Hardware volume down detected ($prevVol -> $newVol) -> Silencing siren and vibration")
+                            stop(context)
+                        }
                     }
                 }
             }
@@ -128,10 +151,13 @@ object SirenHelper {
         try {
             val observer = object : ContentObserver(handler) {
                 override fun onChange(selfChange: Boolean) {
+                    // Ignore observer events for first 2.5 seconds while initial volume maxes out
+                    if (System.currentTimeMillis() - sirenStartTime < 2500L) return
+
                     val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
                     val currentVol = am.getStreamVolume(AudioManager.STREAM_ALARM)
-                    if (currentVol < initialAlarmVolume || currentVol == 0) {
-                        Log.d(TAG, "Volume dropped via hardware key -> Silencing siren and vibration")
+                    if (currentVol < targetAlarmVolume) {
+                        Log.d(TAG, "Alarm volume decreased ($currentVol < $targetAlarmVolume) -> Silencing siren and vibration")
                         stop(context)
                     }
                 }
@@ -164,11 +190,24 @@ object SirenHelper {
             volumeObserver = null
         } catch (e: Exception) {}
 
+        // Restore user's prior alarm volume
+        try {
+            if (previousAlarmVolume >= 0) {
+                val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+                am?.setStreamVolume(AudioManager.STREAM_ALARM, previousAlarmVolume, 0)
+            }
+        } catch (e: Exception) {}
+
         // Stop audio playback immediately
         try {
             mediaPlayer?.stop()
             mediaPlayer?.release()
             mediaPlayer = null
+        } catch (e: Exception) {}
+
+        try {
+            ringtoneFallback?.stop()
+            ringtoneFallback = null
         } catch (e: Exception) {}
 
         // Stop vibration immediately on all Android versions

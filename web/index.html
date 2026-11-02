@@ -844,11 +844,10 @@
         document.getElementById('conn-dot').className = 'status-dot connected';
         document.getElementById('conn-text').textContent = 'Live Global Relay Active (' + brokerWs.split('//')[1].split(':')[0] + ')';
         // Wildcard subscribe: catches every single user's location packet worldwide in real-time!
-        client.subscribe('pinpulse/v1/user/+/loc', function(err) {
-          if (!err) console.log('Subscribed live to all users on pinpulse/v1/user/+/loc');
-        });
-        client.subscribe('pinpulse/v1/user/+/status', function(err) {});
-        client.subscribe('pinpulse/v1/alerts/+', function(err) {});
+        client.subscribe('pinpulse/v1/user/+/loc', { qos: 0 });
+        client.subscribe('pinpulse/v1/network/live', { qos: 0 });
+        client.subscribe('pinpulse/v1/user/+/status', { qos: 0 });
+        client.subscribe('pinpulse/v1/alerts/+', { qos: 0 });
       });
 
       client.on('error', function(err) {
@@ -889,16 +888,16 @@
         callerName: "Web Radar Commander",
         timestamp: Date.now()
       });
-      client.publish("pinpulse/v1/ring/" + selectedUserId, payload, { qos: 1 });
-      client.publish("pinpulse/v1/alerts/" + selectedUserId, payload, { qos: 1 });
-      if (u && u.friendCode) {
-        client.publish("pinpulse/v1/ring/" + u.friendCode, payload, { qos: 1 });
-      }
-      alert("🔊 Siren triggered on " + (u ? u.name : "target") + "'s phone! It will ring at max volume with vibration until they press Volume Down or tap Stop.");
-    }
-          alert("Failed to send siren signal: " + err.message);
+      try {
+        client.publish("pinpulse/v1/ring/" + selectedUserId, payload, { qos: 1 });
+        client.publish("pinpulse/v1/alerts/" + selectedUserId, payload, { qos: 1 });
+        if (u && u.friendCode) {
+          client.publish("pinpulse/v1/ring/" + u.friendCode, payload, { qos: 1 });
         }
-      });
+        alert("🔊 Siren triggered on " + (u ? u.name : "target") + "'s phone! It will ring at max volume with vibration until they press Volume Down or tap Stop.");
+      } catch (err) {
+        alert("Failed to send siren signal: " + err.message);
+      }
     }
 
     function handleStatusUpdate(data) {

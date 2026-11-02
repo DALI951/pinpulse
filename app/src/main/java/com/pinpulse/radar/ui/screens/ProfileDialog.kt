@@ -26,8 +26,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.LocationOff
-import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -96,7 +94,7 @@ fun ProfileDialog(
                         .size(88.dp)
                         .clip(CircleShape)
                         .background(Color(0xFF252836))
-                        .border(3.dp, if (user.isSharingLocation) PulseGreen else DangerRed, CircleShape)
+                        .border(3.dp, PulseGreen, CircleShape)
                         .clickable { avatarPicker.launch("image/*") },
                     contentAlignment = Alignment.Center
                 ) {
@@ -189,26 +187,33 @@ fun ProfileDialog(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Location Sharing Toggle Button
-                Button(
-                    onClick = { viewModel.toggleLocationSharing() },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (user.isSharingLocation) DangerRed else PulseGreen
-                    ),
-                    shape = RoundedCornerShape(12.dp)
+                // 24/7 Always-On Live Radar Status Indicator (no pause option)
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = PulseGreen.copy(alpha = 0.15f)),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Icon(
-                        if (user.isSharingLocation) Icons.Default.LocationOff else Icons.Default.LocationOn,
-                        contentDescription = "Toggle Sharing",
-                        tint = if (user.isSharingLocation) Color.White else Color.Black
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        if (user.isSharingLocation) "Turn Off Location Sharing" else "Turn On Location Sharing",
-                        color = if (user.isSharingLocation) Color.White else Color.Black,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(PulseGreen)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            "Live Radar Active (24/7 Continuous)",
+                            color = PulseGreen,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 13.sp
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))

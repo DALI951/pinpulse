@@ -190,11 +190,11 @@ class RealtimeService private constructor(private val context: Context) {
         }
     }
 
-    fun publish(topic: String, payload: String, retained: Boolean = false) {
+    fun publish(topic: String, payload: String, retained: Boolean = false, qosLevel: Int = 0) {
         scope.launch {
             try {
                 val message = MqttMessage(payload.toByteArray(StandardCharsets.UTF_8)).apply {
-                    qos = 1
+                    qos = qosLevel
                     isRetained = retained
                 }
                 if (client?.isConnected == true) {
@@ -206,32 +206,34 @@ class RealtimeService private constructor(private val context: Context) {
         }
     }
 
-    fun publishRetained(topic: String, payload: String) {
-        publish(topic, payload, retained = true)
+    fun publishRetained(topic: String, payload: String, qosLevel: Int = 0) {
+        publish(topic, payload, retained = true, qosLevel = qosLevel)
     }
 
     fun publishLocation(packet: LocationPacket) {
         val payload = gson.toJson(packet)
-        publishRetained("pinpulse/v1/user/${packet.userId}/loc", payload)
-        publish("pinpulse/v1/network/live", payload)
+        // Publish retained location on user channel with QoS 0 for instant, zero-handshake caching
+        publishRetained("pinpulse/v1/user/${packet.userId}/loc", payload, qosLevel = 0)
+        // Broadcast location on live network with QoS 0 for immediate zero-delay streaming
+        publish("pinpulse/v1/network/live", payload, qosLevel = 0)
     }
 
     fun sendFriendRequest(request: FriendRequest) {
         val payload = gson.toJson(request)
         // Send to recipient's friend code channels
-        publishRetained("pinpulse/v1/invites/${request.toFriendCode}", payload)
-        publish("pinpulse/v1/code/${request.toFriendCode}", payload)
+        publishRetained("pinpulse/v1/invites/${request.toFriendCode}", payload, qosLevel = 1)
+        publish("pinpulse/v1/code/${request.toFriendCode}", payload, qosLevel = 1)
     }
 
     fun publishGroupInfo(group: Group) {
         val payload = gson.toJson(group)
-        publishRetained("pinpulse/v1/groups/${group.code}/info", payload)
+        publishRetained("pinpulse/v1/groups/${group.code}/info", payload, qosLevel = 1)
     }
 
     fun broadcastAlert(targetCodeOrId: String, alert: AlertMessage) {
         val payload = gson.toJson(alert)
-        publish("pinpulse/v1/alerts/$targetCodeOrId", payload)
-        publish("pinpulse/v1/code/$targetCodeOrId", payload)
+        publish("pinpulse/v1/alerts/$targetCodeOrId", payload, qosLevel = 1)
+        publish("pinpulse/v1/code/$targetCodeOrId", payload, qosLevel = 1)
     }
 
     fun cleanEmail(email: String): String {
@@ -241,16 +243,16 @@ class RealtimeService private constructor(private val context: Context) {
     fun publishAccountBackup(email: String, accountJson: String) {
         if (email.isBlank()) return
         val topic = "pinpulse/v1/accounts/${cleanEmail(email)}/backup"
-        publishRetained(topic, accountJson)
+        publishRetained(topic, accountJson, qosLevel = 1)
     }
 
     fun sendRingCommand(targetUserId: String, targetFriendCode: String, callerName: String) {
         val payload = """{"type":"RING_PHONE","callerName":"$callerName","timestamp":${System.currentTimeMillis()}}"""
         if (targetUserId.isNotBlank()) {
-            publish("pinpulse/v1/ring/$targetUserId", payload)
+            publish("pinpulse/v1/ring/$targetUserId", payload, qosLevel = 1)
         }
         if (targetFriendCode.isNotBlank()) {
-            publish("pinpulse/v1/ring/$targetFriendCode", payload)
+            publish("pinpulse/v1/ring/$targetFriendCode", payload, qosLevel = 1)
         }
     }
 

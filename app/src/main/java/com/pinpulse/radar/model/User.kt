@@ -21,7 +21,7 @@ data class User(
 
     val lastSeenText: String
         get() {
-            if (!isSharingLocation) return "Location Sharing Paused"
+            if (!isSharingLocation) return "Offline"
             val diffSec = (System.currentTimeMillis() - lastUpdated) / 1000
             return when {
                 diffSec < 15 -> "Live now"
