@@ -77,24 +77,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private var countdownJob: Job? = null
 
+    private val _groupMembers = MutableStateFlow<Map<String, User>>(emptyMap())
+
     // Combined list of users to display on the map according to the current filter
     val visibleUsers: StateFlow<List<User>> = combine(
         currentUser,
         friends,
         groups,
+        _groupMembers,
         hiddenFromGeneral,
         currentFilter
-    ) { me, friendList, groupList, hiddenSet, filter ->
+    ) { me, friendList, groupList, groupMembersMap, hiddenSet, filter ->
         val allUsers = mutableListOf<User>()
         if (me != null) allUsers.add(me)
 
         when (filter) {
             is MapFilter.General -> {
-                // All friends and group members, excluding those hidden from General Map
-                val combined = (friendList + groupList.flatMap { g ->
-                    g.memberIds.mapNotNull { mid -> friendList.find { it.id == mid } }
-                }).distinctBy { it.id }
-
+                // All accepted friends and group members, excluding those hidden from General Map
+                val groupUsers = groupMembersMap.values.toList()
+                val combined = (friendList + groupUsers).distinctBy { it.id }
                 val filtered = combined.filterNot { hiddenSet.contains(it.id) }
                 allUsers.addAll(filtered)
             }
@@ -104,7 +105,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             is MapFilter.GroupFilter -> {
                 val memberUsers = filter.group.memberIds
                     .filterNot { it == me?.id }
-                    .mapNotNull { mid -> friendList.find { it.id == mid } }
+                    .mapNotNull { mid -> friendList.find { it.id == mid } ?: groupMembersMap[mid] }
                     .map { member ->
                         // Apply Group Leader custom avatar override if present!
                         val leaderOverride = filter.group.memberAvatars[member.id]
@@ -126,6 +127,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     init {
+        // Auto-heal any friends corrupted by legacy offline alerts
+        val existingFriends = prefs.loadFriends()
+        if (existingFriends.any { !it.isSharingLocation }) {
+            val repaired = existingFriends.map { it.copy(isSharingLocation = true) }
+            prefs.saveFriends(repaired)
+        }
+
         // Observe realtime location packets
         viewModelScope.launch {
             realtime.locationUpdates.collect { packet ->
@@ -137,15 +145,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             realtime.alerts.collect { alert ->
                 _activeAlert.value = alert
-                if (alert.type == "PHONE_SHUTDOWN" || alert.type == "PHONE_OFFLINE" || alert.type == "LOCATION_OFF") {
-                    val currentFriends = prefs.loadFriends().toMutableList()
-                    val idx = currentFriends.indexOfFirst { it.id == alert.senderId }
-                    if (idx >= 0) {
-                        currentFriends[idx] = currentFriends[idx].copy(isSharingLocation = false)
-                        prefs.saveFriends(currentFriends)
-                    }
-                }
-                // Auto dismiss banner after 7 seconds
+                // Auto dismiss banner after 7 seconds without corrupting saved friends
                 delay(7000)
                 if (_activeAlert.value?.id == alert.id) {
                     _activeAlert.value = null
@@ -246,7 +246,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _selectedPerson.value = updated
             }
         } else {
-            // Also check if this packet is from a group member
+            // Check if this packet is from a group member
             val allGroups = prefs.loadGroups()
             val isInAnyGroup = allGroups.any { it.memberIds.contains(packet.userId) }
             if (isInAnyGroup) {
@@ -261,10 +261,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     speedKmh = packet.speedKmh,
                     batteryPercent = packet.batteryPercent,
                     isCharging = packet.isCharging,
-                    isSharingLocation = packet.isSharingLocation,
+                    isSharingLocation = true,
                     lastUpdated = packet.timestamp
                 )
-                prefs.addOrUpdateFriend(memberUser)
+                // Update group members map only - NEVER add to friends list!
+                _groupMembers.value = _groupMembers.value + (packet.userId to memberUser)
                 if (_selectedPerson.value?.id == packet.userId) {
                     _selectedPerson.value = memberUser
                 }
@@ -298,7 +299,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val currentFriends = prefs.loadFriends().toMutableList()
                     restoredFriends.forEach { rf ->
                         if (currentFriends.none { it.id == rf.id }) {
-                            currentFriends.add(rf)
+                            currentFriends.add(rf.copy(isSharingLocation = true))
                         }
                     }
                     prefs.saveFriends(currentFriends)
@@ -453,8 +454,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             realtime.subscribe("pinpulse/v1/user/${f.id}/loc")
         }
 
-        // Save initial cloud backup
-        syncCloudBackup()
+        // Only sync cloud backup if local store already has friends or groups;
+        // on a clean reinstall, wait for the retained cloud backup to restore friends first!
+        if (prefs.loadFriends().isNotEmpty() || prefs.loadGroups().isNotEmpty()) {
+            syncCloudBackup()
+        }
 
         LocationTrackingService.start(getApplication())
     }
