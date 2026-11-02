@@ -97,7 +97,8 @@ fun FriendsSheet(
     val isAlreadyFriend = foundUser != null && friends.any {
         it.id == foundUser.id || (foundUser.friendCode.isNotBlank() && it.friendCode.equals(foundUser.friendCode, ignoreCase = true))
     }
-    val canSend = addFriendInput.trim().length >= 2 && !isSelf && !isAlreadyFriend
+    val isCompleteCodeFormat = addFriendInput.length >= 8 || addFriendInput.contains("@")
+    val canSend = foundUser != null && !isSelf && !isAlreadyFriend
 
     Column(
         modifier = modifier
@@ -196,13 +197,13 @@ fun FriendsSheet(
                 }
             }
 
-            // Realtime Registry & Network Feedback
+            // Realtime Registry Feedback
             if (addFriendInput.isNotBlank()) {
                 Spacer(modifier = Modifier.height(6.dp))
                 when {
                     isSelf -> {
                         Text(
-                            text = "⚠️ You cannot add your own account",
+                            text = "⚠️ You cannot add your own code / account",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Medium,
                             color = Color(0xFFF59E0B),
@@ -220,19 +221,27 @@ fun FriendsSheet(
                     }
                     foundUser != null -> {
                         Text(
-                            text = "✅ Found in database: ${foundUser.displayName} (${foundUser.friendCode.ifBlank { "User ID: " + foundUser.id.take(8) }})",
+                            text = "✅ Found in database: ${foundUser.displayName} (${foundUser.friendCode.ifBlank { "User" }})",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = PulseGreen,
+                            modifier = Modifier.padding(start = 4.dp)
+                        )
+                    }
+                    isCompleteCodeFormat -> {
+                        Text(
+                            text = "❌ Code \"$addFriendInput\" not found in database",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Medium,
-                            color = PulseGreen,
+                            color = DangerRed,
                             modifier = Modifier.padding(start = 4.dp)
                         )
                     }
                     addFriendInput.trim().length >= 2 -> {
                         Text(
-                            text = "📡 Ready to send invite to \"$addFriendInput\". Tap Add to send.",
+                            text = "🔍 Checking database...",
                             fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = Color(0xFF38BDF8),
+                            color = TextMuted,
                             modifier = Modifier.padding(start = 4.dp)
                         )
                     }

@@ -57,6 +57,7 @@ class RealtimeService private constructor(private val context: Context) {
     private val _friendRequests = MutableSharedFlow<FriendRequest>(replay = 10, extraBufferCapacity = 32)
     val friendRequests: SharedFlow<FriendRequest> = _friendRequests.asSharedFlow()
 
+    private val registeredUsersMap = java.util.concurrent.ConcurrentHashMap<String, User>()
     private val _registeredUsers = MutableStateFlow<Map<String, User>>(emptyMap())
     val registeredUsers: StateFlow<Map<String, User>> = _registeredUsers.asStateFlow()
 
@@ -107,6 +108,8 @@ class RealtimeService private constructor(private val context: Context) {
                 })
 
                 client?.connect(options)
+                Log.d(TAG, "MQTT Synchronously Connected to $BROKER_URL")
+                resubscribeUserChannels(user)
             } catch (e: Exception) {
                 Log.e(TAG, "Connect primary broker failed: ${e.message}, trying backup...")
                 connectBackup(user)
@@ -137,39 +140,44 @@ class RealtimeService private constructor(private val context: Context) {
         val emailTag = if (user.email.isNotBlank()) cleanEmail(user.email) else ""
         val codeUpper = user.friendCode.trim().uppercase()
 
-        // 1. Subscribe to own location, direct messages, alerts, ring, and invites by ID
-        subscribe("pinpulse/v1/user/${user.id}/loc")
-        subscribe("pinpulse/v1/user/+/loc")
-        subscribe("pinpulse/v1/user/+/status")
-        subscribe("pinpulse/v1/direct/${user.id}")
-        subscribe("pinpulse/v1/alerts/${user.id}")
-        subscribe("pinpulse/v1/ring/${user.id}")
-        subscribe("pinpulse/v1/invites/${user.id}")
-        subscribe("pinpulse/v1/invites/broadcast")
-        subscribe("pinpulse/v1/network/live")
+        val coreTopics = mutableListOf(
+            "pinpulse/v1/user/${user.id}/loc",
+            "pinpulse/v1/user/+/loc",
+            "pinpulse/v1/user/+/status",
+            "pinpulse/v1/direct/${user.id}",
+            "pinpulse/v1/alerts/${user.id}",
+            "pinpulse/v1/ring/${user.id}",
+            "pinpulse/v1/invites/${user.id}",
+            "pinpulse/v1/invites/broadcast",
+            "pinpulse/v1/network/live",
+            "pinpulse/v1/registry/code/+",
+            "pinpulse/v1/registry/email/+",
+            "pinpulse/v1/registry/user/+"
+        )
 
-        // 2. CRITICAL: Subscribe to messages, invites, alerts, ring sent to Friend Code!
         if (codeUpper.isNotBlank()) {
-            subscribe("pinpulse/v1/code/$codeUpper")
-            subscribe("pinpulse/v1/invites/$codeUpper")
-            subscribe("pinpulse/v1/alerts/$codeUpper")
-            subscribe("pinpulse/v1/ring/$codeUpper")
+            coreTopics.add("pinpulse/v1/code/$codeUpper")
+            coreTopics.add("pinpulse/v1/invites/$codeUpper")
+            coreTopics.add("pinpulse/v1/alerts/$codeUpper")
+            coreTopics.add("pinpulse/v1/ring/$codeUpper")
+            coreTopics.add("pinpulse/v1/registry/code/$codeUpper")
         }
 
-        // 3. CRITICAL: Subscribe to invites, alerts, ring sent to user's Email!
         if (emailTag.isNotBlank()) {
-            subscribe("pinpulse/v1/code/$emailTag")
-            subscribe("pinpulse/v1/invites/$emailTag")
-            subscribe("pinpulse/v1/alerts/$emailTag")
-            subscribe("pinpulse/v1/ring/$emailTag")
+            coreTopics.add("pinpulse/v1/code/$emailTag")
+            coreTopics.add("pinpulse/v1/invites/$emailTag")
+            coreTopics.add("pinpulse/v1/alerts/$emailTag")
+            coreTopics.add("pinpulse/v1/ring/$emailTag")
+            coreTopics.add("pinpulse/v1/registry/email/$emailTag")
         }
 
-        // 4. Wildcard registry subscriptions for instant Friend Code existence validation
-        subscribe("pinpulse/v1/registry/code/+")
-        subscribe("pinpulse/v1/registry/email/+")
-        subscribe("pinpulse/v1/registry/user/+")
+        synchronized(subscribedTopics) {
+            coreTopics.addAll(subscribedTopics)
+        }
 
-        // 5. Register own profile as retained message for code lookups & publish online status
+        subscribeBatch(coreTopics.distinct(), qos = 1)
+
+        // Register own profile as retained message for code lookups & publish online status
         val registryPayload = gson.toJson(user)
         if (codeUpper.isNotBlank()) {
             publishRetained("pinpulse/v1/registry/code/$codeUpper", registryPayload, qosLevel = 1)
@@ -181,13 +189,22 @@ class RealtimeService private constructor(private val context: Context) {
 
         val onlinePayload = """{"userId":"${user.id}","senderId":"${user.id}","name":"${user.displayName}","senderName":"${user.displayName}","status":"ONLINE","type":"PHONE_ONLINE","timestamp":${System.currentTimeMillis()}}"""
         publishRetained("pinpulse/v1/user/${user.id}/status", onlinePayload, qosLevel = 1)
+    }
 
-        // 6. Resubscribe to existing dynamically added topics
-        synchronized(subscribedTopics) {
-            subscribedTopics.forEach { topic ->
-                try {
-                    client?.subscribe(topic, 1)
-                } catch (e: Exception) {}
+    fun subscribeBatch(topics: List<String>, qos: Int = 1) {
+        if (topics.isEmpty()) return
+        scope.launch {
+            try {
+                synchronized(subscribedTopics) {
+                    subscribedTopics.addAll(topics)
+                }
+                if (client?.isConnected == true) {
+                    val qosArray = IntArray(topics.size) { qos }
+                    client?.subscribe(topics.toTypedArray(), qosArray)
+                    Log.d(TAG, "Batch subscribed to ${topics.size} topics successfully")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Batch subscribe error: ${e.message}")
             }
         }
     }
@@ -276,24 +293,23 @@ class RealtimeService private constructor(private val context: Context) {
 
     fun registerKnownUser(user: User) {
         if (user.id.isBlank()) return
-        val current = _registeredUsers.value.toMutableMap()
-        current[user.id] = user
+        registeredUsersMap[user.id] = user
         if (user.friendCode.isNotBlank()) {
-            val codeUpper = user.friendCode.uppercase()
-            current[codeUpper] = user
-            current[codeUpper.replace("-", "")] = user
+            val codeUpper = user.friendCode.trim().uppercase()
+            registeredUsersMap[codeUpper] = user
+            registeredUsersMap[codeUpper.replace("-", "")] = user
         }
         if (user.displayName.isNotBlank()) {
             val dName = user.displayName.trim()
-            current[dName] = user
-            current[dName.uppercase()] = user
-            current[dName.lowercase()] = user
+            registeredUsersMap[dName] = user
+            registeredUsersMap[dName.uppercase()] = user
+            registeredUsersMap[dName.lowercase()] = user
         }
         if (user.email.isNotBlank()) {
-            current[user.email.trim().lowercase()] = user
-            current[cleanEmail(user.email)] = user
+            registeredUsersMap[user.email.trim().lowercase()] = user
+            registeredUsersMap[cleanEmail(user.email)] = user
         }
-        _registeredUsers.value = current
+        _registeredUsers.value = registeredUsersMap.toMap()
     }
 
     fun publishGroupInfo(group: Group) {
@@ -396,6 +412,18 @@ class RealtimeService private constructor(private val context: Context) {
                                     Log.d(TAG, "Friend request saved to pending: from ${req.fromUserName} (${req.fromFriendCode})")
                                 }
                             }
+                        }
+                    }
+                    topic.startsWith("pinpulse/v1/registry/code/") -> {
+                        val codeFromTopic = topic.removePrefix("pinpulse/v1/registry/code/").trim().uppercase()
+                        if (payload.isNotBlank() && payload != "{}") {
+                            try {
+                                val regUser = gson.fromJson(payload, User::class.java)
+                                if (regUser != null) {
+                                    val finalUser = if (regUser.friendCode.isBlank()) regUser.copy(friendCode = codeFromTopic) else regUser
+                                    registerKnownUser(finalUser)
+                                }
+                            } catch (e: Exception) {}
                         }
                     }
                     topic.startsWith("pinpulse/v1/registry/") -> {
