@@ -101,6 +101,7 @@ class LocationTrackingService : Service() {
     private lateinit var prefs: AppPreferences
     private lateinit var realtimeService: RealtimeService
     private var wakeLock: PowerManager.WakeLock? = null
+    private var heartbeatJob: kotlinx.coroutines.Job? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -162,6 +163,34 @@ class LocationTrackingService : Service() {
 
         requestLocationUpdates()
 
+        // Continuous 3-second live heartbeat: guarantees website and friends receive continuous telemetry even if stationary
+        heartbeatJob?.cancel()
+        heartbeatJob = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            while (kotlinx.coroutines.isActive) {
+                kotlinx.coroutines.delay(3000L)
+                try {
+                    val user = prefs.loadCurrentUser()
+                    if (user != null && user.isSharingLocation && (user.latitude != 0.0 || user.longitude != 0.0)) {
+                        val (batteryPct, isCharging) = getBatteryInfo(this@LocationTrackingService)
+                        val packet = LocationPacket(
+                            userId = user.id,
+                            displayName = user.displayName,
+                            email = user.email,
+                            avatarBase64 = user.avatarBase64,
+                            latitude = user.latitude,
+                            longitude = user.longitude,
+                            speedKmh = user.speedKmh,
+                            batteryPercent = batteryPct,
+                            isCharging = isCharging,
+                            isSharingLocation = true,
+                            timestamp = System.currentTimeMillis()
+                        )
+                        realtimeService.publishLocation(packet)
+                    }
+                } catch (e: Exception) {}
+            }
+        }
+
         try {
             fusedLocationClient.lastLocation.addOnSuccessListener { loc ->
                 if (loc != null) handleNewLocation(loc)
@@ -176,7 +205,7 @@ class LocationTrackingService : Service() {
         try {
             val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 3000L)
                 .setMinUpdateIntervalMillis(2000L)
-                .setMinUpdateDistanceMeters(1.5f)
+                .setMinUpdateDistanceMeters(0f)
                 .setWaitForAccurateLocation(false)
                 .build()
 
@@ -226,6 +255,8 @@ class LocationTrackingService : Service() {
     }
 
     private fun handleStopTracking() {
+        heartbeatJob?.cancel()
+        heartbeatJob = null
         try {
             fusedLocationClient.removeLocationUpdates(locationCallback)
         } catch (e: Exception) {
@@ -350,6 +381,8 @@ class LocationTrackingService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        heartbeatJob?.cancel()
+        heartbeatJob = null
         try {
             fusedLocationClient.removeLocationUpdates(locationCallback)
         } catch (e: Exception) {}

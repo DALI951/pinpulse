@@ -182,5 +182,29 @@ To guarantee you can always install new APK updates directly on top of an alread
    - Added an in-app reminder banner if battery restrictions are active.
    - Added `onTaskRemoved` auto-restart in `LocationTrackingService` to guarantee the tracking service persists even if the user swipes away the app from recent apps.
 
+---
+
+## 13. Hardware Volume Down Silence, Real-Time Continuous Heartbeat & Permission Guards (v0.9)
+
+1. **Volume Down Key & Instant Silence (Sound + Vibration):**
+   - Intercepts physical Volume Down, Volume Up, and Mute keys via `dispatchKeyEvent` in `MainActivity`.
+   - In background/lock screen, dynamically monitors `android.media.VOLUME_CHANGED_ACTION` and `Settings.System.CONTENT_URI` so pressing the volume down button immediately cancels both the siren sound and vibrator.
+   - Added an in-app emergency banner with a 1-tap "🛑 STOP" button alongside the heads-up notification action.
+
+2. **Continuous Live Streaming (Zero Refresh Needed on Web or App):**
+   - Removed the `minUpdateDistanceMeters` threshold (set to `0f`) so location and battery packets transmit continuously even when stationary.
+   - Added an active 3-second background heartbeat coroutine in `LocationTrackingService` transmitting to `pinpulse/v1/network/live` and `pinpulse/v1/user/{id}/loc`.
+   - Web Radar upgraded with a 2-second live relative time counter and multi-broker fallback (`broker.emqx.io` + `broker.hivemq.com`).
+
+3. **No Duplicate Pending Friend Requests:**
+   - Automatically cleans retained MQTT invites upon acceptance/decline and prevents re-adding people who are already friends.
+
+4. **Web Radar Siren Trigger Fix:**
+   - Promoted MQTT client to global window scope so clicking "🔊 Ring Phone (Emergency Siren)" on the web interface activates the siren reliably.
+
+5. **One-Time Access Prompts:**
+   - Guaranteed location and battery optimization exemption dialogs only prompt once upon first setup instead of repeatedly in a loop.
+
+
 
 

@@ -199,4 +199,12 @@ class AppPreferences(context: Context) {
         val current = loadPendingRequests().filterNot { it.id == requestId }
         savePendingRequests(current)
     }
+
+    var hasPromptedLocationPermissions: Boolean
+        get() = prefs.getBoolean("has_prompted_location_permissions", false)
+        set(value) = prefs.edit().putBoolean("has_prompted_location_permissions", value).apply()
+
+    var hasPromptedBatteryExemption: Boolean
+        get() = prefs.getBoolean("has_prompted_battery_exemption", false)
+        set(value) = prefs.edit().putBoolean("has_prompted_battery_exemption", value).apply()
 }

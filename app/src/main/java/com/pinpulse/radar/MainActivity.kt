@@ -81,14 +81,35 @@ class MainActivity : ComponentActivity() {
                 }
             } catch (e: Exception) {}
             com.pinpulse.radar.service.LocationTrackingService.start(this)
-            requestBatteryOptimizationExemption()
         }
     }
 
-    fun requestBatteryOptimizationExemption() {
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        if (com.pinpulse.radar.util.SirenHelper.isCurrentlyPlaying()) {
+            if (event.action == android.view.KeyEvent.ACTION_DOWN) {
+                when (event.keyCode) {
+                    android.view.KeyEvent.KEYCODE_VOLUME_DOWN,
+                    android.view.KeyEvent.KEYCODE_VOLUME_UP,
+                    android.view.KeyEvent.KEYCODE_VOLUME_MUTE,
+                    android.view.KeyEvent.KEYCODE_POWER -> {
+                        com.pinpulse.radar.util.SirenHelper.stop(this)
+                        return true
+                    }
+                }
+            }
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
+    fun requestBatteryOptimizationExemption(force: Boolean = false) {
+        val prefs = com.pinpulse.radar.data.AppPreferences(this)
+        if (!force && prefs.hasPromptedBatteryExemption) {
+            return
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return
             if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+                prefs.hasPromptedBatteryExemption = true
                 try {
                     val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
                         data = Uri.parse("package:$packageName")

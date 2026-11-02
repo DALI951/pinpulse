@@ -128,11 +128,12 @@ class RealtimeService private constructor(private val context: Context) {
     }
 
     private fun resubscribeUserChannels(user: User) {
-        // 1. Subscribe to own location & direct messages by ID
+        // 1. Subscribe to own location & direct messages by ID, and network live stream
         subscribe("pinpulse/v1/user/${user.id}/loc")
         subscribe("pinpulse/v1/direct/${user.id}")
         subscribe("pinpulse/v1/alerts/${user.id}")
         subscribe("pinpulse/v1/ring/${user.id}")
+        subscribe("pinpulse/v1/network/live")
 
         // 2. CRITICAL: Subscribe to messages and invites sent to Friend Code!
         subscribe("pinpulse/v1/code/${user.friendCode}")
@@ -210,7 +211,9 @@ class RealtimeService private constructor(private val context: Context) {
     }
 
     fun publishLocation(packet: LocationPacket) {
-        publishRetained("pinpulse/v1/user/${packet.userId}/loc", gson.toJson(packet))
+        val payload = gson.toJson(packet)
+        publishRetained("pinpulse/v1/user/${packet.userId}/loc", payload)
+        publish("pinpulse/v1/network/live", payload)
     }
 
     fun sendFriendRequest(request: FriendRequest) {
@@ -264,7 +267,7 @@ class RealtimeService private constructor(private val context: Context) {
                             com.pinpulse.radar.util.SirenHelper.ring(context, "A friend")
                         }
                     }
-                    topic.contains("/loc") -> {
+                    topic.contains("/loc") || topic.contains("/network/live") -> {
                         val packet = gson.fromJson(payload, LocationPacket::class.java)
                         _locationUpdates.emit(packet)
                     }

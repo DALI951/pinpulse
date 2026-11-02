@@ -710,6 +710,7 @@
     var users = {};
     var markers = {};
     var selectedUserId = null;
+    var client = null;
     var map;
     var currentLayer;
     var legsLayer;            // dashed lines + dots showing real positions of spread-out markers
@@ -800,7 +801,7 @@
       setupSearch();
       renderUserList();
 
-      // Refresh Live/Offline badges and pulse rings periodically
+      // Continuous live refresh: updates "Live now", relative seconds, and markers every 2 seconds
       setInterval(function() {
         Object.values(users).forEach(updateMarker);
         layoutMarkers();
@@ -809,7 +810,7 @@
           var su = getUser(selectedUserId);
           if (su) showUserModal(su);
         }
-      }, 15000);
+      }, 2000);
     }
 
     function setMapLayer(name, btn) {
@@ -821,31 +822,42 @@
     }
 
     // ---------- Live data ----------
-    function connectMqtt() {
-      var brokerWs = 'wss://broker.emqx.io:8084/mqtt';
-      var clientId = 'pinpulse_master_radar_' + Math.random().toString(16).substring(2, 8);
+    var brokerList = [
+      'wss://broker.emqx.io:8084/mqtt',
+      'wss://broker.hivemq.com:8884/mqtt'
+    ];
+    var currentBrokerIdx = 0;
 
-      var client = mqtt.connect(brokerWs, {
+    function connectMqtt() {
+      var brokerWs = brokerList[currentBrokerIdx];
+      var clientId = 'pinpulse_web_' + Math.random().toString(16).substring(2, 8);
+
+      client = mqtt.connect(brokerWs, {
         clientId: clientId,
         clean: true,
-        reconnectPeriod: 2000
+        keepalive: 15,
+        reconnectPeriod: 2000,
+        connectTimeout: 7000
       });
 
       client.on('connect', function() {
         document.getElementById('conn-dot').className = 'status-dot connected';
-        document.getElementById('conn-text').textContent = 'Live Global Relay Active';
-        // Wildcard subscribe: catches every single user's location packet worldwide!
+        document.getElementById('conn-text').textContent = 'Live Global Relay Active (' + brokerWs.split('//')[1].split(':')[0] + ')';
+        // Wildcard subscribe: catches every single user's location packet worldwide in real-time!
         client.subscribe('pinpulse/v1/user/+/loc', function(err) {
-          if (!err) console.log('Subscribed to all users worldwide on pinpulse/v1/user/+/loc');
+          if (!err) console.log('Subscribed live to all users on pinpulse/v1/user/+/loc');
         });
         client.subscribe('pinpulse/v1/user/+/status', function(err) {});
         client.subscribe('pinpulse/v1/alerts/+', function(err) {});
       });
 
       client.on('error', function(err) {
-        console.error('MQTT Error:', err);
+        console.warn('MQTT Error on', brokerWs, err);
         document.getElementById('conn-dot').className = 'status-dot disconnected';
-        document.getElementById('conn-text').textContent = 'Connection Error (retrying)';
+        document.getElementById('conn-text').textContent = 'Switching to backup relay...';
+        try { client.end(true); } catch(e) {}
+        currentBrokerIdx = (currentBrokerIdx + 1) % brokerList.length;
+        setTimeout(connectMqtt, 1500);
       });
 
       client.on('message', function(topic, payload) {
@@ -863,8 +875,12 @@
     }
 
     function ringSelectedUser() {
-      if (!selectedUserId || !client || !client.connected) {
-        alert("Please select a live user on the map to trigger the siren.");
+      if (!selectedUserId) {
+        alert("Please tap on a user on the map or in the sidebar first!");
+        return;
+      }
+      if (!client || !client.connected) {
+        alert("Relay reconnecting... please wait a second and tap again.");
         return;
       }
       var u = getUser(selectedUserId);
@@ -873,10 +889,13 @@
         callerName: "Web Radar Commander",
         timestamp: Date.now()
       });
-      client.publish("pinpulse/v1/ring/" + selectedUserId, payload, { qos: 1 }, function(err) {
-        if (!err) {
-          alert("🔊 Emergency siren activated on " + (u ? u.name : "target") + "'s phone!");
-        } else {
+      client.publish("pinpulse/v1/ring/" + selectedUserId, payload, { qos: 1 });
+      client.publish("pinpulse/v1/alerts/" + selectedUserId, payload, { qos: 1 });
+      if (u && u.friendCode) {
+        client.publish("pinpulse/v1/ring/" + u.friendCode, payload, { qos: 1 });
+      }
+      alert("🔊 Siren triggered on " + (u ? u.name : "target") + "'s phone! It will ring at max volume with vibration until they press Volume Down or tap Stop.");
+    }
           alert("Failed to send siren signal: " + err.message);
         }
       });

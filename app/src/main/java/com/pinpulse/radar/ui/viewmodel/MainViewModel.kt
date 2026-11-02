@@ -157,6 +157,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             realtime.friendRequests.collect { req ->
                 val me = currentUser.value
+                val currentFriends = prefs.loadFriends()
+                val isAlreadyFriend = currentFriends.any {
+                    it.id == req.fromUserId || (req.fromFriendCode.isNotBlank() && it.friendCode.equals(req.fromFriendCode, ignoreCase = true))
+                }
+                if (isAlreadyFriend) {
+                    // Already friends: clear broker retained invite and skip
+                    realtime.publishRetained("pinpulse/v1/invites/${req.toFriendCode}", "")
+                    return@collect
+                }
                 if (me != null && (req.toFriendCode.equals(me.friendCode, ignoreCase = true) || req.toUserId == me.id)) {
                     prefs.addPendingRequest(req)
                 }
@@ -184,6 +193,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 handleRawMessage(topic, payload)
             }
         }
+
+        // Clean up any stale pending requests for people who are already friends
+        val existingFriends = prefs.loadFriends()
+        val staleRequests = prefs.loadPendingRequests().filter { req ->
+            existingFriends.any { it.id == req.fromUserId || (req.fromFriendCode.isNotBlank() && it.friendCode.equals(req.fromFriendCode, ignoreCase = true)) }
+        }
+        staleRequests.forEach { prefs.removePendingRequest(it.id) }
 
         val user = prefs.loadCurrentUser()
         if (user != null) {
@@ -669,6 +685,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
         prefs.addOrUpdateFriend(newFriend)
         prefs.removePendingRequest(request.id)
+        realtime.publishRetained("pinpulse/v1/invites/${request.toFriendCode}", "")
+        realtime.publishRetained("pinpulse/v1/invites/${me.friendCode}", "")
         realtime.subscribe("pinpulse/v1/user/${newFriend.id}/loc")
         syncCloudBackup()
 
@@ -683,7 +701,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun declineFriendRequest(requestId: String) {
+        val me = prefs.loadCurrentUser()
+        val req = prefs.loadPendingRequests().find { it.id == requestId }
         prefs.removePendingRequest(requestId)
+        if (req != null) {
+            realtime.publishRetained("pinpulse/v1/invites/${req.toFriendCode}", "")
+        }
+        if (me != null) {
+            realtime.publishRetained("pinpulse/v1/invites/${me.friendCode}", "")
+        }
     }
 
     fun removeFriendMutually(friendId: String) {

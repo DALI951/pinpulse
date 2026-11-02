@@ -100,6 +100,7 @@ fun MainScreen(
     val selectedPerson by viewModel.selectedPerson.collectAsState()
     val activeAlert by viewModel.activeAlert.collectAsState()
     val kickState by viewModel.kickState.collectAsState()
+    val isSirenActive by com.pinpulse.radar.util.SirenHelper.isSirenActive.collectAsState()
 
     var activeTab by remember { mutableStateOf("map") } // "map", "friends", "groups"
     var showProfileDialog by remember { mutableStateOf(false) }
@@ -119,15 +120,19 @@ fun MainScreen(
     }
 
     LaunchedEffect(Unit) {
-        val permissions = mutableListOf(
-            Manifest.permission.ACCESS_FINE_LOCATION,
-            Manifest.permission.ACCESS_COARSE_LOCATION
-        )
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+        val appPrefs = com.pinpulse.radar.data.AppPreferences(context)
+        if (!appPrefs.hasPromptedLocationPermissions) {
+            appPrefs.hasPromptedLocationPermissions = true
+            val permissions = mutableListOf(
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+            locationPermissionLauncher.launch(permissions.toTypedArray())
+            (context as? com.pinpulse.radar.MainActivity)?.requestBatteryOptimizationExemption(force = false)
         }
-        locationPermissionLauncher.launch(permissions.toTypedArray())
-        (context as? com.pinpulse.radar.MainActivity)?.requestBatteryOptimizationExemption()
     }
 
     Box(
@@ -156,6 +161,35 @@ fun MainScreen(
                 .fillMaxWidth()
                 .statusBarsPadding()
         ) {
+            // Emergency Siren Active Banner (when phone is being rung)
+            if (isSirenActive) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 6.dp)
+                        .background(DangerRed, RoundedCornerShape(12.dp))
+                        .padding(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("🔊 SIREN RINGING (MAX VOLUME)", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Text("Press Volume Down or tap Stop to silence", color = Color.White.copy(alpha = 0.85f), fontSize = 11.sp)
+                        }
+                        Button(
+                            onClick = { com.pinpulse.radar.util.SirenHelper.stop(context) },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color.White),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("🛑 STOP", color = DangerRed, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
+
             // Live Alert Banner (when someone turns off location)
             AlertNotificationBanner(
                 alert = activeAlert,
@@ -213,7 +247,7 @@ fun MainScreen(
                         .background(Color(0xFF3B2508), RoundedCornerShape(10.dp))
                         .border(1.dp, Color(0xFFD97706), RoundedCornerShape(10.dp))
                         .clickable {
-                            (context as? com.pinpulse.radar.MainActivity)?.requestBatteryOptimizationExemption()
+                            (context as? com.pinpulse.radar.MainActivity)?.requestBatteryOptimizationExemption(force = true)
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                                 val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
                                 isBatteryIgnored = pm?.isIgnoringBatteryOptimizations(context.packageName) ?: true
