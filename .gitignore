@@ -1,0 +1,14 @@
+*.iml
+.gradle
+/local.properties
+/.idea
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+app/build/
+
+# Keep persistent release keystore tracked so APK updates never fail with signature mismatch
+!app/keystore/pinpulse.jks

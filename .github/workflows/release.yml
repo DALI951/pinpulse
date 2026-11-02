@@ -1,0 +1,78 @@
+name: Build & Publish PinPulse APK
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - 'app/src/**'
+      - 'app/build.gradle.kts'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - 'gradle/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build Signed APK & Publish GitHub Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Calculate Version (0.1 -> 0.9 -> 1.0 -> ...)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Count existing releases so Release #1 = v0.1, #9 = v0.9, #10 = v1.0, etc.
+          EXISTING_COUNT=$(gh release list --repo "${{ github.repository }}" --limit 1000 | wc -l)
+          NEXT_NUM=$((EXISTING_COUNT + 1))
+          MAJOR=$((NEXT_NUM / 10))
+          MINOR=$((NEXT_NUM % 10))
+          VERSION_NAME="${MAJOR}.${MINOR}"
+          VERSION_CODE=$((100 + GITHUB_RUN_NUMBER))
+
+          echo "VERSION_NAME=${VERSION_NAME}" >> $GITHUB_ENV
+          echo "VERSION_CODE=${VERSION_CODE}" >> $GITHUB_ENV
+          echo "Building PinPulse v${VERSION_NAME} (versionCode=${VERSION_CODE})..."
+
+      - name: Build Signed Release APK
+        run: |
+          gradle assembleRelease -PversionCode=${{ env.VERSION_CODE }} -PversionName=${{ env.VERSION_NAME }} --no-daemon
+
+      - name: Stage Release APK Asset
+        run: |
+          APK_FILE="PinPulse-v${{ env.VERSION_NAME }}.apk"
+          cp app/build/outputs/apk/release/app-release.apk "${APK_FILE}"
+          echo "APK_FILE=${APK_FILE}" >> $GITHUB_ENV
+          ls -lh "${APK_FILE}"
+
+      - name: Publish GitHub Release with APK Asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "v${{ env.VERSION_NAME }}"
+          name: "PinPulse v${{ env.VERSION_NAME }} (Build #${{ github.run_number }})"
+          files: "${{ env.APK_FILE }}"
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
