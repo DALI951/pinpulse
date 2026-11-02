@@ -54,6 +54,22 @@ class AppPreferences(context: Context) {
         _currentUserFlow.value = null
     }
 
+    fun generateDeterministicUserId(email: String): String {
+        val uuid = UUID.nameUUIDFromBytes(email.trim().lowercase().toByteArray()).toString().replace("-", "")
+        return "usr_" + uuid.take(12)
+    }
+
+    fun generateDeterministicFriendCode(email: String, name: String): String {
+        val cleanName = (if (name.isNotBlank()) name else email.substringBefore("@"))
+            .filter { it.isLetter() }
+            .take(4)
+            .uppercase()
+            .ifEmpty { "PIN" }
+        val hash = Math.abs(email.trim().lowercase().hashCode())
+        val num = (hash % 9000) + 1000
+        return "$cleanName-$num"
+    }
+
     fun generateFriendCode(name: String): String {
         val cleanName = name.filter { it.isLetter() }.take(4).uppercase().ifEmpty { "PIN" }
         val randomNum = (1000..9999).random()

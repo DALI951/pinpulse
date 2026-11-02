@@ -161,6 +161,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val myId = currentUser.value?.id ?: return@collect
                 if (group.memberIds.contains(myId)) {
                     prefs.addOrUpdateGroup(group)
+                    syncCloudBackup()
                     // Subscribe to all members' live locations
                     group.memberIds.filterNot { it == myId }.forEach { mid ->
                         realtime.subscribe("pinpulse/v1/user/$mid/loc")
@@ -179,6 +180,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val user = prefs.loadCurrentUser()
         if (user != null) {
             realtime.connect(user)
+            val accountTopic = "pinpulse/v1/accounts/${realtime.cleanEmail(user.email)}/backup"
+            realtime.subscribe(accountTopic)
             // Resubscribe to existing groups
             prefs.loadGroups().forEach { g ->
                 realtime.subscribe("pinpulse/v1/groups/${g.code}/info")
@@ -246,12 +249,67 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun handleRawMessage(topic: String, payload: String) {
         try {
-            if (payload.contains("\"type\":\"UNFRIEND\"")) {
+            if (topic.contains("/accounts/") && topic.endsWith("/backup")) {
+                // Cloud Account Restore from retained backup!
+                val jsonMap = gson.fromJson(payload, Map::class.java)
+                val userJson = gson.toJson(jsonMap["user"])
+                val restoredUser = gson.fromJson(userJson, User::class.java)
+                if (restoredUser != null) {
+                    val current = prefs.loadCurrentUser()
+                    val mergedUser = (current ?: restoredUser).copy(
+                        id = restoredUser.id,
+                        friendCode = restoredUser.friendCode,
+                        displayName = if (current?.displayName?.isNotBlank() == true) current.displayName else restoredUser.displayName,
+                        avatarBase64 = current?.avatarBase64 ?: restoredUser.avatarBase64
+                    )
+                    prefs.saveCurrentUser(mergedUser)
+                }
+
+                // Restore friends list
+                val friendsListType = object : com.google.gson.reflect.TypeToken<List<User>>() {}.type
+                val friendsJson = gson.toJson(jsonMap["friends"])
+                val restoredFriends = gson.fromJson<List<User>>(friendsJson, friendsListType)
+                if (!restoredFriends.isNullOrEmpty()) {
+                    val currentFriends = prefs.loadFriends().toMutableList()
+                    restoredFriends.forEach { rf ->
+                        if (currentFriends.none { it.id == rf.id }) {
+                            currentFriends.add(rf)
+                        }
+                    }
+                    prefs.saveFriends(currentFriends)
+                    restoredFriends.forEach { f ->
+                        realtime.subscribe("pinpulse/v1/user/${f.id}/loc")
+                    }
+                }
+
+                // Restore groups list
+                val groupsListType = object : com.google.gson.reflect.TypeToken<List<Group>>() {}.type
+                val groupsJson = gson.toJson(jsonMap["groups"])
+                val restoredGroups = gson.fromJson<List<Group>>(groupsJson, groupsListType)
+                if (!restoredGroups.isNullOrEmpty()) {
+                    val currentGroups = prefs.loadGroups().toMutableList()
+                    restoredGroups.forEach { rg ->
+                        if (currentGroups.none { it.id == rg.id || it.code.equals(rg.code, ignoreCase = true) }) {
+                            currentGroups.add(rg)
+                        }
+                    }
+                    prefs.saveGroups(currentGroups)
+                    restoredGroups.forEach { g ->
+                        realtime.subscribe("pinpulse/v1/groups/${g.code}/info")
+                        realtime.subscribe("pinpulse/v1/groups/${g.code}/events")
+                        g.memberIds.forEach { mid ->
+                            realtime.subscribe("pinpulse/v1/user/$mid/loc")
+                        }
+                    }
+                }
+                Log.d("MainViewModel", "Account restored from cloud backup for: ${restoredUser?.email}")
+            } else if (payload.contains("\"type\":\"UNFRIEND\"")) {
                 // Mutual friend removal: remove this friend on our side too!
                 val jsonMap = gson.fromJson(payload, Map::class.java)
                 val unfriendId = jsonMap["fromUserId"] as? String
                 if (!unfriendId.isNullOrEmpty()) {
                     prefs.removeFriend(unfriendId)
+                    syncCloudBackup()
                 }
             } else if (payload.contains("\"type\":\"FRIEND_ACCEPTED\"")) {
                 // Requester receives acceptance from recipient!
@@ -261,6 +319,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (friend != null) {
                     prefs.addOrUpdateFriend(friend)
                     realtime.subscribe("pinpulse/v1/user/${friend.id}/loc")
+                    syncCloudBackup()
                 }
             } else if (payload.contains("\"type\":\"JOIN_GROUP\"")) {
                 // Leader receives join request from a new member!
@@ -277,6 +336,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             prefs.addOrUpdateGroup(updatedGroup)
                             realtime.publishGroupInfo(updatedGroup)
                             realtime.subscribe("pinpulse/v1/user/${joiningUser.id}/loc")
+                            syncCloudBackup()
                         }
                     }
                 }
@@ -292,6 +352,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         val updatedAvatars = group.memberAvatars.toMutableMap()
                         updatedAvatars[memberId] = newAvatar
                         prefs.addOrUpdateGroup(group.copy(memberAvatars = updatedAvatars))
+                        syncCloudBackup()
                     }
                 }
             } else if (payload.contains("\"type\":\"MEMBER_KICKED\"")) {
@@ -302,6 +363,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (groupId != null && memberId == myId) {
                     // We were kicked from this group
                     prefs.removeGroup(groupId)
+                    syncCloudBackup()
                     _activeAlert.value = AlertMessage(
                         senderId = "system",
                         senderName = "Group Leader",
@@ -317,16 +379,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // --- Authentication & Profile ---
 
+    fun syncCloudBackup() {
+        val me = prefs.loadCurrentUser() ?: return
+        if (me.email.isBlank()) return
+        val friends = prefs.loadFriends()
+        val groups = prefs.loadGroups()
+        val backupMap = mapOf(
+            "user" to me,
+            "friends" to friends,
+            "groups" to groups,
+            "timestamp" to System.currentTimeMillis()
+        )
+        val json = gson.toJson(backupMap)
+        realtime.publishAccountBackup(me.email, json)
+    }
+
     fun signInWithGoogleIdentity(email: String, displayName: String, avatarBase64: String?) {
         val existing = prefs.loadCurrentUser()
-        val userId = existing?.id ?: "usr_" + UUID.randomUUID().toString().take(8)
-        val friendCode = existing?.friendCode ?: prefs.generateFriendCode(displayName)
+        val userId = existing?.id ?: prefs.generateDeterministicUserId(email)
+        val friendCode = existing?.friendCode ?: prefs.generateDeterministicFriendCode(email, displayName)
 
         val user = User(
             id = userId,
             email = email,
             displayName = displayName,
-            avatarBase64 = avatarBase64,
+            avatarBase64 = avatarBase64 ?: existing?.avatarBase64,
             friendCode = friendCode,
             isSharingLocation = true,
             latitude = existing?.latitude ?: 36.8065,
@@ -336,6 +413,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
         prefs.saveCurrentUser(user)
         realtime.connect(user)
+
+        // Subscribe to cloud account backup channel for this email
+        val accountTopic = "pinpulse/v1/accounts/${realtime.cleanEmail(email)}/backup"
+        realtime.subscribe(accountTopic)
+
+        // Resubscribe to existing groups and friends
+        prefs.loadGroups().forEach { g ->
+            realtime.subscribe("pinpulse/v1/groups/${g.code}/info")
+            realtime.subscribe("pinpulse/v1/groups/${g.code}/events")
+        }
+        prefs.loadFriends().forEach { f ->
+            realtime.subscribe("pinpulse/v1/user/${f.id}/loc")
+        }
+
+        // Save initial cloud backup
+        syncCloudBackup()
+
         LocationTrackingService.start(getApplication())
     }
 
@@ -374,6 +468,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val current = prefs.loadCurrentUser() ?: return
         val updated = current.copy(avatarBase64 = base64)
         prefs.saveCurrentUser(updated)
+        syncCloudBackup()
 
         // Broadcast new avatar
         LocationTrackingService.start(getApplication())
@@ -445,6 +540,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             memberIds = listOf(me.id)
         )
         prefs.addOrUpdateGroup(group)
+        syncCloudBackup()
         // Publish retained group so any phone typing randomCode finds it immediately!
         realtime.publishGroupInfo(group)
         realtime.subscribe("pinpulse/v1/groups/${group.code}/info")
@@ -495,6 +591,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val updatedMemberIds = state.group.memberIds.filterNot { it == state.member.id }
         val updatedGroup = state.group.copy(memberIds = updatedMemberIds)
         prefs.addOrUpdateGroup(updatedGroup)
+        syncCloudBackup()
 
         // Publish updated group info as retained
         realtime.publishGroupInfo(updatedGroup)
@@ -551,6 +648,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         prefs.addOrUpdateFriend(newFriend)
         prefs.removePendingRequest(request.id)
         realtime.subscribe("pinpulse/v1/user/${newFriend.id}/loc")
+        syncCloudBackup()
 
         // Broadcast acceptance packet back to requester so they add us too!
         val payload = mapOf(
@@ -572,6 +670,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // Remove locally
         prefs.removeFriend(friendId)
         realtime.unsubscribe("pinpulse/v1/user/$friendId/loc")
+        syncCloudBackup()
 
         // Broadcast mutual removal so they remove us immediately too
         val payload = mapOf(

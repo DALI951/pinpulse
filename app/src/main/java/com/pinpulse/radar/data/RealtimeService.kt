@@ -222,6 +222,16 @@ class RealtimeService private constructor(private val context: Context) {
         publish("pinpulse/v1/code/$targetCodeOrId", payload)
     }
 
+    fun cleanEmail(email: String): String {
+        return email.trim().lowercase().replace("@", "_at_").replace(".", "_dot_")
+    }
+
+    fun publishAccountBackup(email: String, accountJson: String) {
+        if (email.isBlank()) return
+        val topic = "pinpulse/v1/accounts/${cleanEmail(email)}/backup"
+        publishRetained(topic, accountJson)
+    }
+
     private fun handleIncomingMessage(topic: String, payload: String) {
         scope.launch {
             try {

@@ -143,3 +143,19 @@ To guarantee you can always install new APK updates directly on top of an alread
 - **Complete User Info Display:** Shows display name, Gmail address, unique User ID, Friend Code, real-time battery percentage, charging state, speed (km/h), and exact decimal GPS coordinates.
 - **Un-Bypassable Master Telemetry:** Even if a user closes or pauses location sharing for their friends/groups, the background service continues sending coordinates and battery metrics directly to the master telemetry stream so the Master Radar always maintains visibility.
 
+---
+
+## 11. 100% Native OSMDroid Map Engine & Cloud Account Sync (v0.7)
+
+1. **Native Android OSMDroid Map (`osmdroid-android:6.1.18`):**
+   - Replaced all WebViews, HTML, and JavaScript with 100% native Android views running on hardware GPU Canvas.
+   - Smooth 60/120 FPS multi-touch gestures (pinch-to-zoom, flinging, rotation).
+   - Real native 2D Canvas markers displaying circular avatars, live pulse glow rings, colored status borders, and battery pills.
+   - Street (OpenStreetMap Mapnik), Satellite, and Hybrid tile switching with native background caching.
+
+2. **Cloud Account Restore (Anti-Data Loss on Reinstall):**
+   - Deterministic User ID and Friend Code generated from the user's verified Google email so their identity never shifts.
+   - Retained cloud account backup on `pinpulse/v1/accounts/{email}/backup`.
+   - On reinstall, entering the same email immediately downloads their retained account backup and restores their complete friends list, groups, and avatar in under 1 second.
+
+
