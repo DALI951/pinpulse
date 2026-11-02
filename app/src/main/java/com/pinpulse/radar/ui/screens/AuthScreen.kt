@@ -31,6 +31,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -69,12 +70,13 @@ import java.io.InputStream
 
 @Composable
 fun AuthScreen(
-    onSignIn: (email: String, displayName: String, avatarBase64: String?) -> Unit,
+    onSignIn: (email: String, displayName: String, avatarBase64: String?, securityPin: String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     var emailInput by remember { mutableStateOf("") }
     var nameInput by remember { mutableStateOf("") }
+    var pinInput by remember { mutableStateOf("1234") }
     var avatarBase64 by remember { mutableStateOf<String?>(null) }
     var isGoogleAccountSelected by remember { mutableStateOf(false) }
 
@@ -99,7 +101,7 @@ fun AuthScreen(
                 emailInput = accountName
                 nameInput = cleanName
                 isGoogleAccountSelected = true
-                onSignIn(accountName, cleanName, avatarBase64)
+                onSignIn(accountName, cleanName, avatarBase64, pinInput.ifBlank { "1234" })
             }
         }
     }
@@ -118,7 +120,7 @@ fun AuthScreen(
                 emailInput = realEmail
                 nameInput = realName
                 isGoogleAccountSelected = true
-                onSignIn(realEmail, realName, photoUrl ?: avatarBase64)
+                onSignIn(realEmail, realName, photoUrl ?: avatarBase64, pinInput.ifBlank { "1234" })
                 return@rememberLauncherForActivityResult
             }
         } catch (e: Exception) {
@@ -306,6 +308,29 @@ fun AuthScreen(
                     modifier = Modifier.fillMaxWidth()
                 )
 
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Security PIN Input
+                OutlinedTextField(
+                    value = pinInput,
+                    onValueChange = { if (it.all { c -> c.isDigit() } && it.length <= 6) pinInput = it },
+                    label = { Text("Siren Security PIN (4-6 digits)") },
+                    placeholder = { Text("1234") },
+                    leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = PulseGreen) },
+                    singleLine = true,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = androidx.compose.ui.text.input.KeyboardType.NumberPassword
+                    ),
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    text = "🔒 Required to stop the siren if someone rings your phone",
+                    fontSize = 11.sp,
+                    color = TextMuted,
+                    modifier = Modifier.padding(top = 4.dp, start = 4.dp)
+                )
+
                 Spacer(modifier = Modifier.height(16.dp))
 
                 // Manual Continue Button
@@ -313,7 +338,7 @@ fun AuthScreen(
                     onClick = {
                         val finalName = nameInput.trim().ifEmpty { "Friend" }
                         val finalEmail = emailInput.trim().ifEmpty { "${finalName.lowercase()}@gmail.com" }
-                        onSignIn(finalEmail, finalName, avatarBase64)
+                        onSignIn(finalEmail, finalName, avatarBase64, pinInput.ifBlank { "1234" })
                     },
                     modifier = Modifier
                         .fillMaxWidth()

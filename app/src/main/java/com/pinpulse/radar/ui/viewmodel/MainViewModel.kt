@@ -19,6 +19,9 @@ import com.pinpulse.radar.model.Group
 import com.pinpulse.radar.model.LocationPacket
 import com.pinpulse.radar.model.User
 import com.pinpulse.radar.service.LocationTrackingService
+import com.pinpulse.radar.util.SirenHelper
+import com.pinpulse.radar.util.UpdateManager
+import com.pinpulse.radar.util.UpdateState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -72,6 +75,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _activeAlert = MutableStateFlow<AlertMessage?>(null)
     val activeAlert: StateFlow<AlertMessage?> = _activeAlert.asStateFlow()
+
+    private val _isSirenPinDialogOpen = MutableStateFlow(false)
+    val isSirenPinDialogOpen: StateFlow<Boolean> = _isSirenPinDialogOpen.asStateFlow()
+
+    val updateState: StateFlow<UpdateState> = UpdateManager.updateState
 
     private val _kickState = MutableStateFlow<KickConfirmationState?>(null)
     val kickState: StateFlow<KickConfirmationState?> = _kickState.asStateFlow()
@@ -176,6 +184,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 delay(7000)
                 if (_activeAlert.value?.id == alert.id) {
                     _activeAlert.value = null
+                }
+            }
+        }
+
+        // Observe siren state to pop up the Security PIN dialog when siren rings
+        viewModelScope.launch {
+            SirenHelper.isSirenActive.collect { active ->
+                if (active) {
+                    _isSirenPinDialogOpen.value = true
                 }
             }
         }
@@ -943,6 +960,43 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } catch (e: Exception) {
             Log.e("MainViewModel", "Error compressing image: ${e.message}")
             null
+        }
+    }
+
+    // --- Siren Security PIN & In-App Updates ---
+
+    fun getSecurityPin(): String = prefs.getSecurityPin()
+
+    fun setSecurityPin(pin: String) = prefs.setSecurityPin(pin)
+
+    fun showSirenPinDialog() {
+        _isSirenPinDialogOpen.value = true
+    }
+
+    fun dismissSirenPinDialog() {
+        if (!SirenHelper.isCurrentlyPlaying()) {
+            _isSirenPinDialogOpen.value = false
+        }
+    }
+
+    fun verifyPinAndStopSiren(context: Context, enteredPin: String): Boolean {
+        val expected = getSecurityPin()
+        val success = SirenHelper.verifyPinAndStop(context, enteredPin, expected)
+        if (success) {
+            _isSirenPinDialogOpen.value = false
+        }
+        return success
+    }
+
+    fun checkForUpdates() {
+        viewModelScope.launch {
+            UpdateManager.checkForUpdates()
+        }
+    }
+
+    fun downloadAndInstallUpdate(context: Context) {
+        viewModelScope.launch {
+            UpdateManager.downloadAndInstall(context)
         }
     }
 }

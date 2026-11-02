@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
@@ -104,10 +105,16 @@ fun MainScreen(
     val activeAlert by viewModel.activeAlert.collectAsState()
     val kickState by viewModel.kickState.collectAsState()
     val isSirenActive by com.pinpulse.radar.util.SirenHelper.isSirenActive.collectAsState()
+    val isSirenPinDialogOpen by viewModel.isSirenPinDialogOpen.collectAsState()
 
     var activeTab by remember { mutableStateOf("map") } // "map", "friends", "groups"
     var showProfileDialog by remember { mutableStateOf(false) }
+    var showSettingsDialog by remember { mutableStateOf(false) }
     var centerTarget by remember { mutableStateOf<User?>(null) }
+
+    LaunchedEffect(Unit) {
+        viewModel.checkForUpdates()
+    }
 
     // Request Location and Notification Permissions
     val locationPermissionLauncher = rememberLauncherForActivityResult(
@@ -180,14 +187,14 @@ fun MainScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text("🔊 SIREN RINGING (MAX VOLUME)", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                            Text("Press Volume Down or tap Stop to silence", color = Color.White.copy(alpha = 0.85f), fontSize = 11.sp)
+                            Text("Security PIN required to silence", color = Color.White.copy(alpha = 0.85f), fontSize = 11.sp)
                         }
                         Button(
-                            onClick = { com.pinpulse.radar.util.SirenHelper.stop(context) },
+                            onClick = { viewModel.showSirenPinDialog() },
                             colors = ButtonDefaults.buttonColors(containerColor = Color.White),
                             shape = RoundedCornerShape(8.dp)
                         ) {
-                            Text("🛑 STOP", color = DangerRed, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            Text("🛑 STOP (PIN)", color = DangerRed, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                         }
                     }
                 }
@@ -277,6 +284,17 @@ fun MainScreen(
                 .padding(top = 54.dp, end = 16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
+            // Settings Dialog Button (Top Right)
+            FloatingActionButton(
+                onClick = { showSettingsDialog = true },
+                modifier = Modifier.size(46.dp),
+                containerColor = RadarCardBg,
+                contentColor = RadarBlue,
+                shape = CircleShape
+            ) {
+                Icon(Icons.Default.Settings, contentDescription = "Settings", modifier = Modifier.size(22.dp))
+            }
+
             // Map Style Switcher (Streets -> Satellite -> Hybrid)
             FloatingActionButton(
                 onClick = {
@@ -456,6 +474,22 @@ fun MainScreen(
                     }
                 )
             }
+        }
+
+        // Settings Dialog
+        if (showSettingsDialog) {
+            SettingsDialog(
+                viewModel = viewModel,
+                onDismiss = { showSettingsDialog = false }
+            )
+        }
+
+        // Siren Security PIN Dialog (Only owner's PIN can silence the alarm)
+        if (isSirenPinDialogOpen && isSirenActive) {
+            SirenPinDialog(
+                viewModel = viewModel,
+                onDismiss = { viewModel.dismissSirenPinDialog() }
+            )
         }
 
         // Profile Dialog

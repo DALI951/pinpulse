@@ -45,8 +45,9 @@ class MainActivity : ComponentActivity() {
 
                     if (currentUser == null) {
                         AuthScreen(
-                            onSignIn = { email, name, avatar ->
+                            onSignIn = { email, name, avatar, pin ->
                                 viewModel.signInWithGoogleIdentity(email, name, avatar)
+                                viewModel.setSecurityPin(pin)
                                 fetchImmediateLocation()
                             }
                         )
@@ -55,6 +56,18 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+        }
+
+        if (intent?.action == "SHOW_SIREN_PIN") {
+            viewModel.showSirenPinDialog()
+        }
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent?.action == "SHOW_SIREN_PIN") {
+            viewModel.showSirenPinDialog()
         }
     }
 
@@ -92,7 +105,7 @@ class MainActivity : ComponentActivity() {
                     android.view.KeyEvent.KEYCODE_VOLUME_UP,
                     android.view.KeyEvent.KEYCODE_VOLUME_MUTE,
                     android.view.KeyEvent.KEYCODE_POWER -> {
-                        com.pinpulse.radar.util.SirenHelper.stop(this)
+                        viewModel.showSirenPinDialog()
                         return true
                     }
                 }
