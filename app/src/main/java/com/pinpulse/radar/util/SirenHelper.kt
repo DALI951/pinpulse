@@ -42,6 +42,9 @@ object SirenHelper {
     private var sirenStartTime: Long = 0L
     private var ringtoneFallback: android.media.Ringtone? = null
 
+    private var activeVibrator: Vibrator? = null
+    private var activeVibratorManager: VibratorManager? = null
+
     private val _isSirenActive = MutableStateFlow(false)
     val isSirenActive: StateFlow<Boolean> = _isSirenActive.asStateFlow()
 
@@ -89,17 +92,32 @@ object SirenHelper {
 
             // Vibrate pattern
             val pattern = longArrayOf(0, 600, 300, 600, 300, 600)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val vm = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
-                vm?.defaultVibrator?.vibrate(VibrationEffect.createWaveform(pattern, 0))
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                @Suppress("DEPRECATION")
-                val v = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-                v?.vibrate(VibrationEffect.createWaveform(pattern, 0))
-            } else {
-                @Suppress("DEPRECATION")
-                val v = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-                v?.vibrate(pattern, 0)
+            val audioAttributes = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_ALARM)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build()
+
+            val appContext = context.applicationContext
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    val vm = appContext.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
+                    activeVibratorManager = vm
+                    val v = vm?.defaultVibrator ?: (appContext.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator)
+                    activeVibrator = v
+                    v?.vibrate(VibrationEffect.createWaveform(pattern, 0), audioAttributes)
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    @Suppress("DEPRECATION")
+                    val v = appContext.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+                    activeVibrator = v
+                    v?.vibrate(VibrationEffect.createWaveform(pattern, 0), audioAttributes)
+                } else {
+                    @Suppress("DEPRECATION")
+                    val v = appContext.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+                    activeVibrator = v
+                    v?.vibrate(pattern, 0)
+                }
+            } catch (ve: Exception) {
+                Log.w(TAG, "Error starting vibration: ${ve.message}")
             }
 
             // Show high-priority Heads-up Notification with "Stop Siren" button
@@ -174,10 +192,22 @@ object SirenHelper {
     }
 
     fun stop(context: Context) {
+        // 1. Immediately kill vibration unconditionally on all subsystems
+        stopVibration(context)
+
+        // 2. Immediately stop all audio sources
+        stopAudio()
+
         if (!isPlaying) return
         isPlaying = false
         _isSirenActive.value = false
         autoStopRunnable?.let { handler.removeCallbacks(it) }
+
+        // Cancel notification
+        try {
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.cancel(SIREN_NOTIFICATION_ID)
+        } catch (e: Exception) {}
 
         // Unregister volume listeners
         try {
@@ -197,8 +227,56 @@ object SirenHelper {
                 am?.setStreamVolume(AudioManager.STREAM_ALARM, previousAlarmVolume, 0)
             }
         } catch (e: Exception) {}
+    }
 
-        // Stop audio playback immediately
+    private fun stopVibration(context: Context) {
+        try {
+            val appContext = context.applicationContext
+
+            // 1. Cancel on active cached references
+            try {
+                activeVibrator?.cancel()
+            } catch (e: Exception) {}
+            activeVibrator = null
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                try {
+                    activeVibratorManager?.cancel()
+                    activeVibratorManager?.defaultVibrator?.cancel()
+                } catch (e: Exception) {}
+                activeVibratorManager = null
+            }
+
+            // 2. Fresh cancellation via VibratorManager system service (API 31+)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                try {
+                    val vm = appContext.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
+                    vm?.cancel()
+                    vm?.defaultVibrator?.cancel()
+                } catch (e: Exception) {}
+            }
+
+            // 3. Fresh cancellation via Vibrator system service (all Android versions)
+            try {
+                @Suppress("DEPRECATION")
+                val v = appContext.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+                v?.cancel()
+            } catch (e: Exception) {}
+
+            // 4. Also check direct context
+            try {
+                @Suppress("DEPRECATION")
+                val directV = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+                directV?.cancel()
+            } catch (e: Exception) {}
+
+            Log.d(TAG, "All vibration cancelled successfully")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error cancelling vibration: ${e.message}")
+        }
+    }
+
+    private fun stopAudio() {
         try {
             mediaPlayer?.stop()
             mediaPlayer?.release()
@@ -208,24 +286,6 @@ object SirenHelper {
         try {
             ringtoneFallback?.stop()
             ringtoneFallback = null
-        } catch (e: Exception) {}
-
-        // Stop vibration immediately on all Android versions
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val vm = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
-                vm?.cancel()
-                vm?.defaultVibrator?.cancel()
-            }
-            @Suppress("DEPRECATION")
-            val v = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-            v?.cancel()
-        } catch (e: Exception) {}
-
-        // Cancel notification
-        try {
-            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            manager.cancel(SIREN_NOTIFICATION_ID)
         } catch (e: Exception) {}
     }
 
