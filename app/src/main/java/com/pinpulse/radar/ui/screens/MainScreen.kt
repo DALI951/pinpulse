@@ -247,7 +247,8 @@ fun MainScreen(
         // Center on My Location Button
         FloatingActionButton(
             onClick = {
-                currentUser?.let { centerTarget = it }
+                // copy() with a fresh timestamp so pressing the button again always re-centers
+                currentUser?.let { centerTarget = it.copy(lastUpdated = System.currentTimeMillis()) }
             },
             modifier = Modifier
                 .align(Alignment.BottomEnd)

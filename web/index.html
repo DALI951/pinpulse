@@ -489,6 +489,105 @@
       white-space: nowrap;
       box-shadow: 0 2px 6px rgba(0,0,0,0.4);
     }
+
+    /* List tabs: On Map / Removed */
+    .list-tabs {
+      display: flex;
+      gap: 6px;
+      padding: 0 12px 4px 12px;
+    }
+    .list-tab {
+      flex: 1;
+      background: #151d2e;
+      border: 1px solid var(--panel-border);
+      color: var(--text-muted);
+      padding: 8px 10px;
+      border-radius: 10px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      font-family: inherit;
+      transition: all 0.2s;
+    }
+    .list-tab.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+    .list-toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      color: var(--text-muted);
+      padding: 2px 2px 4px 2px;
+    }
+    .toolbar-btn {
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      padding: 5px 10px;
+      border-radius: 8px;
+      font-size: 11px;
+      font-weight: 700;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .toolbar-btn:hover { background: rgba(16, 185, 129, 0.28); }
+
+    /* Per-card remove / restore buttons */
+    .card-action {
+      flex-shrink: 0;
+      width: 30px;
+      height: 30px;
+      border-radius: 8px;
+      border: 1px solid var(--panel-border);
+      background: rgba(255,255,255,0.04);
+      color: var(--text-muted);
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s;
+    }
+    .card-action.remove:hover {
+      background: rgba(239, 68, 68, 0.18);
+      border-color: var(--danger);
+      color: #f87171;
+    }
+    .card-action.restore {
+      width: auto;
+      padding: 0 10px;
+      font-size: 11px;
+      color: #34d399;
+      border-color: rgba(16, 185, 129, 0.4);
+    }
+    .card-action.restore:hover { background: rgba(16, 185, 129, 0.2); }
+    .user-card.removed { opacity: 0.75; }
+    .user-card.removed .card-avatar { border-color: #64748b; filter: grayscale(0.6); }
+
+    .modal-remove-btn {
+      width: 100%;
+      margin-top: 8px;
+      background: transparent;
+      color: #f87171;
+      border: 1px solid rgba(239, 68, 68, 0.5);
+      padding: 10px;
+      border-radius: 12px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .modal-remove-btn:hover { background: rgba(239, 68, 68, 0.12); }
+
+    /* Real-position dot shown when a marker is spread out to avoid overlapping */
+    .true-pos-dot {
+      background: transparent;
+      border: none;
+    }
   </style>
 </head>
 <body>
@@ -515,6 +614,11 @@
       <input type="text" class="search-input" id="search-box" placeholder="Search name, email, or ID..." />
     </div>
 
+    <div class="list-tabs">
+      <button class="list-tab active" id="tab-active" onclick="switchTab('active')">On Map (0)</button>
+      <button class="list-tab" id="tab-removed" onclick="switchTab('removed')">Removed (0)</button>
+    </div>
+
     <div id="user-list">
       <div style="padding: 40px 20px; text-align: center; color: var(--text-muted); font-size: 13px;">
         Listening for devices transmitting GPS...
@@ -525,9 +629,9 @@
   <!-- Map Canvas -->
   <div id="map-wrapper">
     <div class="map-style-switcher">
-      <button class="style-btn active" onclick="setMapLayer('streets')">Streets</button>
-      <button class="style-btn" onclick="setMapLayer('satellite')">Satellite</button>
-      <button class="style-btn" onclick="setMapLayer('hybrid')">Hybrid</button>
+      <button class="style-btn active" onclick="setMapLayer('streets', this)">Streets</button>
+      <button class="style-btn" onclick="setMapLayer('satellite', this)">Satellite</button>
+      <button class="style-btn" onclick="setMapLayer('hybrid', this)">Hybrid</button>
     </div>
 
     <div id="map"></div>
@@ -569,6 +673,7 @@
       <a id="m-nav-link" href="#" target="_blank" class="nav-btn">
         🚀 Open in Google Maps Turn-by-Turn
       </a>
+      <button class="modal-remove-btn" id="m-remove-btn" onclick="toggleRemoveSelected()">✕ Remove from map</button>
     </div>
   </div>
 
@@ -578,6 +683,13 @@
     var selectedUserId = null;
     var map;
     var currentLayer;
+    var legsLayer;            // dashed lines + dots showing real positions of spread-out markers
+    var currentTab = 'active';
+    var OVERLAP_PX = 64;      // markers closer than this (in screen pixels) get spread apart
+
+    // Removed people are saved in this browser (localStorage) so they stay removed after refresh.
+    var REMOVED_KEY = 'pinpulse_master_removed_v1';
+    var removedIds = loadRemoved();
 
     var layers = {
       streets: L.tileLayer('https://mt{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', { subdomains: ['0','1','2','3'], maxZoom: 20 }),
@@ -585,6 +697,53 @@
       hybrid: L.tileLayer('https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', { subdomains: ['0','1','2','3'], maxZoom: 20 })
     };
 
+    // ---------- Helpers ----------
+    function loadRemoved() {
+      try { return JSON.parse(localStorage.getItem(REMOVED_KEY)) || {}; } catch (e) { return {}; }
+    }
+    function saveRemoved() {
+      try { localStorage.setItem(REMOVED_KEY, JSON.stringify(removedIds)); } catch (e) {}
+    }
+    function esc(s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+      });
+    }
+    function isRemoved(id) { return !!removedIds[id]; }
+    function isLiveUser(u) { return !!u.timestamp && (Date.now() - u.timestamp < 90000); }
+    function hasValidPos(u) { return !(isNaN(u.lat) || isNaN(u.lng) || (u.lat === 0 && u.lng === 0)); }
+    function batteryText(u) {
+      return (typeof u.batteryPercent === 'number') ? (u.batteryPercent + '%' + (u.isCharging ? ' ⚡' : '')) : '--';
+    }
+    function avatarHtml(u) {
+      return (u.avatar && u.avatar.length > 10)
+        ? '<img src="' + esc(u.avatar) + '" />'
+        : esc((u.name || '?').charAt(0).toUpperCase());
+    }
+    // A removed person who hasn't transmitted yet this session is shown from the saved snapshot
+    function getUser(id) {
+      if (users[id]) return users[id];
+      var s = removedIds[id];
+      if (!s) return null;
+      return {
+        id: id,
+        name: s.name || 'User ' + id.substring(0, 5),
+        email: s.email || 'No email provided',
+        avatar: null,
+        lat: NaN, lng: NaN,
+        speed: 0,
+        batteryPercent: s.batteryPercent,
+        isCharging: false,
+        isSharing: true,
+        timestamp: s.lastSeen || 0,
+        snapshotOnly: true
+      };
+    }
+    function snapshotOf(u) {
+      return { name: u.name, email: u.email, batteryPercent: u.batteryPercent, lastSeen: u.timestamp, removedAt: Date.now() };
+    }
+
+    // ---------- Init ----------
     function init() {
       map = L.map('map', {
         center: [36.8065, 10.1815],
@@ -595,27 +754,44 @@
 
       currentLayer = layers.streets;
       currentLayer.addTo(map);
+      legsLayer = L.layerGroup().addTo(map);
 
       setTimeout(function() { if (map) map.invalidateSize(); }, 300);
 
       map.on('click', function() {
-        document.getElementById('person-modal').style.display = 'none';
-        selectedUserId = null;
+        closeModal();
         renderUserList();
       });
+      // Pixel distances change with zoom, so re-spread overlapping markers after every zoom
+      map.on('zoomend', layoutMarkers);
+
+      document.getElementById('user-list').addEventListener('click', onListClick);
 
       connectMqtt();
       setupSearch();
+      renderUserList();
+
+      // Refresh Live/Offline badges and pulse rings periodically
+      setInterval(function() {
+        Object.values(users).forEach(updateMarker);
+        layoutMarkers();
+        renderUserList();
+        if (selectedUserId) {
+          var su = getUser(selectedUserId);
+          if (su) showUserModal(su);
+        }
+      }, 15000);
     }
 
-    function setMapLayer(name) {
-      document.querySelectorAll('.style-btn').forEach(b => b.classList.remove('active'));
-      event.target.classList.add('active');
+    function setMapLayer(name, btn) {
+      document.querySelectorAll('.style-btn').forEach(function(b) { b.classList.remove('active'); });
+      if (btn) btn.classList.add('active');
       map.removeLayer(currentLayer);
       currentLayer = layers[name];
       currentLayer.addTo(map);
     }
 
+    // ---------- Live data ----------
     function connectMqtt() {
       var brokerWs = 'wss://broker.emqx.io:8084/mqtt';
       var clientId = 'pinpulse_master_radar_' + Math.random().toString(16).substring(2, 8);
@@ -668,7 +844,16 @@
         timestamp: data.timestamp || Date.now()
       };
 
+      // Keep the saved snapshot of removed people up to date (name, battery, last seen)
+      if (isRemoved(id)) {
+        var keepRemovedAt = removedIds[id].removedAt;
+        removedIds[id] = snapshotOf(users[id]);
+        removedIds[id].removedAt = keepRemovedAt || Date.now();
+        saveRemoved();
+      }
+
       updateMarker(users[id]);
+      layoutMarkers();
       renderUserList();
 
       if (selectedUserId === id) {
@@ -676,18 +861,18 @@
       }
     }
 
+    // ---------- Markers ----------
     function updateMarker(u) {
-      if (isNaN(u.lat) || isNaN(u.lng) || (u.lat === 0 && u.lng === 0)) return;
+      if (!hasValidPos(u) || isRemoved(u.id)) {
+        removeMarker(u.id);
+        return;
+      }
 
-      var isLive = (Date.now() - u.timestamp < 90000);
-      var avatarContent = (u.avatar && u.avatar.length > 10)
-        ? '<img src="' + u.avatar + '" />'
-        : u.name.charAt(0).toUpperCase();
-
-      var iconHtml = '<div class="pinpulse-marker-wrapper" onclick="selectUser(\'' + u.id + '\')">' +
+      var isLive = isLiveUser(u);
+      var iconHtml = '<div class="pinpulse-marker-wrapper">' +
                        (isLive ? '<div class="pulse-ring"></div>' : '') +
-                       '<div class="avatar-bubble">' + avatarContent + '</div>' +
-                       '<div class="name-pill">' + u.name + ' (' + u.batteryPercent + '%)' + '</div>' +
+                       '<div class="avatar-bubble">' + avatarHtml(u) + '</div>' +
+                       '<div class="name-pill">' + esc(u.name) + ' (' + esc(batteryText(u)) + ')</div>' +
                      '</div>';
 
       var customIcon = L.divIcon({
@@ -701,20 +886,144 @@
         markers[u.id].setIcon(customIcon);
         markers[u.id].setLatLng([u.lat, u.lng]);
       } else {
+        var id = u.id;
         var marker = L.marker([u.lat, u.lng], { icon: customIcon });
+        marker.on('click', function() { selectUser(id); });
         marker.addTo(map);
-        markers[u.id] = marker;
+        markers[id] = marker;
       }
     }
 
+    function removeMarker(id) {
+      if (markers[id]) {
+        map.removeLayer(markers[id]);
+        delete markers[id];
+      }
+    }
+
+    // Anti-overlap: people standing at (nearly) the same spot are fanned out in a circle around
+    // their shared position. A dashed line + small dot marks each person's REAL location.
+    function layoutMarkers() {
+      if (!map || !legsLayer) return;
+      legsLayer.clearLayers();
+
+      var items = Object.keys(markers).sort().map(function(id) {
+        var u = users[id];
+        return { id: id, u: u, p: map.latLngToLayerPoint([u.lat, u.lng]) };
+      });
+
+      var assigned = {};
+      for (var i = 0; i < items.length; i++) {
+        if (assigned[items[i].id]) continue;
+        var group = [items[i]];
+        assigned[items[i].id] = true;
+        // Grow the group transitively (A near B, B near C => A, B, C together)
+        for (var g = 0; g < group.length; g++) {
+          for (var j = 0; j < items.length; j++) {
+            if (assigned[items[j].id]) continue;
+            if (group[g].p.distanceTo(items[j].p) < OVERLAP_PX) {
+              group.push(items[j]);
+              assigned[items[j].id] = true;
+            }
+          }
+        }
+        placeGroup(group);
+      }
+    }
+
+    function placeGroup(group) {
+      if (group.length === 1) {
+        var only = group[0];
+        markers[only.id].setLatLng([only.u.lat, only.u.lng]);
+        return;
+      }
+      var cx = 0, cy = 0;
+      group.forEach(function(it) { cx += it.p.x; cy += it.p.y; });
+      cx /= group.length;
+      cy /= group.length;
+
+      var n = group.length;
+      var radius = Math.max(56, (n * 70) / (2 * Math.PI));
+      group.forEach(function(it, k) {
+        var angle = (2 * Math.PI * k) / n - Math.PI / 2;
+        var pos = L.point(cx + radius * Math.cos(angle), cy + radius * Math.sin(angle));
+        var shown = map.layerPointToLatLng(pos);
+        markers[it.id].setLatLng(shown);
+
+        L.polyline([[it.u.lat, it.u.lng], shown], {
+          color: '#10b981', weight: 2, opacity: 0.8, dashArray: '4 5', interactive: false
+        }).addTo(legsLayer);
+        L.circleMarker([it.u.lat, it.u.lng], {
+          radius: 4, color: '#ffffff', weight: 1.5, fillColor: '#10b981', fillOpacity: 1, interactive: false
+        }).addTo(legsLayer);
+      });
+    }
+
+    // ---------- Remove / Put back ----------
+    function removeUser(id) {
+      var u = getUser(id);
+      if (!u) return;
+      removedIds[id] = snapshotOf(u);
+      saveRemoved();
+      removeMarker(id);
+      layoutMarkers();
+      renderUserList();
+      if (selectedUserId === id) showUserModal(getUser(id));
+    }
+
+    function restoreUser(id) {
+      delete removedIds[id];
+      saveRemoved();
+      if (users[id]) updateMarker(users[id]);
+      layoutMarkers();
+      renderUserList();
+      if (selectedUserId === id) {
+        var u = getUser(id);
+        if (u) showUserModal(u); else closeModal();
+      }
+    }
+
+    function restoreAll() {
+      removedIds = {};
+      saveRemoved();
+      Object.values(users).forEach(updateMarker);
+      layoutMarkers();
+      renderUserList();
+      if (selectedUserId) {
+        var u = getUser(selectedUserId);
+        if (u) showUserModal(u); else closeModal();
+      }
+    }
+
+    function toggleRemoveSelected() {
+      if (!selectedUserId) return;
+      if (isRemoved(selectedUserId)) restoreUser(selectedUserId);
+      else removeUser(selectedUserId);
+    }
+
+    function switchTab(tab) {
+      currentTab = tab;
+      document.getElementById('tab-active').classList.toggle('active', tab === 'active');
+      document.getElementById('tab-removed').classList.toggle('active', tab === 'removed');
+      renderUserList();
+    }
+
+    // ---------- Selection & details ----------
     function selectUser(id) {
-      var u = users[id];
+      var u = getUser(id);
       if (!u) return;
       selectedUserId = id;
 
-      map.flyTo([u.lat, u.lng], 16, { duration: 1.2 });
+      if (hasValidPos(u)) {
+        map.flyTo([u.lat, u.lng], Math.max(map.getZoom(), 16), { duration: 1.2 });
+      }
       showUserModal(u);
       renderUserList();
+    }
+
+    function closeModal() {
+      document.getElementById('person-modal').style.display = 'none';
+      selectedUserId = null;
     }
 
     function showUserModal(u) {
@@ -724,13 +1033,21 @@
       document.getElementById('m-name').textContent = u.name;
       document.getElementById('m-email').textContent = u.email;
       document.getElementById('m-id').textContent = 'ID: ' + u.id;
-      document.getElementById('m-battery').textContent = u.batteryPercent + '%' + (u.isCharging ? ' ⚡' : '');
+      document.getElementById('m-battery').textContent = batteryText(u);
       document.getElementById('m-speed').textContent = Math.round(u.speed) + ' km/h';
-      document.getElementById('m-coords').textContent = u.lat.toFixed(6) + ', ' + u.lng.toFixed(6);
+      document.getElementById('m-coords').textContent = hasValidPos(u)
+        ? (u.lat.toFixed(6) + ', ' + u.lng.toFixed(6))
+        : 'Waiting for GPS...';
 
-      var isLive = (Date.now() - u.timestamp < 90000);
+      var isLive = isLiveUser(u);
       var statusEl = document.getElementById('m-status');
-      statusEl.textContent = isLive ? 'Live Now' : 'Last Seen ' + Math.round((Date.now() - u.timestamp) / 1000) + 's ago';
+      if (isLive) {
+        statusEl.textContent = 'Live Now';
+      } else if (u.timestamp) {
+        statusEl.textContent = 'Last Seen ' + Math.round((Date.now() - u.timestamp) / 1000) + 's ago';
+      } else {
+        statusEl.textContent = 'Not seen yet';
+      }
       statusEl.style.color = isLive ? 'var(--primary)' : 'var(--text-muted)';
 
       var sharingEl = document.getElementById('m-sharing');
@@ -743,66 +1060,118 @@
       }
 
       var avatarEl = document.getElementById('m-avatar');
+      avatarEl.textContent = '';
       if (u.avatar && u.avatar.length > 10) {
-        avatarEl.innerHTML = '<img src="' + u.avatar + '" />';
+        var img = document.createElement('img');
+        img.src = u.avatar;
+        avatarEl.appendChild(img);
       } else {
-        avatarEl.textContent = u.name.charAt(0).toUpperCase();
+        avatarEl.textContent = (u.name || '?').charAt(0).toUpperCase();
       }
 
-      document.getElementById('m-nav-link').href =
-        'https://www.google.com/maps/dir/?api=1&destination=' + u.lat + ',' + u.lng;
+      document.getElementById('m-nav-link').href = hasValidPos(u)
+        ? 'https://www.google.com/maps/dir/?api=1&destination=' + u.lat + ',' + u.lng
+        : '#';
+
+      document.getElementById('m-remove-btn').textContent = isRemoved(u.id)
+        ? '↺ Put back on map'
+        : '✕ Remove from map';
+    }
+
+    // ---------- Sidebar list ----------
+    function onListClick(e) {
+      var el = e.target.closest('[data-action]');
+      if (!el) return;
+      var action = el.getAttribute('data-action');
+      var id = el.getAttribute('data-id');
+      if (action === 'remove') {
+        e.stopPropagation();
+        removeUser(id);
+      } else if (action === 'restore') {
+        e.stopPropagation();
+        restoreUser(id);
+      } else if (action === 'restore-all') {
+        restoreAll();
+      } else if (action === 'select') {
+        selectUser(id);
+      }
     }
 
     function renderUserList() {
       var listEl = document.getElementById('user-list');
       var filter = document.getElementById('search-box').value.toLowerCase();
-      var userArr = Object.values(users);
 
-      document.getElementById('active-count').textContent = userArr.length + ' Live';
+      var activeArr = Object.values(users).filter(function(u) { return !isRemoved(u.id); });
+      var removedArr = Object.keys(removedIds).map(getUser).filter(Boolean);
+      var liveCount = activeArr.filter(isLiveUser).length;
 
-      if (userArr.length === 0) {
-        listEl.innerHTML = '<div style="padding: 40px 20px; text-align: center; color: var(--text-muted); font-size: 13px;">' +
-                           'Listening for devices transmitting GPS...</div>';
+      document.getElementById('active-count').textContent = liveCount + ' Live';
+      document.getElementById('tab-active').textContent = 'On Map (' + activeArr.length + ')';
+      document.getElementById('tab-removed').textContent = 'Removed (' + removedArr.length + ')';
+
+      var source = (currentTab === 'active') ? activeArr : removedArr;
+      var filtered = source.filter(function(u) {
+        return u.name.toLowerCase().includes(filter) ||
+               u.email.toLowerCase().includes(filter) ||
+               u.id.toLowerCase().includes(filter);
+      });
+
+      var html = '';
+      if (currentTab === 'removed' && removedArr.length > 0) {
+        html += '<div class="list-toolbar"><span>Hidden from map (saved in this browser)</span>' +
+                '<button class="toolbar-btn" data-action="restore-all">↺ Put all back</button></div>';
+      }
+
+      if (filtered.length === 0) {
+        var msg;
+        if (currentTab === 'removed') {
+          msg = removedArr.length === 0 ? 'No removed people. Use ✕ on a person to remove them from the map.' : 'No match.';
+        } else if (Object.keys(users).length === 0) {
+          msg = 'Listening for devices transmitting GPS...';
+        } else if (activeArr.length === 0) {
+          msg = 'Everyone is removed. Open the "Removed" tab to put people back.';
+        } else {
+          msg = 'No match.';
+        }
+        listEl.innerHTML = html + '<div style="padding: 40px 20px; text-align: center; color: var(--text-muted); font-size: 13px;">' + msg + '</div>';
         return;
       }
 
-      var filtered = userArr.filter(u =>
-        u.name.toLowerCase().includes(filter) ||
-        u.email.toLowerCase().includes(filter) ||
-        u.id.toLowerCase().includes(filter)
-      );
-
-      listEl.innerHTML = filtered.map(u => {
-        var isLive = (Date.now() - u.timestamp < 90000);
+      html += filtered.map(function(u) {
+        var isLive = isLiveUser(u);
         var activeClass = (selectedUserId === u.id) ? ' active' : '';
-        var avatarContent = (u.avatar && u.avatar.length > 10)
-          ? '<img src="' + u.avatar + '" />'
-          : u.name.charAt(0).toUpperCase();
+        var removedClass = isRemoved(u.id) ? ' removed' : '';
+        var safeId = esc(u.id);
 
-        var statusBadge = '';
+        var statusBadge;
         if (isLive) {
-          if (u.isSharing) {
-            statusBadge = '<span class="badge-live">● Live</span>';
-          } else {
-            statusBadge = '<span class="badge-ghost">● Ghost (Master Tracked)</span>';
-          }
+          statusBadge = u.isSharing
+            ? '<span class="badge-live">● Live</span>'
+            : '<span class="badge-ghost">● Ghost (Master Tracked)</span>';
         } else {
           statusBadge = '<span class="badge-speed">○ Offline</span>';
         }
 
-        return '<div class="user-card' + activeClass + '" onclick="selectUser(\'' + u.id + '\')">' +
-                 '<div class="card-avatar">' + avatarContent + '</div>' +
+        var actionBtn = isRemoved(u.id)
+          ? '<button class="card-action restore" title="Put back on map" data-action="restore" data-id="' + safeId + '">↺ Put back</button>'
+          : '<button class="card-action remove" title="Remove from map" data-action="remove" data-id="' + safeId + '">✕</button>';
+
+        return '<div class="user-card' + activeClass + removedClass + '" data-action="select" data-id="' + safeId + '">' +
+                 '<div class="card-avatar">' + avatarHtml(u) + '</div>' +
                  '<div class="card-info">' +
-                   '<div class="card-title">' + u.name + '</div>' +
-                   '<div class="card-email">' + u.email + '</div>' +
+                   '<div class="card-title">' + esc(u.name) + '</div>' +
+                   '<div class="card-email">' + esc(u.email) + '</div>' +
                    '<div class="card-sub">' +
                      statusBadge +
                      '<span class="badge-speed">' + Math.round(u.speed) + ' km/h</span>' +
-                     '<span class="badge-battery">🔋 ' + u.batteryPercent + '%' + (u.isCharging ? ' ⚡' : '') + '</span>' +
+                     '<span class="badge-battery">🔋 ' + esc(batteryText(u)) + '</span>' +
                    '</div>' +
                  '</div>' +
+                 actionBtn +
                '</div>';
       }).join('');
+
+      listEl.innerHTML = html;
     }
 
     function setupSearch() {

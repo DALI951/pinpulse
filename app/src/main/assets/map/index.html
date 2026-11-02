@@ -164,7 +164,11 @@
     var map;
     var markers = {};
     var currentLayer;
+    var currentStyle = 'streets';
     var hasAutoCentered = false;
+    var usingFallback = false;
+
+    // Same Leaflet tile layers as the Master Web Radar (web/index.html) — free, no API key.
     var tileLayers = {
       streets: L.tileLayer('https://mt{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
         subdomains: ['0', '1', '2', '3'],
@@ -177,18 +181,40 @@
       hybrid: L.tileLayer('https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
         subdomains: ['0', '1', '2', '3'],
         maxZoom: 20
-      }),
-      osm: L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19
       })
     };
 
+    // Free fallback street map (no key) used automatically if the primary tiles fail to load.
+    var fallbackLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png', {
+      subdomains: ['a', 'b', 'c', 'd'],
+      maxZoom: 20
+    });
+
+    function watchTileErrors(layer) {
+      var errors = 0;
+      var loaded = 0;
+      layer.on('tileload', function() { loaded++; });
+      layer.on('tileerror', function() {
+        errors++;
+        if (!usingFallback && loaded === 0 && errors >= 6) {
+          console.error('Primary map tiles failed to load, switching to fallback tiles');
+          usingFallback = true;
+          map.removeLayer(currentLayer);
+          currentLayer = fallbackLayer;
+          currentLayer.addTo(map);
+        }
+      });
+    }
+
     function initMap() {
+      if (map) return; // guard against double initialization
       map = L.map('map', {
         center: [36.8065, 10.1815],
         zoom: 15,
         zoomControl: false
       });
+
+      for (var key in tileLayers) watchTileErrors(tileLayers[key]);
 
       currentLayer = tileLayers.streets;
       currentLayer.addTo(map);
@@ -213,10 +239,30 @@
     };
 
     function setMapStyle(styleKey) {
-      if (tileLayers[styleKey]) {
-        map.removeLayer(currentLayer);
-        currentLayer = tileLayers[styleKey];
-        currentLayer.addTo(map);
+      if (!map || !tileLayers[styleKey]) return;
+      if (styleKey === currentStyle && map.hasLayer(currentLayer)) return;
+      currentStyle = styleKey;
+      var next = (usingFallback && styleKey === 'streets') ? fallbackLayer : tileLayers[styleKey];
+      if (next === currentLayer) return;
+      map.removeLayer(currentLayer);
+      currentLayer = next;
+      currentLayer.addTo(map);
+    }
+
+    // Full sync from Android: add/update every visible user and remove pins no longer visible
+    // (e.g. after switching filter, unfriending, or hiding someone from the General map).
+    function syncMarkers(list) {
+      if (!map) return;
+      var users = (typeof list === 'string') ? JSON.parse(list) : (list || []);
+      var keep = {};
+      for (var i = 0; i < users.length; i++) {
+        if (users[i] && users[i].id) {
+          keep[users[i].id] = true;
+          updateUserMarker(users[i]);
+        }
+      }
+      for (var id in markers) {
+        if (!keep[id]) removeUserMarker(id);
       }
     }
 
@@ -234,8 +280,11 @@
 
       var displayName = user.name || 'Friend';
       if (user.isSelf) {
-        displayName = user.name + ' (You)';
+        displayName = displayName + ' (You)';
       }
+      displayName = String(displayName).replace(/[&<>"']/g, function(c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+      });
 
       var html = '<div class="pinpulse-marker-wrapper">' +
                    '<div class="pulse-ring' + isSelfClass + isOfflineClass + '"></div>' +
@@ -315,7 +364,13 @@
       map.invalidateSize();
     }
 
-    window.addEventListener('DOMContentLoaded', initMap);
+    // Initialize immediately if the DOM is already parsed (common for locally served pages),
+    // otherwise wait for DOMContentLoaded.
+    if (document.readyState === 'loading') {
+      window.addEventListener('DOMContentLoaded', initMap);
+    } else {
+      initMap();
+    }
   </script>
 </body>
 </html>
