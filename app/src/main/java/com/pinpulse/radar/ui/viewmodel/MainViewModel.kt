@@ -82,12 +82,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // Combined list of users to display on the map according to the current filter
     val visibleUsers: StateFlow<List<User>> = combine(
         currentUser,
-        friends,
+        combine(friends, _groupMembers) { fl, gm -> Pair(fl, gm) },
         groups,
-        _groupMembers,
         hiddenFromGeneral,
         currentFilter
-    ) { me, friendList, groupList, groupMembersMap, hiddenSet, filter ->
+    ) { me, friendGroupPair, groupList, hiddenSet, filter ->
+        val friendList = friendGroupPair.first
+        val groupMembersMap = friendGroupPair.second
         val allUsers = mutableListOf<User>()
         if (me != null) allUsers.add(me)
 
@@ -128,9 +129,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         // Auto-heal any friends corrupted by legacy offline alerts
-        val existingFriends = prefs.loadFriends()
-        if (existingFriends.any { !it.isSharingLocation }) {
-            val repaired = existingFriends.map { it.copy(isSharingLocation = true) }
+        val savedFriends = prefs.loadFriends()
+        if (savedFriends.any { !it.isSharingLocation }) {
+            val repaired = savedFriends.map { it.copy(isSharingLocation = true) }
             prefs.saveFriends(repaired)
         }
 
