@@ -31,6 +31,12 @@ import com.pinpulse.radar.data.AppPreferences
 import com.pinpulse.radar.data.RealtimeService
 import com.pinpulse.radar.model.AlertMessage
 import com.pinpulse.radar.model.LocationPacket
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 
 class LocationTrackingService : Service() {
 
@@ -101,7 +107,7 @@ class LocationTrackingService : Service() {
     private lateinit var prefs: AppPreferences
     private lateinit var realtimeService: RealtimeService
     private var wakeLock: PowerManager.WakeLock? = null
-    private var heartbeatJob: kotlinx.coroutines.Job? = null
+    private var heartbeatJob: Job? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -165,9 +171,9 @@ class LocationTrackingService : Service() {
 
         // Continuous 3-second live heartbeat: guarantees website and friends receive continuous telemetry even if stationary
         heartbeatJob?.cancel()
-        heartbeatJob = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-            while (kotlinx.coroutines.isActive) {
-                kotlinx.coroutines.delay(3000L)
+        heartbeatJob = CoroutineScope(Dispatchers.IO).launch {
+            while (isActive) {
+                delay(3000L)
                 try {
                     val user = prefs.loadCurrentUser()
                     if (user != null && user.isSharingLocation && (user.latitude != 0.0 || user.longitude != 0.0)) {

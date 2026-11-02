@@ -41,6 +41,8 @@ import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -70,6 +72,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.pinpulse.radar.model.Group
 import com.pinpulse.radar.model.User
+import com.pinpulse.radar.ui.theme.DangerRed
 import com.pinpulse.radar.ui.theme.PulseGreen
 import com.pinpulse.radar.ui.theme.RadarBlue
 import com.pinpulse.radar.ui.theme.RadarCardBg
