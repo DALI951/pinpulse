@@ -10,6 +10,8 @@
 local.properties
 app/build/
 *.apk
+node_modules/
+server/db.json
 
 # Keep persistent release keystore tracked so APK updates never fail with signature mismatch
 !app/keystore/pinpulse.jks

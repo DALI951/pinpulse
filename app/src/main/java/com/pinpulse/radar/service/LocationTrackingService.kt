@@ -111,7 +111,7 @@ class LocationTrackingService : Service() {
         val currentUser = prefs.loadCurrentUser()
         if (currentUser != null) {
             prefs.saveCurrentUser(currentUser.copy(isSharingLocation = true))
-            realtimeService.connect(currentUser.id)
+            realtimeService.connect(currentUser)
         }
 
         requestLocationUpdates()

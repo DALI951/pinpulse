@@ -8,7 +8,9 @@ data class FriendRequest(
     @SerializedName("fromUserName") val fromUserName: String,
     @SerializedName("fromUserEmail") val fromUserEmail: String,
     @SerializedName("fromUserAvatar") val fromUserAvatar: String? = null,
-    @SerializedName("toUserId") val toUserId: String,
+    @SerializedName("fromFriendCode") val fromFriendCode: String = "",
+    @SerializedName("toUserId") val toUserId: String = "",
+    @SerializedName("toFriendCode") val toFriendCode: String = "",
     @SerializedName("status") val status: String = "PENDING", // PENDING, ACCEPTED, DECLINED
     @SerializedName("timestamp") val timestamp: Long = System.currentTimeMillis()
 )
