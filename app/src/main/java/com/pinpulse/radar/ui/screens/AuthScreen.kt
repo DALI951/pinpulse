@@ -53,6 +53,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -60,6 +61,7 @@ import coil.compose.AsyncImage
 import com.pinpulse.radar.util.UserAvatar
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.pinpulse.radar.ui.theme.DangerRed
 import com.pinpulse.radar.ui.theme.PulseGreen
 import com.pinpulse.radar.ui.theme.RadarBlue
 import com.pinpulse.radar.ui.theme.RadarDarkBg
@@ -77,7 +79,9 @@ fun AuthScreen(
     val context = LocalContext.current
     var emailInput by remember { mutableStateOf("") }
     var nameInput by remember { mutableStateOf("") }
-    var pinInput by remember { mutableStateOf("1234") }
+    var pinInput by remember { mutableStateOf("") }
+    var confirmPinInput by remember { mutableStateOf("") }
+    var pinErrorMessage by remember { mutableStateOf<String?>(null) }
     var avatarBase64 by remember { mutableStateOf<String?>(null) }
     var isGoogleAccountSelected by remember { mutableStateOf(false) }
 
@@ -102,7 +106,7 @@ fun AuthScreen(
                 emailInput = accountName
                 nameInput = cleanName
                 isGoogleAccountSelected = true
-                onSignIn(accountName, cleanName, avatarBase64, pinInput.ifBlank { "1234" })
+                pinErrorMessage = null
             }
         }
     }
@@ -120,8 +124,11 @@ fun AuthScreen(
                 val photoUrl = account.photoUrl?.toString()
                 emailInput = realEmail
                 nameInput = realName
+                if (!photoUrl.isNullOrEmpty()) {
+                    avatarBase64 = photoUrl
+                }
                 isGoogleAccountSelected = true
-                onSignIn(realEmail, realName, photoUrl ?: avatarBase64, pinInput.ifBlank { "1234" })
+                pinErrorMessage = null
                 return@rememberLauncherForActivityResult
             }
         } catch (e: Exception) {
@@ -242,117 +249,241 @@ fun AuthScreen(
 
                 Spacer(modifier = Modifier.height(20.dp))
 
-                // 1. PRIMARY: Sign In with Google Account Picker Button
-                Button(
-                    onClick = { startGoogleSignIn() },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(54.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color.White),
-                    shape = RoundedCornerShape(14.dp)
-                ) {
+                if (isGoogleAccountSelected) {
+                    // Google Account Selected Step: Show profile and require PIN setup!
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(Color(0xFF1E293B))
+                            .padding(12.dp)
                     ) {
-                        // Google 'G' styling badge
-                        Text(
-                            text = "G ",
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Black,
-                            color = Color(0xFF4285F4)
+                        UserAvatar(
+                            avatarSource = avatarBase64,
+                            displayName = nameInput,
+                            modifier = Modifier.size(42.dp).clip(CircleShape)
                         )
-                        Spacer(modifier = Modifier.width(6.dp))
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(nameInput, fontWeight = FontWeight.Bold, color = Color.White, fontSize = 15.sp)
+                            Text(emailInput, color = TextMuted, fontSize = 12.sp)
+                        }
+                        Text("✓ Google", color = PulseGreen, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Text("🔒 Create Your Security PIN (Required)", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 14.sp)
+                    Text("Choose a 4-6 digit PIN required to silence the emergency siren.", fontSize = 11.sp, color = TextMuted)
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    OutlinedTextField(
+                        value = pinInput,
+                        onValueChange = { if (it.all { c -> c.isDigit() } && it.length <= 6) { pinInput = it; pinErrorMessage = null } },
+                        label = { Text("Choose 4-6 digit PIN *") },
+                        placeholder = { Text("e.g. 5821") },
+                        leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = PulseGreen) },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            keyboardType = androidx.compose.ui.text.input.KeyboardType.NumberPassword
+                        ),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    OutlinedTextField(
+                        value = confirmPinInput,
+                        onValueChange = { if (it.all { c -> c.isDigit() } && it.length <= 6) { confirmPinInput = it; pinErrorMessage = null } },
+                        label = { Text("Confirm PIN *") },
+                        leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = PulseGreen) },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            keyboardType = androidx.compose.ui.text.input.KeyboardType.NumberPassword
+                        ),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    if (pinErrorMessage != null) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(pinErrorMessage ?: "", fontSize = 12.sp, color = DangerRed)
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Button(
+                        onClick = {
+                            if (pinInput.length < 4) {
+                                pinErrorMessage = "PIN must be between 4 and 6 digits."
+                            } else if (pinInput != confirmPinInput) {
+                                pinErrorMessage = "PIN and confirmation do not match."
+                            } else {
+                                onSignIn(emailInput, nameInput, avatarBase64, pinInput)
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = PulseGreen),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
                         Text(
-                            text = "Sign in with Google",
-                            color = Color(0xFF1F2937),
+                            text = "Complete Setup & Enter Radar",
+                            color = Color.Black,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                } else {
+                    // 1. PRIMARY: Sign In with Google Account Picker Button
+                    Button(
+                        onClick = { startGoogleSignIn() },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(54.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.White),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Text(
+                                text = "G ",
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.Black,
+                                color = Color(0xFF4285F4)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Sign in with Google",
+                                color = Color(0xFF1F2937),
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(18.dp))
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Box(modifier = Modifier.weight(1f).height(1.dp).background(Color(0xFF334155)))
+                        Text(" or enter custom ", fontSize = 11.sp, color = TextMuted, modifier = Modifier.padding(horizontal = 8.dp))
+                        Box(modifier = Modifier.weight(1f).height(1.dp).background(Color(0xFF334155)))
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // Name Input
+                    OutlinedTextField(
+                        value = nameInput,
+                        onValueChange = { nameInput = it; pinErrorMessage = null },
+                        label = { Text("Display Name *") },
+                        leadingIcon = { Icon(Icons.Default.Person, contentDescription = null, tint = TextMuted) },
+                        singleLine = true,
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Google Email Input
+                    OutlinedTextField(
+                        value = emailInput,
+                        onValueChange = { emailInput = it; pinErrorMessage = null },
+                        label = { Text("Google Account / Email (Optional)") },
+                        leadingIcon = { Icon(Icons.Default.Email, contentDescription = null, tint = TextMuted) },
+                        singleLine = true,
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Security PIN Input (Required)
+                    OutlinedTextField(
+                        value = pinInput,
+                        onValueChange = { if (it.all { c -> c.isDigit() } && it.length <= 6) { pinInput = it; pinErrorMessage = null } },
+                        label = { Text("Choose Security PIN (4-6 digits) *") },
+                        placeholder = { Text("4-6 digits") },
+                        leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = PulseGreen) },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            keyboardType = androidx.compose.ui.text.input.KeyboardType.NumberPassword
+                        ),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Confirm Security PIN Input
+                    OutlinedTextField(
+                        value = confirmPinInput,
+                        onValueChange = { if (it.all { c -> c.isDigit() } && it.length <= 6) { confirmPinInput = it; pinErrorMessage = null } },
+                        label = { Text("Confirm Security PIN *") },
+                        leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = PulseGreen) },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            keyboardType = androidx.compose.ui.text.input.KeyboardType.NumberPassword
+                        ),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Text(
+                        text = "🔒 Required to stop the siren if someone rings your phone",
+                        fontSize = 11.sp,
+                        color = TextMuted,
+                        modifier = Modifier.padding(top = 4.dp, start = 4.dp)
+                    )
+
+                    if (pinErrorMessage != null) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(pinErrorMessage ?: "", fontSize = 12.sp, color = DangerRed)
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // Manual Continue Button
+                    Button(
+                        onClick = {
+                            val finalName = nameInput.trim()
+                            if (finalName.isBlank()) {
+                                pinErrorMessage = "Please enter your Display Name"
+                            } else if (pinInput.length < 4) {
+                                pinErrorMessage = "Security PIN is required (4 to 6 digits)"
+                            } else if (pinInput != confirmPinInput) {
+                                pinErrorMessage = "PIN and confirmation do not match"
+                            } else {
+                                val finalEmail = emailInput.trim().ifEmpty { "${finalName.lowercase().replace(" ", "")}@gmail.com" }
+                                onSignIn(finalEmail, finalName, avatarBase64, pinInput)
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = PulseGreen),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text(
+                            text = "Continue & Enter Radar",
+                            color = Color.Black,
                             fontSize = 15.sp,
                             fontWeight = FontWeight.Bold
                         )
                     }
-                }
-
-                Spacer(modifier = Modifier.height(18.dp))
-
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Box(modifier = Modifier.weight(1f).height(1.dp).background(Color(0xFF334155)))
-                    Text(" or enter custom ", fontSize = 11.sp, color = TextMuted, modifier = Modifier.padding(horizontal = 8.dp))
-                    Box(modifier = Modifier.weight(1f).height(1.dp).background(Color(0xFF334155)))
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Name Input
-                OutlinedTextField(
-                    value = nameInput,
-                    onValueChange = { nameInput = it },
-                    label = { Text("Display Name") },
-                    leadingIcon = { Icon(Icons.Default.Person, contentDescription = null, tint = TextMuted) },
-                    singleLine = true,
-                    shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                // Google Email Input
-                OutlinedTextField(
-                    value = emailInput,
-                    onValueChange = { emailInput = it },
-                    label = { Text("Google Account / Email") },
-                    leadingIcon = { Icon(Icons.Default.Email, contentDescription = null, tint = TextMuted) },
-                    singleLine = true,
-                    shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                // Security PIN Input
-                OutlinedTextField(
-                    value = pinInput,
-                    onValueChange = { if (it.all { c -> c.isDigit() } && it.length <= 6) pinInput = it },
-                    label = { Text("Siren Security PIN (4-6 digits)") },
-                    placeholder = { Text("1234") },
-                    leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = PulseGreen) },
-                    singleLine = true,
-                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                        keyboardType = androidx.compose.ui.text.input.KeyboardType.NumberPassword
-                    ),
-                    shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Text(
-                    text = "🔒 Required to stop the siren if someone rings your phone",
-                    fontSize = 11.sp,
-                    color = TextMuted,
-                    modifier = Modifier.padding(top = 4.dp, start = 4.dp)
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Manual Continue Button
-                Button(
-                    onClick = {
-                        val finalName = nameInput.trim().ifEmpty { "Friend" }
-                        val finalEmail = emailInput.trim().ifEmpty { "${finalName.lowercase()}@gmail.com" }
-                        onSignIn(finalEmail, finalName, avatarBase64, pinInput.ifBlank { "1234" })
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = PulseGreen),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Text(
-                        text = "Continue",
-                        color = Color.Black,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold
-                    )
                 }
             }
         }

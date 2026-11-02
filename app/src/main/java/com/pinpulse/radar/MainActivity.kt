@@ -110,7 +110,11 @@ class MainActivity : ComponentActivity() {
                     android.view.KeyEvent.KEYCODE_VOLUME_UP,
                     android.view.KeyEvent.KEYCODE_VOLUME_MUTE,
                     android.view.KeyEvent.KEYCODE_POWER -> {
-                        viewModel.showSirenPinDialog()
+                        if (viewModel.hasSecurityPin()) {
+                            viewModel.showSirenPinDialog()
+                        } else {
+                            viewModel.stopSirenDirectly(this)
+                        }
                         return true
                     }
                 }

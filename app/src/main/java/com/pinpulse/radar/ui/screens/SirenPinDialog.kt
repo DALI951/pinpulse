@@ -61,6 +61,7 @@ fun SirenPinDialog(
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
+    val hasPin = viewModel.hasSecurityPin()
     var pinInput by remember { mutableStateOf("") }
     var hasError by remember { mutableStateOf(false) }
 
@@ -149,7 +150,11 @@ fun SirenPinDialog(
                     Spacer(modifier = Modifier.height(6.dp))
 
                     Text(
-                        text = "Phone is ringing at maximum volume.\nEnter your Security PIN to stop audio and vibration.",
+                        text = if (hasPin) {
+                            "Phone is ringing at maximum volume.\nEnter your Security PIN to stop audio and vibration."
+                        } else {
+                            "Phone is ringing at maximum volume.\nNo Security PIN was configured on this device."
+                        },
                         fontSize = 12.sp,
                         color = Color.White.copy(alpha = 0.85f),
                         textAlign = TextAlign.Center
@@ -157,62 +162,84 @@ fun SirenPinDialog(
 
                     Spacer(modifier = Modifier.height(20.dp))
 
-                    OutlinedTextField(
-                        value = pinInput,
-                        onValueChange = {
-                            if (it.all { c -> c.isDigit() } && it.length <= 6) {
-                                pinInput = it
-                                hasError = false
-                            }
-                        },
-                        placeholder = { Text("Enter PIN", color = TextMuted) },
-                        leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = if (hasError) DangerRed else PulseGreen) },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                        keyboardActions = KeyboardActions(onDone = { submitPin() }),
-                        visualTransformation = PasswordVisualTransformation(),
-                        isError = hasError,
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = if (hasError) DangerRed else PulseGreen,
-                            unfocusedBorderColor = if (hasError) DangerRed else DangerRed.copy(alpha = 0.5f),
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White
+                    if (!hasPin) {
+                        Button(
+                            onClick = {
+                                viewModel.stopSirenDirectly(context)
+                                Toast.makeText(context, "Siren and vibration silenced!", Toast.LENGTH_SHORT).show()
+                                onDismiss()
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(50.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = PulseGreen),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text(
+                                text = "Silence Siren Now",
+                                color = Color.Black,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp
+                            )
+                        }
+                    } else {
+                        OutlinedTextField(
+                            value = pinInput,
+                            onValueChange = {
+                                if (it.all { c -> c.isDigit() } && it.length <= 6) {
+                                    pinInput = it
+                                    hasError = false
+                                }
+                            },
+                            placeholder = { Text("Enter PIN", color = TextMuted) },
+                            leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = if (hasError) DangerRed else PulseGreen) },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                            keyboardActions = KeyboardActions(onDone = { submitPin() }),
+                            visualTransformation = PasswordVisualTransformation(),
+                            isError = hasError,
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = if (hasError) DangerRed else PulseGreen,
+                                unfocusedBorderColor = if (hasError) DangerRed else DangerRed.copy(alpha = 0.5f),
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White
+                            )
                         )
-                    )
 
-                    if (hasError) {
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = "❌ Incorrect Security PIN! Alarm will continue ringing.",
-                            color = DangerRed,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            textAlign = TextAlign.Center
-                        )
-                    }
+                        if (hasError) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = "❌ Incorrect Security PIN! Alarm will continue ringing.",
+                                color = DangerRed,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center
+                            )
+                        }
 
-                    Spacer(modifier = Modifier.height(20.dp))
+                        Spacer(modifier = Modifier.height(20.dp))
 
-                    Button(
-                        onClick = { submitPin() },
-                        enabled = pinInput.length >= 4,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(50.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = PulseGreen,
-                            disabledContainerColor = Color(0xFF2A2020)
-                        ),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Text(
-                            text = "Unlock & Stop Siren",
-                            color = if (pinInput.length >= 4) Color.Black else TextMuted,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp
-                        )
+                        Button(
+                            onClick = { submitPin() },
+                            enabled = pinInput.length >= 4,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(50.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = PulseGreen,
+                                disabledContainerColor = Color(0xFF2A2020)
+                            ),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text(
+                                text = "Unlock & Stop Siren",
+                                color = if (pinInput.length >= 4) Color.Black else TextMuted,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp
+                            )
+                        }
                     }
                 }
             }

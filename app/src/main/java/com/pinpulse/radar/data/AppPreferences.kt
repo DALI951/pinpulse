@@ -38,6 +38,9 @@ class AppPreferences(context: Context) {
     private val _selfMarkerModeFlow = MutableStateFlow(prefs.getString("self_marker_mode", "FULL") ?: "FULL")
     val selfMarkerModeFlow: StateFlow<String> = _selfMarkerModeFlow.asStateFlow()
 
+    private val _hasSecurityPinFlow = MutableStateFlow(hasSecurityPin())
+    val hasSecurityPinFlow: StateFlow<Boolean> = _hasSecurityPinFlow.asStateFlow()
+
     private val prefChangeListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         when (key) {
             "current_user" -> _currentUserFlow.value = loadCurrentUser()
@@ -47,6 +50,7 @@ class AppPreferences(context: Context) {
             "hidden_from_general" -> _hiddenFromGeneralMapFlow.value = loadHiddenUserIds()
             "map_style" -> _mapStyleFlow.value = prefs.getString("map_style", "streets") ?: "streets"
             "self_marker_mode" -> _selfMarkerModeFlow.value = prefs.getString("self_marker_mode", "FULL") ?: "FULL"
+            "security_pin" -> _hasSecurityPinFlow.value = hasSecurityPin()
         }
     }
 
@@ -227,19 +231,31 @@ class AppPreferences(context: Context) {
         get() = prefs.getBoolean("has_prompted_battery_exemption", false)
         set(value) = prefs.edit().putBoolean("has_prompted_battery_exemption", value).apply()
 
-    fun getSecurityPin(): String {
-        return prefs.getString("security_pin", "1234") ?: "1234"
+    fun getSecurityPin(): String? {
+        val pin = prefs.getString("security_pin", null)
+        return if (!pin.isNullOrBlank()) pin else null
+    }
+
+    fun hasSecurityPin(): Boolean {
+        val pin = prefs.getString("security_pin", null)
+        return !pin.isNullOrBlank()
     }
 
     fun setSecurityPin(pin: String) {
         val clean = pin.trim().filter { it.isDigit() }.take(6)
-        if (clean.isNotEmpty()) {
+        if (clean.length in 4..6) {
             prefs.edit().putString("security_pin", clean).apply()
+            _hasSecurityPinFlow.value = true
         }
     }
 
+    fun clearSecurityPin() {
+        prefs.edit().remove("security_pin").apply()
+        _hasSecurityPinFlow.value = false
+    }
+
     fun hasCustomSecurityPin(): Boolean {
-        return prefs.contains("security_pin")
+        return hasSecurityPin()
     }
 
     /**

@@ -992,9 +992,42 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // --- Siren Security PIN & In-App Updates ---
 
-    fun getSecurityPin(): String = prefs.getSecurityPin()
+    val hasSecurityPin: StateFlow<Boolean> = prefs.hasSecurityPinFlow
+
+    fun hasSecurityPin(): Boolean = prefs.hasSecurityPin()
+
+    fun getSecurityPin(): String? = prefs.getSecurityPin()
 
     fun setSecurityPin(pin: String) = prefs.setSecurityPin(pin)
+
+    fun createSecurityPin(newPin: String): Pair<Boolean, String> {
+        val clean = newPin.trim().filter { it.isDigit() }
+        if (clean.length !in 4..6) {
+            return Pair(false, "PIN must be between 4 and 6 digits.")
+        }
+        prefs.setSecurityPin(clean)
+        return Pair(true, "Security PIN created successfully!")
+    }
+
+    fun changeSecurityPin(currentPin: String, newPin: String): Pair<Boolean, String> {
+        val existing = prefs.getSecurityPin()
+        if (existing != null) {
+            if (currentPin.trim() != existing.trim()) {
+                return Pair(false, "Incorrect current PIN.")
+            }
+        }
+        val cleanNew = newPin.trim().filter { it.isDigit() }
+        if (cleanNew.length !in 4..6) {
+            return Pair(false, "New PIN must be between 4 and 6 digits.")
+        }
+        prefs.setSecurityPin(cleanNew)
+        return Pair(true, "Security PIN updated successfully!")
+    }
+
+    fun stopSirenDirectly(context: Context) {
+        SirenHelper.stop(context)
+        _isSirenPinDialogOpen.value = false
+    }
 
     fun showSirenPinDialog() {
         _isSirenPinDialogOpen.value = true
@@ -1008,6 +1041,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun verifyPinAndStopSiren(context: Context, enteredPin: String): Boolean {
         val expected = getSecurityPin()
+        if (expected.isNullOrBlank()) {
+            // User never created a PIN: stop directly without asking for it
+            SirenHelper.stop(context)
+            _isSirenPinDialogOpen.value = false
+            return true
+        }
         val success = SirenHelper.verifyPinAndStop(context, enteredPin, expected)
         if (success) {
             _isSirenPinDialogOpen.value = false

@@ -302,7 +302,11 @@ object SirenHelper {
         } catch (e: Exception) {}
     }
 
-    fun verifyPinAndStop(context: Context, enteredPin: String, expectedPin: String): Boolean {
+    fun verifyPinAndStop(context: Context, enteredPin: String, expectedPin: String?): Boolean {
+        if (expectedPin.isNullOrBlank()) {
+            stop(context)
+            return true
+        }
         val cleanEntered = enteredPin.trim()
         val cleanExpected = expectedPin.trim()
         if (cleanEntered == cleanExpected) {

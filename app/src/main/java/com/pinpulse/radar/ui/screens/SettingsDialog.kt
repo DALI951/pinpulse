@@ -94,8 +94,10 @@ fun SettingsDialog(
     val mapStyle by viewModel.mapStyle.collectAsState()
     val selfMarkerMode by viewModel.selfMarkerMode.collectAsState()
     val updateState by viewModel.updateState.collectAsState()
+    val hasSecurityPin by viewModel.hasSecurityPin.collectAsState()
 
     var isEditingPin by remember { mutableStateOf(false) }
+    var oldPinInput by remember { mutableStateOf("") }
     var newPinInput by remember { mutableStateOf("") }
     var confirmPinInput by remember { mutableStateOf("") }
     var pinErrorMessage by remember { mutableStateOf<String?>(null) }
@@ -304,14 +306,39 @@ fun SettingsDialog(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Lock, contentDescription = null, tint = PulseGreen, modifier = Modifier.size(20.dp))
+                            Icon(
+                                Icons.Default.Lock,
+                                contentDescription = null,
+                                tint = if (hasSecurityPin) PulseGreen else Color(0xFFF59E0B),
+                                modifier = Modifier.size(20.dp)
+                            )
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Siren Security PIN", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 15.sp)
+                            Text(
+                                if (hasSecurityPin) "Siren Security PIN" else "Create Security PIN",
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White,
+                                fontSize = 15.sp
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(if (hasSecurityPin) PulseGreen.copy(alpha = 0.2f) else Color(0xFFF59E0B).copy(alpha = 0.2f))
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    if (hasSecurityPin) "ACTIVE" else "NOT SET",
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (hasSecurityPin) PulseGreen else Color(0xFFF59E0B)
+                                )
+                            }
                         }
 
                         Button(
                             onClick = {
                                 isEditingPin = !isEditingPin
+                                oldPinInput = ""
                                 newPinInput = ""
                                 confirmPinInput = ""
                                 pinErrorMessage = null
@@ -319,14 +346,23 @@ fun SettingsDialog(
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B)),
                             shape = RoundedCornerShape(8.dp)
                         ) {
-                            Text(if (isEditingPin) "Cancel" else "Change PIN", fontSize = 11.sp, color = PulseGreen, fontWeight = FontWeight.Bold)
+                            Text(
+                                if (isEditingPin) "Cancel" else if (hasSecurityPin) "Change PIN" else "Create PIN",
+                                fontSize = 11.sp,
+                                color = if (hasSecurityPin) PulseGreen else Color(0xFFF59E0B),
+                                fontWeight = FontWeight.Bold
+                            )
                         }
                     }
 
                     Spacer(modifier = Modifier.height(6.dp))
 
                     Text(
-                        text = "Protects your phone. When someone rings your phone via siren, this PIN is required to silence the alarm.",
+                        text = if (hasSecurityPin) {
+                            "Protects your phone. When someone rings your phone via siren, your PIN is required to silence the alarm."
+                        } else {
+                            "No PIN created yet. Without a PIN, the siren will not require security verification to silence. Create a PIN now to secure it."
+                        },
                         fontSize = 12.sp,
                         color = TextMuted
                     )
@@ -334,16 +370,38 @@ fun SettingsDialog(
                     if (!isEditingPin) {
                         Spacer(modifier = Modifier.height(8.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("Current PIN: ", fontSize = 12.sp, color = TextMuted)
-                            Text("••••", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = PulseGreen)
+                            Text("Status: ", fontSize = 12.sp, color = TextMuted)
+                            Text(
+                                if (hasSecurityPin) "•••• (PIN Protected)" else "Unprotected (No PIN)",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (hasSecurityPin) PulseGreen else Color(0xFFF59E0B)
+                            )
                         }
                     } else {
                         Spacer(modifier = Modifier.height(10.dp))
+
+                        // Only ask for Current PIN if a PIN was previously created!
+                        if (hasSecurityPin) {
+                            OutlinedTextField(
+                                value = oldPinInput,
+                                onValueChange = { if (it.all { c -> c.isDigit() } && it.length <= 6) oldPinInput = it },
+                                label = { Text("Current PIN") },
+                                placeholder = { Text("Enter existing PIN") },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                                visualTransformation = PasswordVisualTransformation(),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                        }
+
                         OutlinedTextField(
                             value = newPinInput,
                             onValueChange = { if (it.all { c -> c.isDigit() } && it.length <= 6) newPinInput = it },
-                            label = { Text("New 4-6 digit PIN") },
-                            placeholder = { Text("e.g. 1234") },
+                            label = { Text(if (hasSecurityPin) "New 4-6 digit PIN" else "Create 4-6 digit PIN") },
+                            placeholder = { Text("4-6 digits") },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
                             visualTransformation = PasswordVisualTransformation(),
@@ -356,7 +414,7 @@ fun SettingsDialog(
                         OutlinedTextField(
                             value = confirmPinInput,
                             onValueChange = { if (it.all { c -> c.isDigit() } && it.length <= 6) confirmPinInput = it },
-                            label = { Text("Confirm New PIN") },
+                            label = { Text(if (hasSecurityPin) "Confirm New PIN" else "Confirm PIN") },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
                             visualTransformation = PasswordVisualTransformation(),
@@ -376,19 +434,44 @@ fun SettingsDialog(
                                 if (newPinInput.length < 4) {
                                     pinErrorMessage = "PIN must be at least 4 digits"
                                 } else if (newPinInput != confirmPinInput) {
-                                    pinErrorMessage = "PINs do not match"
+                                    pinErrorMessage = "PIN and confirmation do not match"
                                 } else {
-                                    viewModel.setSecurityPin(newPinInput)
-                                    isEditingPin = false
-                                    pinErrorMessage = null
-                                    Toast.makeText(context, "Security PIN updated successfully!", Toast.LENGTH_SHORT).show()
+                                    if (hasSecurityPin) {
+                                        val result = viewModel.changeSecurityPin(oldPinInput, newPinInput)
+                                        if (!result.first) {
+                                            pinErrorMessage = result.second
+                                        } else {
+                                            isEditingPin = false
+                                            oldPinInput = ""
+                                            newPinInput = ""
+                                            confirmPinInput = ""
+                                            pinErrorMessage = null
+                                            Toast.makeText(context, result.second, Toast.LENGTH_SHORT).show()
+                                        }
+                                    } else {
+                                        val result = viewModel.createSecurityPin(newPinInput)
+                                        if (!result.first) {
+                                            pinErrorMessage = result.second
+                                        } else {
+                                            isEditingPin = false
+                                            newPinInput = ""
+                                            confirmPinInput = ""
+                                            pinErrorMessage = null
+                                            Toast.makeText(context, result.second, Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
                                 }
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = PulseGreen),
                             shape = RoundedCornerShape(10.dp),
                             modifier = Modifier.fillMaxWidth().height(42.dp)
                         ) {
-                            Text("Save Security PIN", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Text(
+                                if (hasSecurityPin) "Update Security PIN" else "Save & Activate PIN",
+                                color = Color.Black,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp
+                            )
                         }
                     }
                 }

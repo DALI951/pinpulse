@@ -178,6 +178,7 @@ fun MainScreen(
         ) {
             // Emergency Siren Active Banner (when phone is being rung)
             if (isSirenActive) {
+                val hasPin = viewModel.hasSecurityPin()
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -192,14 +193,29 @@ fun MainScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text("🔊 SIREN RINGING (MAX VOLUME)", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                            Text("Security PIN required to silence", color = Color.White.copy(alpha = 0.85f), fontSize = 11.sp)
+                            Text(
+                                if (hasPin) "Security PIN required to silence" else "Tap Stop to silence siren (No PIN required)",
+                                color = Color.White.copy(alpha = 0.85f),
+                                fontSize = 11.sp
+                            )
                         }
                         Button(
-                            onClick = { viewModel.showSirenPinDialog() },
+                            onClick = {
+                                if (hasPin) {
+                                    viewModel.showSirenPinDialog()
+                                } else {
+                                    viewModel.stopSirenDirectly(context)
+                                }
+                            },
                             colors = ButtonDefaults.buttonColors(containerColor = Color.White),
                             shape = RoundedCornerShape(8.dp)
                         ) {
-                            Text("🛑 STOP (PIN)", color = DangerRed, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            Text(
+                                if (hasPin) "🛑 STOP (PIN)" else "🛑 STOP SIREN",
+                                color = DangerRed,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp
+                            )
                         }
                     }
                 }
