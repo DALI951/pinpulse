@@ -470,6 +470,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // --- Authentication & Profile ---
 
+    fun signOut() {
+        prefs.clearSession()
+    }
+
     fun syncCloudBackup() {
         val me = prefs.loadCurrentUser() ?: return
         if (me.email.isBlank()) return

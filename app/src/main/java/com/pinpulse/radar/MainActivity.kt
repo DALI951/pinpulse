@@ -63,10 +63,10 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onNewIntent(intent: Intent?) {
+    override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        if (intent?.action == "SHOW_SIREN_PIN") {
+        if (intent.action == "SHOW_SIREN_PIN") {
             viewModel.showSirenPinDialog()
         }
     }
