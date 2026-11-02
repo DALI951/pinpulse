@@ -423,6 +423,32 @@
       background: #2563eb;
     }
 
+    .siren-btn {
+      width: 100%;
+      background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+      color: #fff;
+      border: none;
+      padding: 12px;
+      border-radius: 12px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      margin-top: 8px;
+      box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
+      transition: all 0.2s;
+    }
+    .siren-btn:hover {
+      background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+      transform: translateY(-1px);
+    }
+    .siren-btn:active {
+      transform: translateY(1px);
+    }
+
     /* Leaflet custom marker */
     .pinpulse-marker {
       background: transparent;
@@ -673,6 +699,9 @@
       <a id="m-nav-link" href="#" target="_blank" class="nav-btn">
         🚀 Open in Google Maps Turn-by-Turn
       </a>
+      <button class="siren-btn" id="m-ring-btn" onclick="ringSelectedUser()">
+        🔊 Ring Phone (Emergency Siren)
+      </button>
       <button class="modal-remove-btn" id="m-remove-btn" onclick="toggleRemoveSelected()">✕ Remove from map</button>
     </div>
   </div>
@@ -809,6 +838,8 @@
         client.subscribe('pinpulse/v1/user/+/loc', function(err) {
           if (!err) console.log('Subscribed to all users worldwide on pinpulse/v1/user/+/loc');
         });
+        client.subscribe('pinpulse/v1/user/+/status', function(err) {});
+        client.subscribe('pinpulse/v1/alerts/+', function(err) {});
       });
 
       client.on('error', function(err) {
@@ -820,11 +851,48 @@
       client.on('message', function(topic, payload) {
         try {
           var data = JSON.parse(payload.toString());
-          handleUserPacket(data);
+          if (topic.indexOf('/status') !== -1) {
+            handleStatusUpdate(data);
+          } else {
+            handleUserPacket(data);
+          }
         } catch (e) {
           console.error('Parse error:', e);
         }
       });
+    }
+
+    function ringSelectedUser() {
+      if (!selectedUserId || !client || !client.connected) {
+        alert("Please select a live user on the map to trigger the siren.");
+        return;
+      }
+      var u = getUser(selectedUserId);
+      var payload = JSON.stringify({
+        type: "RING_PHONE",
+        callerName: "Web Radar Commander",
+        timestamp: Date.now()
+      });
+      client.publish("pinpulse/v1/ring/" + selectedUserId, payload, { qos: 1 }, function(err) {
+        if (!err) {
+          alert("🔊 Emergency siren activated on " + (u ? u.name : "target") + "'s phone!");
+        } else {
+          alert("Failed to send siren signal: " + err.message);
+        }
+      });
+    }
+
+    function handleStatusUpdate(data) {
+      if (!data || !data.userId) return;
+      var id = data.userId;
+      if (users[id]) {
+        if (data.status === 'OFFLINE' || data.type === 'PHONE_OFFLINE' || data.type === 'PHONE_SHUTDOWN') {
+          users[id].isSharing = false;
+          updateMarker(users[id]);
+          renderUserList();
+          if (selectedUserId === id) showUserModal(users[id]);
+        }
+      }
     }
 
     function handleUserPacket(data) {

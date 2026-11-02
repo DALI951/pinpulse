@@ -72,11 +72,13 @@ class RealtimeService private constructor(private val context: Context) {
                 val clientId = "pinpulse_" + user.id + "_" + System.currentTimeMillis().toString().takeLast(5)
                 client = MqttClient(BROKER_URL, clientId, MemoryPersistence())
 
+                val lwtPayload = """{"userId":"${user.id}","senderId":"${user.id}","name":"${user.displayName}","senderName":"${user.displayName}","status":"OFFLINE","type":"PHONE_OFFLINE","timestamp":${System.currentTimeMillis()},"message":"⚠️ ${user.displayName}'s phone lost connection / went offline."}"""
                 val options = MqttConnectOptions().apply {
                     isAutomaticReconnect = true
                     isCleanSession = true
                     connectionTimeout = 10
                     keepAliveInterval = 30
+                    setWill("pinpulse/v1/user/${user.id}/status", lwtPayload.toByteArray(StandardCharsets.UTF_8), 1, true)
                 }
 
                 client?.setCallback(object : MqttCallbackExtended {
@@ -110,11 +112,13 @@ class RealtimeService private constructor(private val context: Context) {
         try {
             val clientId = "pinpulse_bk_" + user.id + "_" + System.currentTimeMillis().toString().takeLast(5)
             client = MqttClient(BACKUP_BROKER_URL, clientId, MemoryPersistence())
+            val lwtPayload = """{"userId":"${user.id}","senderId":"${user.id}","name":"${user.displayName}","senderName":"${user.displayName}","status":"OFFLINE","type":"PHONE_OFFLINE","timestamp":${System.currentTimeMillis()},"message":"⚠️ ${user.displayName}'s phone lost connection / went offline."}"""
             val options = MqttConnectOptions().apply {
                 isAutomaticReconnect = true
                 isCleanSession = true
                 connectionTimeout = 10
                 keepAliveInterval = 30
+                setWill("pinpulse/v1/user/${user.id}/status", lwtPayload.toByteArray(StandardCharsets.UTF_8), 1, true)
             }
             client?.connect(options)
             resubscribeUserChannels(user)
@@ -128,16 +132,21 @@ class RealtimeService private constructor(private val context: Context) {
         subscribe("pinpulse/v1/user/${user.id}/loc")
         subscribe("pinpulse/v1/direct/${user.id}")
         subscribe("pinpulse/v1/alerts/${user.id}")
+        subscribe("pinpulse/v1/ring/${user.id}")
 
         // 2. CRITICAL: Subscribe to messages and invites sent to Friend Code!
         subscribe("pinpulse/v1/code/${user.friendCode}")
         subscribe("pinpulse/v1/invites/${user.friendCode}")
         subscribe("pinpulse/v1/alerts/${user.friendCode}")
+        subscribe("pinpulse/v1/ring/${user.friendCode}")
 
-        // 3. Register user profile as retained message for code lookups
+        // 3. Register user profile as retained message for code lookups & publish online status
         val registryPayload = gson.toJson(user)
         publishRetained("pinpulse/v1/registry/code/${user.friendCode}", registryPayload)
         publishRetained("pinpulse/v1/registry/user/${user.id}", registryPayload)
+
+        val onlinePayload = """{"userId":"${user.id}","senderId":"${user.id}","name":"${user.displayName}","senderName":"${user.displayName}","status":"ONLINE","type":"PHONE_ONLINE","timestamp":${System.currentTimeMillis()}}"""
+        publishRetained("pinpulse/v1/user/${user.id}/status", onlinePayload)
 
         // 4. Resubscribe to existing dynamically added topics
         synchronized(subscribedTopics) {
@@ -232,10 +241,29 @@ class RealtimeService private constructor(private val context: Context) {
         publishRetained(topic, accountJson)
     }
 
+    fun sendRingCommand(targetUserId: String, targetFriendCode: String, callerName: String) {
+        val payload = """{"type":"RING_PHONE","callerName":"$callerName","timestamp":${System.currentTimeMillis()}}"""
+        if (targetUserId.isNotBlank()) {
+            publish("pinpulse/v1/ring/$targetUserId", payload)
+        }
+        if (targetFriendCode.isNotBlank()) {
+            publish("pinpulse/v1/ring/$targetFriendCode", payload)
+        }
+    }
+
     private fun handleIncomingMessage(topic: String, payload: String) {
         scope.launch {
             try {
                 when {
+                    topic.contains("/ring/") || payload.contains("\"RING_PHONE\"") -> {
+                        try {
+                            val map = gson.fromJson(payload, Map::class.java)
+                            val caller = map["callerName"]?.toString() ?: "A friend"
+                            com.pinpulse.radar.util.SirenHelper.ring(context, caller)
+                        } catch (e: Exception) {
+                            com.pinpulse.radar.util.SirenHelper.ring(context, "A friend")
+                        }
+                    }
                     topic.contains("/loc") -> {
                         val packet = gson.fromJson(payload, LocationPacket::class.java)
                         _locationUpdates.emit(packet)
@@ -248,9 +276,21 @@ class RealtimeService private constructor(private val context: Context) {
                         val group = gson.fromJson(payload, Group::class.java)
                         _groupUpdates.emit(group)
                     }
-                    topic.contains("/alerts/") -> {
-                        val alert = gson.fromJson(payload, AlertMessage::class.java)
-                        _alerts.emit(alert)
+                    topic.contains("/alerts/") || (topic.endsWith("/status") && payload.contains("PHONE_OFFLINE")) -> {
+                        try {
+                            val alert = gson.fromJson(payload, AlertMessage::class.java)
+                            _alerts.emit(alert)
+                        } catch (e: Exception) {
+                            val map = gson.fromJson(payload, Map::class.java)
+                            val senderName = map["senderName"]?.toString() ?: map["name"]?.toString() ?: "Friend"
+                            val alert = AlertMessage(
+                                senderId = map["userId"]?.toString() ?: map["senderId"]?.toString() ?: "",
+                                senderName = senderName,
+                                type = "PHONE_OFFLINE",
+                                message = "⚠️ $senderName's phone lost connection / went offline."
+                            )
+                            _alerts.emit(alert)
+                        }
                     }
                     else -> {
                         _rawMessages.emit(Pair(topic, payload))

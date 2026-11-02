@@ -158,4 +158,29 @@ To guarantee you can always install new APK updates directly on top of an alread
    - Retained cloud account backup on `pinpulse/v1/accounts/{email}/backup`.
    - On reinstall, entering the same email immediately downloads their retained account backup and restores their complete friends list, groups, and avatar in under 1 second.
 
+---
+
+## 12. Remote Siren, Shutdown Alerts, 24/7 Background Persistence & Installation Fix (v0.8)
+
+1. **Resolution of "App not installed" on Android Devices:**
+   - Overrode OSMDroid's library manifest restrictions that limited screen sizes (`smallScreens="false"`) and forced hardware telephony.
+   - Explicitly added universal `<supports-screens>` (`smallScreens="true"`, `normalScreens="true"`, `largeScreens="true"`, `xlargeScreens="true"`, `anyDensity="true"` with `tools:node="replace"`).
+   - Set all hardware requirements (`telephony`, `gps`, `network`, `wifi`) to `required="false"`.
+   - Enabled APK Signature Scheme **v3** (`enableV3Signing = true`) alongside v1 and v2 for flawless package verification across all Android versions (Android 8 to 14+).
+
+2. **Remote Phone Ring / Siren Feature:**
+   - Ring any person's phone directly from the Android app (via Person Details sheet) or from the Web Radar.
+   - Siren uses `AudioManager.STREAM_ALARM` with maximum volume override and vibration pattern, bypassing Do Not Disturb / Silent mode.
+   - Displays a high-priority Heads-Up Notification with a direct "🛑 STOP SIREN" action button, and automatically silences after 30 seconds.
+
+3. **Instant Phone Shutdown & Disconnection Alerts:**
+   - Broadcast receiver catches `ACTION_SHUTDOWN` and `QUICKBOOT_POWEROFF` to immediately broadcast an alert to all friends and circle groups before power off.
+   - Integrated MQTT Last Will and Testament (LWT) on `pinpulse/v1/user/{id}/status`: if the phone abruptly dies, runs out of battery, or loses connection, the broker automatically publishes `PHONE_OFFLINE` to friends and group leaders.
+
+4. **Restored 24/7 Background Tracking & Battery Optimization Whitelist:**
+   - Prompts the user to ignore battery optimizations when permissions are granted so Android does not kill or throttle the service when the app is closed or phone is locked.
+   - Added an in-app reminder banner if battery restrictions are active.
+   - Added `onTaskRemoved` auto-restart in `LocationTrackingService` to guarantee the tracking service persists even if the user swipes away the app from recent apps.
+
+
 

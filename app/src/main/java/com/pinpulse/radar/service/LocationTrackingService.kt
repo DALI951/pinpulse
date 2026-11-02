@@ -325,6 +325,29 @@ class LocationTrackingService : Service() {
         }
     }
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        val currentUser = prefs.loadCurrentUser()
+        if (currentUser?.isSharingLocation == true) {
+            val restartServiceIntent = Intent(applicationContext, LocationTrackingService::class.java).apply {
+                setPackage(packageName)
+                action = ACTION_START
+            }
+            val restartPendingIntent = PendingIntent.getService(
+                applicationContext,
+                1,
+                restartServiceIntent,
+                PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val alarmManager = getSystemService(Context.ALARM_SERVICE) as? android.app.AlarmManager
+            alarmManager?.set(
+                android.app.AlarmManager.RTC,
+                System.currentTimeMillis() + 1000L,
+                restartPendingIntent
+            )
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         try {

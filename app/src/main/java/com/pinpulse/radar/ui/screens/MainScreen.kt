@@ -113,6 +113,7 @@ fun MainScreen(
         val coarseGranted = permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
         if (fineGranted || coarseGranted) {
             (context as? com.pinpulse.radar.MainActivity)?.fetchImmediateLocation()
+            (context as? com.pinpulse.radar.MainActivity)?.requestBatteryOptimizationExemption()
             com.pinpulse.radar.service.LocationTrackingService.start(context)
         }
     }
@@ -126,6 +127,7 @@ fun MainScreen(
             permissions.add(Manifest.permission.POST_NOTIFICATIONS)
         }
         locationPermissionLauncher.launch(permissions.toTypedArray())
+        (context as? com.pinpulse.radar.MainActivity)?.requestBatteryOptimizationExemption()
     }
 
     Box(
@@ -190,6 +192,41 @@ fun MainScreen(
                         label = group.name,
                         isSelected = isGroupSelected,
                         onClick = { viewModel.setFilter(MapFilter.GroupFilter(group)) }
+                    )
+                }
+            }
+
+            var isBatteryIgnored by remember {
+                mutableStateOf(
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+                        pm?.isIgnoringBatteryOptimizations(context.packageName) ?: true
+                    } else true
+                )
+            }
+
+            if (!isBatteryIgnored) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 4.dp)
+                        .background(Color(0xFF3B2508), RoundedCornerShape(10.dp))
+                        .border(1.dp, Color(0xFFD97706), RoundedCornerShape(10.dp))
+                        .clickable {
+                            (context as? com.pinpulse.radar.MainActivity)?.requestBatteryOptimizationExemption()
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                                val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+                                isBatteryIgnored = pm?.isIgnoringBatteryOptimizations(context.packageName) ?: true
+                            }
+                        }
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                ) {
+                    Text(
+                        text = "⚡ 24/7 Background Tracking: Tap to disable battery restrictions so you stay online when app is closed.",
+                        color = Color(0xFFFDE68A),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        lineHeight = 15.sp
                     )
                 }
             }

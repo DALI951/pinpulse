@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.BatteryFull
 import androidx.compose.material.icons.filled.Directions
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Navigation
+import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.PersonRemove
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Visibility
@@ -263,6 +264,32 @@ fun PersonDetailSheet(
                     Text(
                         text = "Go to ${targetUser.displayName} (Google Maps)",
                         fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+            }
+
+            // REMOTE SIREN / RING PHONE BUTTON
+            if (!isSelf) {
+                Button(
+                    onClick = { viewModel.ringPersonPhone(targetUser) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD97706)),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Icon(
+                        Icons.Default.NotificationsActive,
+                        contentDescription = "Ring Phone",
+                        tint = Color.White
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = "🔊 Ring Phone (Emergency Siren)",
+                        fontSize = 14.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color.White
                     )

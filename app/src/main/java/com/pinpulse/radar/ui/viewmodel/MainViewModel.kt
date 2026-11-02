@@ -133,12 +133,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        // Observe incoming alerts (e.g. someone turned off their location)
+        // Observe incoming alerts (e.g. someone turned off their location, shutdown, offline)
         viewModelScope.launch {
             realtime.alerts.collect { alert ->
                 _activeAlert.value = alert
-                // Auto dismiss banner after 6 seconds
-                delay(6000)
+                if (alert.type == "PHONE_SHUTDOWN" || alert.type == "PHONE_OFFLINE" || alert.type == "LOCATION_OFF") {
+                    val currentFriends = prefs.loadFriends().toMutableList()
+                    val idx = currentFriends.indexOfFirst { it.id == alert.senderId }
+                    if (idx >= 0) {
+                        currentFriends[idx] = currentFriends[idx].copy(isSharingLocation = false)
+                        prefs.saveFriends(currentFriends)
+                    }
+                }
+                // Auto dismiss banner after 7 seconds
+                delay(7000)
                 if (_activeAlert.value?.id == alert.id) {
                     _activeAlert.value = null
                 }
@@ -190,6 +198,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             // Resubscribe to existing friends
             prefs.loadFriends().forEach { f ->
                 realtime.subscribe("pinpulse/v1/user/${f.id}/loc")
+                realtime.subscribe("pinpulse/v1/user/${f.id}/status")
             }
             if (user.isSharingLocation) {
                 LocationTrackingService.start(application)
@@ -319,6 +328,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (friend != null) {
                     prefs.addOrUpdateFriend(friend)
                     realtime.subscribe("pinpulse/v1/user/${friend.id}/loc")
+                    realtime.subscribe("pinpulse/v1/user/${friend.id}/status")
                     syncCloudBackup()
                 }
             } else if (payload.contains("\"type\":\"JOIN_GROUP\"")) {
@@ -520,6 +530,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setMapStyle(style: String) {
         prefs.setMapStyle(style)
+    }
+
+    fun ringPersonPhone(targetUser: User) {
+        val me = prefs.loadCurrentUser()
+        val callerName = me?.displayName ?: "Friend"
+        realtime.sendRingCommand(targetUser.id, targetUser.friendCode, callerName)
+        _activeAlert.value = AlertMessage(
+            senderId = me?.id ?: "",
+            senderName = callerName,
+            type = "RING_SENT",
+            message = "🔊 Siren alert sent to ${targetUser.displayName}'s phone!"
+        )
     }
 
     fun dismissAlert() {
