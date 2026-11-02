@@ -262,17 +262,17 @@ private fun createSelfDotBitmap(context: Context, isLive: Boolean): Bitmap {
     // Outer subtle glow halo
     paint.style = Paint.Style.FILL
     paint.color = if (isLive) 0x553B82F6.toInt() else 0x3364748B.toInt()
-    canvas.drawCircle(center, center - (1 * density), paint)
+    canvas.drawCircle(center, center, (center - (1f * density)).coerceAtLeast(1f), paint)
 
     // Solid core dot
     paint.color = if (isLive) 0xFF3B82F6.toInt() else 0xFF64748B.toInt()
-    canvas.drawCircle(center, 6.5f * density, paint)
+    canvas.drawCircle(center, center, 6.5f * density, paint)
 
     // Crisp white border
     paint.color = Color.WHITE
     paint.style = Paint.Style.STROKE
     paint.strokeWidth = 2f * density
-    canvas.drawCircle(center, 6.5f * density, paint)
+    canvas.drawCircle(center, center, 6.5f * density, paint)
 
     return bitmap
 }
