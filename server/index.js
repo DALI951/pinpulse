@@ -54,13 +54,27 @@ app.post('/api/users/register', (req, res) => {
     return res.status(400).json({ error: 'Missing id or friendCode' });
   }
 
-  const existing = db.users[id] || {};
+  const cleanCode = friendCode.toUpperCase();
+  const cleanEmail = (email || '').trim().toLowerCase();
+
+  // Deduplicate: if an older userId exists for the same email or friendCode, migrate its subscription & delete old duplicate
+  let prevDup = {};
+  const oldIdByEmail = cleanEmail ? db.emails[cleanEmail] : null;
+  const oldIdByCode = db.codes[cleanCode];
+  [oldIdByEmail, oldIdByCode].forEach(oldId => {
+    if (oldId && oldId !== id && db.users[oldId]) {
+      prevDup = Object.assign({}, db.users[oldId], prevDup);
+      delete db.users[oldId];
+    }
+  });
+
+  const existing = Object.assign({}, prevDup, db.users[id] || {});
   const now = Date.now();
   const user = {
     id,
     email: email || existing.email || '',
     displayName: displayName || existing.displayName || 'User',
-    friendCode: friendCode.toUpperCase(),
+    friendCode: cleanCode,
     avatarBase64: avatarBase64 || existing.avatarBase64 || null,
     subscriptionPlan: existing.subscriptionPlan || 'DEMO',
     accountStatus: existing.accountStatus || 'ACTIVE',

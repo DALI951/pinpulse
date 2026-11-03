@@ -59,17 +59,23 @@ data class User(
             (if (subscriptionStartAt > 1_000_000_000_000L) subscriptionStartAt else System.currentTimeMillis()) + 7L * 24L * 3600L * 1000L
         }
 
+    val isLifetime: Boolean
+        get() = effectiveExpiresAt >= 3_000_000_000_000L || subscriptionPlan.equals("LIFETIME", ignoreCase = true)
+
     val remainingSubscriptionMs: Long
         get() = (effectiveExpiresAt - System.currentTimeMillis()).coerceAtLeast(0L)
 
     val remainingDaysCount: Int
-        get() = kotlin.math.ceil(remainingSubscriptionMs.toDouble() / (24.0 * 3600.0 * 1000.0)).toInt()
+        get() = if (isLifetime) 99999 else kotlin.math.ceil(remainingSubscriptionMs.toDouble() / (24.0 * 3600.0 * 1000.0)).toInt()
 
     val isSubscriptionExpired: Boolean
-        get() = accountStatus.equals("EXPIRED", ignoreCase = true) || remainingSubscriptionMs <= 0L
+        get() = !isLifetime && (accountStatus.equals("EXPIRED", ignoreCase = true) || remainingSubscriptionMs <= 0L)
 
     val remainingTimeFormatted: String
         get() {
+            if (isLifetime && accountStatus.equals("ACTIVE", ignoreCase = true)) {
+                return "♾️ Lifetime Access"
+            }
             val ms = remainingSubscriptionMs
             if (ms <= 0L || accountStatus.equals("EXPIRED", ignoreCase = true)) return "Expired (0d left)"
             val totalHours = ms / (3600L * 1000L)
@@ -77,6 +83,7 @@ data class User(
             val hours = totalHours % 24L
             val mins = (ms / (60L * 1000L)) % 60L
             return when {
+                days >= 3650 -> "♾️ Lifetime Access"
                 days > 0 -> "${days}d ${hours}h left"
                 hours > 0 -> "${hours}h ${mins}m left"
                 else -> "${mins.coerceAtLeast(1)}m left"
@@ -84,10 +91,12 @@ data class User(
         }
 
     val planDisplayName: String
-        get() = when (subscriptionPlan.uppercase()) {
-            "FAMILY" -> "Family Pack"
-            "BUSINESS" -> "Business Pack"
-            "CUSTOM" -> "Custom Enterprise"
+        get() = when {
+            isLifetime && subscriptionPlan.uppercase() == "DEMO" -> "Lifetime Pack ♾️"
+            isLifetime -> "${subscriptionPlan.uppercase()} • Lifetime ♾️"
+            subscriptionPlan.uppercase() == "FAMILY" -> "Family Pack"
+            subscriptionPlan.uppercase() == "BUSINESS" -> "Business Pack"
+            subscriptionPlan.uppercase() == "CUSTOM" -> "Custom Enterprise"
             else -> "Demo Pack (7-Day Free)"
         }
 
