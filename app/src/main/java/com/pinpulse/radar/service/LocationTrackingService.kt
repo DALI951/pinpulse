@@ -38,6 +38,7 @@ import com.pinpulse.radar.data.AppPreferences
 import com.pinpulse.radar.data.RealtimeService
 import com.pinpulse.radar.model.AlertMessage
 import com.pinpulse.radar.model.LocationPacket
+import com.pinpulse.radar.model.User
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
