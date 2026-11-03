@@ -750,7 +750,6 @@ class LocationTrackingService : Service() {
             } catch (e: Exception) {}
         }
 
-        val currentUser = prefs.loadCurrentUser()
         val hasNoCoordinatesYet = currentUser == null || (currentUser.latitude == 0.0 && currentUser.longitude == 0.0)
         val nowRealtime = SystemClock.elapsedRealtime()
         val pollIntervalMs = if (hasNoCoordinatesYet) 10_000L else 45_000L
