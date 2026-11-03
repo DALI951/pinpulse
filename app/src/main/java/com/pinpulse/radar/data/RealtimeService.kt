@@ -365,7 +365,8 @@ class RealtimeService private constructor(private val context: Context) {
 
     fun publishLocation(packet: LocationPacket, force: Boolean = false) {
         val statusUpper = packet.accountStatus.uppercase()
-        if (!force && (statusUpper == "BANNED" || statusUpper == "DEACTIVATED" || statusUpper == "DELETED")) {
+        val isExpired = statusUpper == "EXPIRED" || (packet.subscriptionExpiresAt in 1 until System.currentTimeMillis() && packet.subscriptionExpiresAt < 3_000_000_000_000L)
+        if (!force && (statusUpper == "BANNED" || statusUpper == "DEACTIVATED" || statusUpper == "DELETED" || isExpired)) {
             return
         }
         val rateSec = packet.rateLimitSec.coerceIn(1, 300)

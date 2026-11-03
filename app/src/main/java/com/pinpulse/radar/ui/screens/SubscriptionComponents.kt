@@ -400,22 +400,23 @@ fun AccountLockScreen(
     user: User,
     onSignOut: () -> Unit
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     val statusUpper = user.accountStatus.uppercase()
     val isBanned = statusUpper == "BANNED"
     val isDeactivated = statusUpper == "DEACTIVATED"
-    val isExpired = user.isSubscriptionExpired
+    val isExpired = user.isSubscriptionExpired || statusUpper == "EXPIRED"
 
     val title = when {
         isBanned -> "🚫 Account Suspended"
         isDeactivated -> "⏸️ Account Deactivated — Payment Required"
         isExpired -> "⌛ ${user.planDisplayName} Expired"
-        else -> "🔒 Account Locked"
+        else -> "🔒 Account Cut Off"
     }
 
     val description = when {
-        isBanned -> "Your PinPulse account has been banned by the administrator. Access to the live radar and circle features is disabled."
-        isDeactivated -> "Your account is currently deactivated pending subscription payment. As soon as the administrator confirms your payment, your app will unlock automatically in real time."
-        else -> "Your ${user.planDisplayName} free trial or subscription period has ended (0 days remaining). Please upgrade to the Family Pack (10 Friends, 2 Groups), Business Pack (50 Friends, 10 Groups), or Custom Plan to continue."
+        isBanned -> "Your PinPulse account has been suspended by the administrator. Your live radar is cut off, nobody can see your location, and all features (Map, Friends, Groups, SOS) are disabled."
+        isDeactivated -> "Your account is currently deactivated pending subscription payment. Your radar is cut off and nobody can see you until your plan is activated."
+        else -> "Your ${user.planDisplayName} has expired (0 days left). Your radar is currently cut off — you cannot use the map, add friends, join groups, or send SOS alerts, and nobody can see your location until you upgrade."
     }
 
     Box(
@@ -423,7 +424,7 @@ fun AccountLockScreen(
             .fillMaxSize()
             .background(RadarDarkBg)
             .systemBarsPadding()
-            .padding(24.dp),
+            .padding(16.dp),
         contentAlignment = Alignment.Center
     ) {
         Card(
@@ -437,48 +438,100 @@ fun AccountLockScreen(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(24.dp),
+                    .padding(20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
                     text = title,
                     color = Color.White,
-                    fontSize = 21.sp,
+                    fontSize = 20.sp,
                     fontWeight = FontWeight.ExtraBold,
                     textAlign = TextAlign.Center
                 )
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(8.dp))
                 Text(
                     text = description,
-                    color = TextSecondary,
-                    fontSize = 13.sp,
+                    color = Color(0xFFFCA5A5),
+                    fontSize = 12.sp,
                     textAlign = TextAlign.Center,
-                    lineHeight = 19.sp
+                    lineHeight = 18.sp
                 )
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(14.dp))
 
-                Column(
+                // User Identity & Copy Code Box
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(Color(0xFF131D31), RoundedCornerShape(12.dp))
-                        .border(1.dp, RadarCardBorder, RoundedCornerShape(12.dp))
-                        .padding(14.dp)
+                        .background(Color(0xFF131D31), RoundedCornerShape(14.dp))
+                        .border(1.dp, RadarCardBorder, RoundedCornerShape(14.dp))
+                        .padding(14.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Account Name: ${user.displayName}", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                    Text("Email: ${user.email}", color = TextSecondary, fontSize = 12.sp)
-                    Text("Friend Code: ${user.friendCode}", color = PulseGreen, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                    Text("Current Pack: ${user.planDisplayName}", color = Color(0xFFFBBF24), fontSize = 12.sp)
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(user.displayName, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
+                        Text(user.email, color = TextSecondary, fontSize = 11.sp)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text("Friend Code: ${user.friendCode}", color = PulseGreen, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
+                    }
+                    Button(
+                        onClick = {
+                            val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                            clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Friend Code", user.friendCode))
+                            android.widget.Toast.makeText(context, "Friend Code copied!", android.widget.Toast.LENGTH_SHORT).show()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = RadarBlue),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Copy Code", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
+
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = "CHOOSE A PLAN TO UNLOCK YOUR RADAR",
+                    color = TextPrimary,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.ExtraBold
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+
+                PlanTierCard(
+                    title = "👨‍👩‍👧‍👦 Pack Family",
+                    price = "10 Friends • 2 Groups • 30 Days",
+                    features = "• Add up to 10 Friends & 2 Family/Circle Groups\n• Full 24/7 Live GPS Radar & 15-Minute Movement Trails\n• Emergency SOS Siren, Vibration & Push Notifications",
+                    isCurrent = false,
+                    accentColor = PulseGreen
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                PlanTierCard(
+                    title = "🏢 Pack Business",
+                    price = "50 Friends • 10 Groups • 30 Days",
+                    features = "• Add up to 50 Friends / Team / Fleet Units\n• Create or join up to 10 Groups\n• High-frequency 2s–3s Live Telemetry & Fleet SOS",
+                    isCurrent = false,
+                    accentColor = RadarBlue
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                PlanTierCard(
+                    title = "⚡ Custom Enterprise / ♾️ Lifetime",
+                    price = "100+ Users • Custom Quotas or Lifetime Access",
+                    features = "• Custom Friends & Fleet Capacity (100+ users)\n• Optional Permanent Lifetime Activation (Never Expires)\n• Instant remote activation via your Friend Code",
+                    isCurrent = false,
+                    accentColor = Color(0xFFA855F7)
+                )
 
                 Spacer(modifier = Modifier.height(14.dp))
                 Text(
-                    text = "Share your Friend Code (${user.friendCode}) or Email with the administrator to activate or renew your subscription. This screen unlocks automatically as soon as your plan is updated.",
+                    text = "Send your Friend Code (${user.friendCode}) or Email (${user.email}) to the administrator to activate your chosen plan. Your app will unlock automatically in real time!",
                     color = TextMuted,
                     fontSize = 11.sp,
-                    textAlign = TextAlign.Center
+                    textAlign = TextAlign.Center,
+                    lineHeight = 16.sp
                 )
 
-                Spacer(modifier = Modifier.height(18.dp))
+                Spacer(modifier = Modifier.height(14.dp))
                 OutlinedButton(
                     onClick = onSignOut,
                     modifier = Modifier.fillMaxWidth(),

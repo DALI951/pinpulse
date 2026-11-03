@@ -119,17 +119,30 @@ fun MainScreen(
     var showSosDialog by remember { mutableStateOf(false) }
     var centerTarget by remember { mutableStateOf<User?>(null) }
 
-    // Enforce Account Status & Subscription Expiry Lock Screen
-    val meUser = currentUser
-    if (meUser != null) {
-        val statusUpper = meUser.accountStatus.uppercase()
-        if (statusUpper == "BANNED" || statusUpper == "DEACTIVATED" || meUser.isSubscriptionExpired) {
-            AccountLockScreen(
-                user = meUser,
-                onSignOut = { viewModel.signOut() }
-            )
-            return
+    var nowTick by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(1000L)
+            nowTick = System.currentTimeMillis()
         }
+    }
+
+    // Enforce Account Status & Subscription Expiry Lock Screen (blocks entire app & cuts off user from radar)
+    val meUser = currentUser
+    val isCutOff = remember(meUser, nowTick) { meUser?.isAccountCutOff == true }
+    if (meUser != null && isCutOff) {
+        LaunchedEffect(meUser.id, meUser.accountStatus, meUser.subscriptionExpiresAt) {
+            showSosDialog = false
+            showProfileDialog = false
+            showSettingsDialog = false
+            viewModel.clearSelectedPerson()
+            viewModel.cutOffExpiredOrLockedAccount()
+        }
+        AccountLockScreen(
+            user = meUser,
+            onSignOut = { viewModel.signOut() }
+        )
+        return
     }
 
     val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current

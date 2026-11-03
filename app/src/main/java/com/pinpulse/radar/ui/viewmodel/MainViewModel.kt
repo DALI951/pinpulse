@@ -165,7 +165,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
-        allUsers.distinctBy { it.id }
+        allUsers.distinctBy { it.id }.filterNot { it.id != me?.id && it.isAccountCutOff }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     init {
@@ -984,6 +984,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun ringPersonPhone(targetUser: User) {
         val me = prefs.loadCurrentUser()
+        if (me?.isAccountCutOff == true) {
+            notifyPlanLimitBlocked("Your plan has expired. Upgrade your plan to ring friends.")
+            return
+        }
         val callerName = me?.displayName ?: "Friend"
         realtime.sendRingCommand(targetUser.id, targetUser.friendCode, callerName)
         _activeAlert.value = AlertMessage(
@@ -1013,6 +1017,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun triggerSosEmergencyBroadcast() {
         val me = prefs.loadCurrentUser() ?: return
+        if (me.isAccountCutOff) {
+            notifyPlanLimitBlocked("Your plan has expired. Upgrade your plan to send SOS emergency broadcasts.")
+            return
+        }
         val batteryInfo = LocationTrackingService.getBatteryInfo(app)
         val lat = me.latitude
         val lng = me.longitude
@@ -1144,9 +1152,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Completely cuts off an expired, banned, deactivated, or locked user from the live radar.
+     * Stops location tracking, clears retained location on MQTT, and publishes offline status
+     * so that nobody can see their location pin on the map.
+     */
+    fun cutOffExpiredOrLockedAccount() {
+        val me = prefs.loadCurrentUser() ?: return
+        LocationTrackingService.stop(app)
+
+        realtime.publishRetained("pinpulse/v1/user/${me.id}/loc", "")
+        val offlinePayload = gson.toJson(mapOf(
+            "type" to "PHONE_OFFLINE",
+            "status" to "OFFLINE",
+            "userId" to me.id,
+            "accountStatus" to if (me.isSubscriptionExpired) "EXPIRED" else me.accountStatus,
+            "isGpsEnabled" to false,
+            "isSharingLocation" to false,
+            "statusMessage" to "🔒 Plan Expired / Cut Off",
+            "timestamp" to System.currentTimeMillis()
+        ))
+        realtime.publishRetained("pinpulse/v1/user/${me.id}/status", offlinePayload, qosLevel = 1)
+        realtime.publish("pinpulse/v1/user/${me.id}/status", offlinePayload, qosLevel = 1)
+        realtime.publish("pinpulse/v1/network/live", offlinePayload, qosLevel = 0)
+    }
+
     fun canAddMoreFriends(): Pair<Boolean, String> {
         val me = prefs.loadCurrentUser() ?: return Pair(false, "Please sign in first.")
-        if (me.isSubscriptionExpired) {
+        if (me.isAccountCutOff) {
             return Pair(false, "Your ${me.planDisplayName} has expired (0 days left). Please renew or upgrade your plan!")
         }
         val currentCount = prefs.loadFriends().size
@@ -1163,7 +1196,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun canJoinOrCreateGroup(): Pair<Boolean, String> {
         val me = prefs.loadCurrentUser() ?: return Pair(false, "Please sign in first.")
-        if (me.isSubscriptionExpired) {
+        if (me.isAccountCutOff) {
             return Pair(false, "Your ${me.planDisplayName} has expired (0 days left). Please renew or upgrade your plan!")
         }
         val currentCount = prefs.loadGroups().size
@@ -1410,13 +1443,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val actualIsEmail = isEmail || rawInput.contains("@")
         val found = if (actualIsEmail) lookupUserByEmail(rawInput) else lookupUserByCode(rawInput)
 
-        // Block sending a friend request if the requested friend has already reached their own plan limit!
-        if (found != null && (found.friendsCount >= found.maxFriends || found.isSubscriptionExpired)) {
+        // Block sending a friend request if the requested friend has already reached their own plan limit or is expired!
+        if (found != null && (found.friendsCount >= found.maxFriends || found.isAccountCutOff)) {
+            val reason = if (found.isAccountCutOff) {
+                "Requested friend (${found.displayName})'s plan has expired. Tell them to renew or upgrade their plan!"
+            } else {
+                "Requested friend (${found.displayName}) is out of limit (${found.friendsCount}/${found.maxFriends} friends on ${found.planDisplayName}). Tell them to upgrade their plan!"
+            }
             _activeAlert.value = AlertMessage(
                 senderId = "system",
-                senderName = "Requested Friend Out of Limit",
+                senderName = "Friend Request Blocked",
                 type = "FRIEND_LIMIT_REACHED",
-                message = "🔒 Requested friend (${found.displayName}) is out of limit (${found.friendsCount}/${found.maxFriends} friends on ${found.planDisplayName}). Tell them to upgrade their plan!"
+                message = "🔒 $reason"
             )
             return
         }

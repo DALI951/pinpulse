@@ -1473,6 +1473,9 @@
       <button class="btn-admin" id="btn-view-crm" onclick="switchMainWorkspaceView('crm')">
         💼 Users & Subscriptions CRM
       </button>
+      <a class="btn-admin accent-btn" href="simulator.html" target="_blank" style="text-decoration:none; border-color:#a855f7; color:#c084fc;" title="Open Web App & Placeholder Accounts Simulator to test friend/group limits and rate limits">
+        🧪 Test Limits Simulator
+      </a>
 
       <button class="btn-admin danger-btn" id="btn-fleet-silence" onclick="silenceAllFleetSirens()" title="Stop all ringing sirens remotely (Alt+M)" aria-label="Stop all sirens remotely">
         🛑 Silence All Sirens
@@ -1763,6 +1766,7 @@
             <option value="EXPIRED">⌛ Expired (0 Free Days Left)</option>
           </select>
           <button class="crm-btn warn" style="padding:7px 12px; font-weight:800;" onclick="deduplicateUsers(true)" title="Automatically remove older duplicate accounts for the same user/email/code">🧹 Clean Duplicate Accounts</button>
+          <a href="simulator.html" target="_blank" class="crm-btn" style="padding:7px 12px; font-weight:800; color:#c084fc; border-color:#a855f7; text-decoration:none;">🧪 Open Placeholder Accounts Simulator ›</a>
         </div>
         <div style="font-size:0.75rem; color:var(--text-muted);">
           Changes sync <strong>instantly in real time</strong> to the user's phone via MQTT Retained Governance.
@@ -2733,7 +2737,8 @@
 
     // ---------- Markers & Canvas Layout ----------
     function updateMarker(u) {
-      if (!u || !hasValidPos(u) || isRemoved(u.id) || deletedUserIds[u.id]) {
+      var eff = getEffectiveAccountStatus(u);
+      if (!u || !hasValidPos(u) || isRemoved(u.id) || deletedUserIds[u.id] || eff === 'EXPIRED' || eff === 'BANNED' || eff === 'DEACTIVATED') {
         if (u && u.id) removeMarker(u.id);
         return;
       }
@@ -3442,7 +3447,7 @@
 
     function fitAllMarkersOnMap() {
       var latlngs = Object.values(users)
-        .filter(function(u) { return hasValidPos(u) && !isRemoved(u.id) && !deletedUserIds[u.id]; })
+        .filter(function(u) { return hasValidPos(u) && !isRemoved(u.id) && !deletedUserIds[u.id] && getEffectiveAccountStatus(u) === 'ACTIVE'; })
         .map(function(u) { return [u.lat, u.lng]; });
       if (latlngs.length > 0) {
         map.fitBounds(latlngs, { padding: [50, 50], maxZoom: 16 });

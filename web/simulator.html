@@ -1,0 +1,1549 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PinPulse — Web App & Placeholder Accounts Simulator</title>
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@500;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #070b14;
+      --panel: #0f172a;
+      --panel-2: #131d31;
+      --border: #1e293b;
+      --border-bright: #334155;
+      --primary: #10b981;
+      --accent: #38bdf8;
+      --warn: #f59e0b;
+      --danger: #ef4444;
+      --purple: #a855f7;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      background: rgba(15, 23, 42, 0.95);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .brand-icon {
+      width: 38px;
+      height: 38px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #10b981, #0284c7);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.2rem;
+    }
+    .brand h1 {
+      font-size: 1.05rem;
+      font-weight: 900;
+      letter-spacing: -0.02em;
+    }
+    .brand p {
+      font-size: 0.72rem;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    .top-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .btn {
+      background: var(--panel-2);
+      color: var(--text);
+      border: 1px solid var(--border-bright);
+      border-radius: 10px;
+      padding: 8px 13px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      text-decoration: none;
+      transition: 0.15s ease;
+    }
+    .btn:hover:not(:disabled) {
+      filter: brightness(1.18);
+      border-color: var(--accent);
+    }
+    .btn:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+    .btn.primary { background: var(--primary); color: #000; border-color: var(--primary); font-weight: 800; }
+    .btn.accent { background: rgba(56, 189, 248, 0.15); color: var(--accent); border-color: rgba(56, 189, 248, 0.5); }
+    .btn.warn { background: rgba(245, 158, 11, 0.16); color: #fbbf24; border-color: rgba(245, 158, 11, 0.5); }
+    .btn.danger { background: rgba(239, 68, 68, 0.16); color: #f87171; border-color: rgba(239, 68, 68, 0.5); }
+    .btn.lifetime { background: linear-gradient(135deg, #f59e0b, #10b981); color: #000; border-color: #fbbf24; font-weight: 900; }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: 340px 1fr 370px;
+      gap: 16px;
+      padding: 16px;
+      flex: 1;
+      max-width: 1700px;
+      width: 100%;
+      margin: 0 auto;
+    }
+    @media (max-width: 1200px) {
+      .workspace { grid-template-columns: 1fr; }
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 10px;
+    }
+    .card-title {
+      font-size: 0.88rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--accent);
+    }
+
+    .input, .select {
+      width: 100%;
+      background: var(--panel-2);
+      color: var(--text);
+      border: 1px solid var(--border-bright);
+      border-radius: 10px;
+      padding: 9px 12px;
+      font-size: 0.82rem;
+      font-family: inherit;
+      outline: none;
+    }
+    .input:focus, .select:focus {
+      border-color: var(--primary);
+    }
+    .input:disabled {
+      background: #1a1118;
+      border-color: rgba(239, 68, 68, 0.5);
+      color: #f87171;
+      cursor: not-allowed;
+    }
+    label {
+      font-size: 0.72rem;
+      color: var(--muted);
+      font-weight: 700;
+      display: block;
+      margin-bottom: 4px;
+    }
+    .form-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    /* Account Switcher List */
+    .account-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-height: 440px;
+      overflow-y: auto;
+    }
+    .account-item {
+      background: var(--panel-2);
+      border: 1.5px solid var(--border);
+      border-radius: 12px;
+      padding: 10px 12px;
+      cursor: pointer;
+      transition: 0.15s ease;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .account-item:hover {
+      border-color: var(--border-bright);
+    }
+    .account-item.active {
+      border-color: var(--primary);
+      background: rgba(16, 185, 129, 0.1);
+    }
+    .pack-pill {
+      font-size: 0.62rem;
+      font-weight: 900;
+      padding: 2px 6px;
+      border-radius: 6px;
+      text-transform: uppercase;
+    }
+    .pack-DEMO { background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.5); }
+    .pack-FAMILY { background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.5); }
+    .pack-BUSINESS { background: rgba(56, 189, 248, 0.2); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.5); }
+    .pack-CUSTOM { background: rgba(168, 85, 247, 0.2); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.5); }
+
+    /* Virtual Phone Mockup */
+    .phone-frame {
+      background: #090e1a;
+      border: 3px solid #26334d;
+      border-radius: 28px;
+      padding: 18px;
+      max-width: 540px;
+      width: 100%;
+      margin: 0 auto;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.65);
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      position: relative;
+    }
+    .phone-status-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.72rem;
+      color: var(--muted);
+      padding-bottom: 6px;
+      border-bottom: 1px solid var(--border);
+    }
+    .sub-banner {
+      background: var(--panel-2);
+      border: 1px solid rgba(16, 185, 129, 0.5);
+      border-radius: 12px;
+      padding: 10px 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .code-card {
+      background: #131d2e;
+      border: 1px solid var(--border-bright);
+      border-radius: 14px;
+      padding: 12px 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .code-val {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 1.15rem;
+      font-weight: 800;
+      color: var(--primary);
+    }
+    .section-box {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 13px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .alert-banner {
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      line-height: 1.4;
+    }
+    .alert-banner.error {
+      background: #2a1215;
+      border: 1px solid rgba(239, 68, 68, 0.75);
+      color: #fca5a5;
+    }
+    .alert-banner.info {
+      background: rgba(56, 189, 248, 0.14);
+      border: 1px solid rgba(56, 189, 248, 0.5);
+      color: #7dd3fc;
+    }
+    .alert-banner.success {
+      background: #0d2818;
+      border: 1px solid rgba(16, 185, 129, 0.7);
+      color: #6ee7b7;
+    }
+    .friend-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px 11px;
+      font-size: 0.8rem;
+    }
+    .lock-overlay {
+      background: rgba(7, 11, 20, 0.96);
+      border: 2px solid var(--danger);
+      border-radius: 22px;
+      padding: 28px 20px;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+    }
+    .log-box {
+      background: #050811;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.72rem;
+      height: 250px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+    .rate-pulse {
+      display: inline-block;
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--primary);
+      margin-right: 5px;
+      transition: transform 0.2s ease;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="brand">
+      <div class="brand-icon">🧪</div>
+      <div>
+        <h1>PinPulse Web App & Limits Simulator</h1>
+        <p>Create Placeholder Accounts • Test Friend/Group Quotas, Rate Limits, SOS Siren & Pack Upgrades Live</p>
+      </div>
+    </div>
+
+    <div class="top-actions">
+      <span id="mqtt-badge" class="btn accent" style="cursor:default;">📡 Connecting MQTT...</span>
+      <button class="btn primary" onclick="spawnPresetAccounts()">⚡ Spawn 4 Demo/Family/Biz Test Accounts</button>
+      <button class="btn warn" onclick="clearAllPlaceholders()">🗑️ Reset Placeholders</button>
+      <a href="index.html" class="btn accent">🗺️ Open Admin Fleet Dashboard ›</a>
+    </div>
+  </header>
+
+  <main class="workspace">
+
+    <!-- LEFT COLUMN: CREATE & SELECT PLACEHOLDER ACCOUNTS -->
+    <div style="display:flex; flex-direction:column; gap:16px;">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">➕ Create Placeholder Account</span>
+        </div>
+        <div class="form-grid">
+          <div style="grid-column: span 2;">
+            <label>Display Name</label>
+            <input type="text" id="new-name" class="input" placeholder="e.g. Uncle Sami, Driver 1, Sarah" value="Test User 1" />
+          </div>
+          <div style="grid-column: span 2;">
+            <label>Email Address (Unique — Duplicates Auto-Replaced)</label>
+            <input type="email" id="new-email" class="input" placeholder="e.g. user1@pinpulse.test" value="user1@pinpulse.test" />
+          </div>
+          <div>
+            <label>Friend Code (8 chars)</label>
+            <input type="text" id="new-code" class="input" placeholder="Auto if empty" maxlength="9" />
+          </div>
+          <div>
+            <label>Initial Pack</label>
+            <select id="new-pack" class="select">
+              <option value="DEMO">🎁 DEMO (1F / 0G / 7d)</option>
+              <option value="FAMILY">👨‍👩‍👧‍👦 FAMILY (10F / 2G)</option>
+              <option value="BUSINESS">🏢 BUSINESS (50F / 10G)</option>
+              <option value="CUSTOM">⚡ CUSTOM (100F / 25G)</option>
+            </select>
+          </div>
+          <div style="grid-column: span 2;">
+            <label>Custom Status Message</label>
+            <input type="text" id="new-status" class="input" placeholder="e.g. 🏠 At Home, 🚗 Driving, 💼 Working" value="🏠 At Home" />
+          </div>
+        </div>
+        <button class="btn primary" style="width:100%; justify-content:center; padding:10px;" onclick="createPlaceholderFromForm()">
+          ➕ Create & Connect Virtual Account
+        </button>
+      </div>
+
+      <div class="card" style="flex:1;">
+        <div class="card-header">
+          <span class="card-title">📱 Active Placeholder Accounts (<span id="acc-count">0</span>)</span>
+        </div>
+        <div id="account-list" class="account-list">
+          <div style="text-align:center; padding:24px 10px; color:var(--muted); font-size:0.8rem;">
+            No placeholder accounts yet.<br/>Click <b>"Spawn 4 Test Accounts"</b> above or create one!
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CENTER COLUMN: VIRTUAL PINPULSE PHONE UI FOR SELECTED ACCOUNT -->
+    <div>
+      <div id="empty-phone-state" class="card" style="text-align:center; padding:60px 20px;">
+        <div style="font-size:2.4rem; margin-bottom:10px;">📱</div>
+        <h2 style="font-size:1.1rem; margin-bottom:6px;">Select or Create a Placeholder Account</h2>
+        <p style="color:var(--muted); font-size:0.84rem; max-width:420px; margin:0 auto 18px;">
+          Click <b>"⚡ Spawn 4 Demo/Family/Biz Test Accounts"</b> in the top bar to immediately test friend limits, group limits, rate limits, and SOS sirens between accounts!
+        </p>
+        <div>
+          <button class="btn primary" onclick="spawnPresetAccounts()">⚡ Spawn 4 Test Accounts Now</button>
+        </div>
+      </div>
+
+      <div id="phone-container" class="phone-frame" style="display:none;">
+        <div class="phone-status-bar">
+          <span id="ph-carrier">📡 PinPulse Virtual Phone (v2.9)</span>
+          <span><span class="rate-pulse" id="ph-pulse-dot"></span><span id="ph-rate-ticker">Rate: 5s</span> • 🔋 <span id="ph-bat">92%</span></span>
+        </div>
+
+        <!-- Subscription Plan Banner -->
+        <div class="sub-banner">
+          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+            <span id="ph-pack-badge" class="pack-pill pack-DEMO">🎁 DEMO</span>
+            <span id="ph-time-left" style="font-size:0.78rem; font-weight:800;">⏳ 7d 0h left</span>
+            <span id="ph-quotas" style="font-size:0.76rem; color:var(--muted); font-weight:700;">• 👥 0/1F • 🛡️ 0/0G</span>
+          </div>
+          <span id="ph-status-pill" style="font-size:0.7rem; font-weight:800; color:var(--primary);">ACTIVE</span>
+        </div>
+
+        <!-- Locked Overlay when Banned / Deactivated / Expired -->
+        <div id="ph-lock-screen" class="lock-overlay" style="display:none;">
+          <div style="font-size:2.2rem;">🔒</div>
+          <h3 id="ph-lock-title" style="font-size:1.1rem; font-weight:900;">Account Locked</h3>
+          <p id="ph-lock-desc" style="font-size:0.8rem; color:var(--muted); line-height:1.45;"></p>
+          <div style="font-size:0.74rem; color:#fbbf24; font-family:'JetBrains Mono',monospace;" id="ph-lock-code"></div>
+          <button class="btn primary" onclick="quickSetPack('FAMILY')">🔓 Unlock & Upgrade to Family Pack</button>
+        </div>
+
+        <!-- Active Phone Body -->
+        <div id="ph-active-body" style="display:flex; flex-direction:column; gap:12px;">
+          <!-- Identity & Friend Code Card -->
+          <div class="code-card">
+            <div>
+              <div style="font-size:0.95rem; font-weight:900;" id="ph-name">User Name</div>
+              <div style="font-size:0.72rem; color:var(--muted);" id="ph-email">user@email.com</div>
+              <div style="font-size:0.68rem; color:var(--muted); margin-top:4px;">YOUR FRIEND CODE</div>
+              <div class="code-val" id="ph-code">ABCD-1234</div>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:6px; align-items:flex-end;">
+              <button class="btn accent" onclick="copyCurrentCode()">📋 Copy Code</button>
+              <button class="btn danger" onclick="triggerSosFromCurrent()">🆘 Trigger SOS Siren</button>
+            </div>
+          </div>
+
+          <!-- Custom Status Bubble & GPS Toggle -->
+          <div class="section-box">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <label style="margin:0;">💬 Custom Status Bubble (Syncs to Map & Dashboard)</label>
+              <button id="ph-gps-btn" class="btn primary" style="padding:4px 9px; font-size:0.7rem;" onclick="toggleCurrentGps()">📍 GPS ON</button>
+            </div>
+            <div style="display:flex; gap:6px;">
+              <input type="text" id="ph-status-input" class="input" placeholder="Set status (e.g. 🏠 At Home, 🚗 Driving)..." maxlength="28" />
+              <button class="btn accent" onclick="saveCurrentStatus()">Set</button>
+            </div>
+            <div style="display:flex; gap:5px; flex-wrap:wrap;">
+              <button class="btn" style="padding:4px 8px; font-size:0.68rem;" onclick="setPresetStatus('🏠 At Home')">🏠 At Home</button>
+              <button class="btn" style="padding:4px 8px; font-size:0.68rem;" onclick="setPresetStatus('🚗 Driving')">🚗 Driving</button>
+              <button class="btn" style="padding:4px 8px; font-size:0.68rem;" onclick="setPresetStatus('💼 At Work')">💼 At Work</button>
+              <button class="btn" style="padding:4px 8px; font-size:0.68rem;" onclick="setPresetStatus('☕ Taking a Break')">☕ Break</button>
+              <button class="btn" style="padding:4px 8px; font-size:0.68rem;" onclick="setPresetStatus('')">✕ Clear</button>
+            </div>
+          </div>
+
+          <!-- ADD FRIEND SECTION (WITH STRICT QUOTA LOCKING) -->
+          <div class="section-box">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <span style="font-size:0.8rem; font-weight:800;">👥 Friends & Quota Test (<span id="ph-friends-count">0/1</span>)</span>
+              <span style="font-size:0.7rem; color:var(--muted);">Quick Pick Another Account:</span>
+            </div>
+
+            <!-- Quick pick chips for other placeholder accounts -->
+            <div id="quick-pick-friends" style="display:flex; gap:5px; flex-wrap:wrap;"></div>
+
+            <div style="display:flex; gap:8px;">
+              <input
+                type="text"
+                id="ph-friend-input"
+                class="input"
+                placeholder="Enter 8-digit Friend Code or Email..."
+                oninput="onFriendInputChanged()"
+              />
+              <button id="ph-add-friend-btn" class="btn primary" onclick="sendFriendRequestFromCurrent()">➕ Add</button>
+            </div>
+
+            <!-- My Limit Reached Banner -->
+            <div id="ph-my-limit-banner" class="alert-banner error" style="display:none;"></div>
+
+            <!-- Live Lookup / Out-of-limit Feedback Banner -->
+            <div id="ph-lookup-feedback" style="display:none;"></div>
+
+            <!-- Friends List -->
+            <div id="ph-friends-list" style="display:flex; flex-direction:column; gap:6px; margin-top:4px;"></div>
+          </div>
+
+          <!-- GROUPS SECTION (WITH STRICT QUOTA LOCKING) -->
+          <div class="section-box">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <span style="font-size:0.8rem; font-weight:800;">🛡️ Groups & Quota Test (<span id="ph-groups-count">0/0</span>)</span>
+            </div>
+            <div id="ph-group-limit-banner" class="alert-banner error" style="display:none;"></div>
+            <div style="display:flex; gap:8px;">
+              <input type="text" id="ph-group-input" class="input" placeholder="Group Name (e.g. Family Circle)" />
+              <button id="ph-create-group-btn" class="btn primary" onclick="createGroupFromCurrent()">➕ Create Group</button>
+            </div>
+            <div id="ph-groups-list" style="display:flex; flex-direction:column; gap:6px;"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT COLUMN: INSTANT PLAN / QUOTA / RATE LIMIT TEST CONTROLS & LIVE LOG -->
+    <div style="display:flex; flex-direction:column; gap:16px;">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">⚙️ Test Plan, Quotas & Rate Limit on Selected User</span>
+        </div>
+        <div style="font-size:0.75rem; color:var(--muted);">
+          Instantly switch the selected account's pack or rate limit to test auto-trimming excess friends, input locking, and live GPS broadcast frequency:
+        </div>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+          <button class="btn warn" onclick="quickSetPack('DEMO')">🎁 Set DEMO (1F / 0G)</button>
+          <button class="btn primary" onclick="quickSetPack('FAMILY')">👨‍👩‍👧‍👦 Set FAMILY (10F / 2G)</button>
+          <button class="btn accent" onclick="quickSetPack('BUSINESS')">🏢 Set BUSINESS (50F / 10G)</button>
+          <button class="btn" style="color:#c084fc; border-color:#a855f7;" onclick="quickSetPack('CUSTOM')">⚡ Set CUSTOM (100F / 25G)</button>
+          <button class="btn lifetime" style="grid-column: span 2; justify-content:center;" onclick="quickActivateLifetime()">♾️ Activate LIFETIME Access (Never Expires)</button>
+        </div>
+
+        <div class="form-grid" style="margin-top:4px;">
+          <div>
+            <label>⚡ Telemetry Rate Limit (sec)</label>
+            <select id="ctrl-rate" class="select" onchange="quickSetRateLimit(this.value)">
+              <option value="1">1s (Ultra Fast)</option>
+              <option value="2">2s (High Priority)</option>
+              <option value="3">3s (Standard)</option>
+              <option value="5">5s (Demo Default)</option>
+              <option value="10">10s (Eco)</option>
+              <option value="30">30s (Throttled)</option>
+              <option value="60">60s (Restricted)</option>
+            </select>
+          </div>
+          <div>
+            <label>👥 Custom Max Friends</label>
+            <input type="number" id="ctrl-max-friends" class="input" min="0" max="500" value="1" onchange="quickSetCustomMaxFriends(this.value)" />
+          </div>
+        </div>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; margin-top:4px;">
+          <button class="btn warn" onclick="quickSetStatus('EXPIRED')">⌛ Expire (0d)</button>
+          <button class="btn warn" onclick="quickSetStatus('DEACTIVATED')">⏸️ Deactivate</button>
+          <button class="btn danger" onclick="quickSetStatus('BANNED')">🚫 Ban</button>
+        </div>
+      </div>
+
+      <div class="card" style="flex:1;">
+        <div class="card-header">
+          <span class="card-title">📡 Live Simulator & Quota Event Log</span>
+          <button class="btn" style="padding:3px 8px; font-size:0.68rem;" onclick="document.getElementById('sim-log').innerHTML=''">Clear</button>
+        </div>
+        <div id="sim-log" class="log-box"></div>
+      </div>
+    </div>
+
+  </main>
+
+  <script>
+    var STORAGE_KEY = 'pinpulse_web_simulator_accounts_v1';
+    var LIFETIME_EXPIRES_AT = 4102444800000;
+
+    var PACK_PRESETS = {
+      DEMO:     { plan: 'DEMO',     maxFriends: 1,   maxGroups: 0,  monthlyRateUsd: 0.00,  rateLimitSec: 5, defaultDays: 7 },
+      FAMILY:   { plan: 'FAMILY',   maxFriends: 10,  maxGroups: 2,  monthlyRateUsd: 9.99,  rateLimitSec: 3, defaultDays: 30 },
+      BUSINESS: { plan: 'BUSINESS', maxFriends: 50,  maxGroups: 10, monthlyRateUsd: 29.99, rateLimitSec: 2, defaultDays: 30 },
+      CUSTOM:   { plan: 'CUSTOM',   maxFriends: 100, maxGroups: 25, monthlyRateUsd: 49.99, rateLimitSec: 1, defaultDays: 30 }
+    };
+
+    var accounts = loadAccounts();
+    var selectedId = Object.keys(accounts)[0] || null;
+    var externalUsers = {}; // Real phones or other nodes discovered on MQTT
+    var client = null;
+    var lastPublishByAccount = {};
+
+    function loadAccounts() {
+      try {
+        return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
+      } catch (e) {
+        return {};
+      }
+    }
+
+    function saveAccounts() {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(accounts));
+      } catch (e) {}
+    }
+
+    function esc(s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+      });
+    }
+
+    function logEvent(msg, color) {
+      var box = document.getElementById('sim-log');
+      if (!box) return;
+      var div = document.createElement('div');
+      div.style.color = color || '#cbd5e1';
+      div.innerHTML = '<span style="color:#64748b;">[' + new Date().toLocaleTimeString() + ']</span> ' + msg;
+      box.prepend(div);
+    }
+
+    function generateFriendCode() {
+      var chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+      var p1 = '', p2 = '';
+      for (var i = 0; i < 4; i++) p1 += chars.charAt(Math.floor(Math.random() * chars.length));
+      for (var j = 0; j < 4; j++) p2 += chars.charAt(Math.floor(Math.random() * chars.length));
+      return p1 + '-' + p2;
+    }
+
+    function cleanEmailForApp(email) {
+      return (email || '').trim().toLowerCase().replace('@', '_at_').replace(/\./g, '_dot_').replace(/[^a-z0-9_]/g, '');
+    }
+
+    function isAccountExpired(acc) {
+      if (!acc) return false;
+      if (acc.isLifetime || (acc.subscriptionExpiresAt && acc.subscriptionExpiresAt >= 3000000000000)) return false;
+      return acc.subscriptionExpiresAt && Date.now() > acc.subscriptionExpiresAt;
+    }
+
+    function formatRemaining(acc) {
+      if (!acc) return '';
+      if (acc.accountStatus === 'BANNED') return '🚫 Banned';
+      if (acc.accountStatus === 'DEACTIVATED') return '⏸️ Deactivated';
+      if (acc.isLifetime || (acc.subscriptionExpiresAt && acc.subscriptionExpiresAt >= 3000000000000)) return '♾️ Lifetime Access';
+      var diff = (acc.subscriptionExpiresAt || 0) - Date.now();
+      if (diff <= 0) return '⌛ 0d (Expired)';
+      var d = Math.floor(diff / 86400000);
+      var h = Math.floor((diff % 86400000) / 3600000);
+      return '⏳ ' + d + 'd ' + h + 'h left';
+    }
+
+    // Strictly enforce friend & group quotas (auto-trim excess friends & groups just like MainViewModel.kt!)
+    function enforceQuotasOnAccount(acc) {
+      if (!acc) return false;
+      acc.friends = Array.isArray(acc.friends) ? acc.friends : [];
+      acc.groups = Array.isArray(acc.groups) ? acc.groups : [];
+      var trimmed = false;
+
+      var maxF = Math.max(0, Number(acc.maxFriends !== undefined ? acc.maxFriends : 1));
+      if (acc.friends.length > maxF) {
+        var removed = acc.friends.slice(maxF);
+        acc.friends = acc.friends.slice(0, maxF);
+        trimmed = true;
+        removed.forEach(function(rf) {
+          // Also remove mutually if rf is a local placeholder
+          if (accounts[rf.id]) {
+            accounts[rf.id].friends = (accounts[rf.id].friends || []).filter(function(f) { return f.id !== acc.id; });
+            accounts[rf.id].friendsCount = accounts[rf.id].friends.length;
+            broadcastAccountFullState(accounts[rf.id], true);
+          }
+          logEvent('✂️ Auto-trimmed excess friend <b>' + esc(rf.name) + '</b> from <b>' + esc(acc.displayName) + '</b> (Plan limit: ' + maxF + ' friend' + (maxF === 1 ? '' : 's') + ')', '#f87171');
+        });
+      }
+
+      var maxG = Math.max(0, Number(acc.maxGroups !== undefined ? acc.maxGroups : 0));
+      if (acc.groups.length > maxG) {
+        acc.groups = acc.groups.slice(0, maxG);
+        trimmed = true;
+        logEvent('✂️ Auto-trimmed excess groups from <b>' + esc(acc.displayName) + '</b> (Plan limit: ' + maxG + ' groups)', '#f87171');
+      }
+
+      acc.friendsCount = acc.friends.length;
+      acc.groupsCount = acc.groups.length;
+      return trimmed;
+    }
+
+    function createPlaceholderAccount(opts) {
+      var emailClean = (opts.email || '').trim().toLowerCase();
+      var codeClean = (opts.friendCode || generateFriendCode()).trim().toUpperCase();
+
+      // Remove any older duplicate placeholder with the same email or friendCode
+      Object.keys(accounts).forEach(function(oldId) {
+        var old = accounts[oldId];
+        if ((emailClean && old.email.toLowerCase() === emailClean) || (codeClean && old.friendCode.toUpperCase() === codeClean)) {
+          logEvent('🧹 Replaced old duplicate placeholder account for <b>' + esc(emailClean) + '</b>', '#fbbf24');
+          if (client && client.connected) {
+            client.publish('pinpulse/v1/user/' + oldId + '/loc', '', { qos: 0, retain: true });
+            client.publish('pinpulse/v1/registry/user/' + oldId, '', { qos: 1, retain: true });
+          }
+          delete accounts[oldId];
+        }
+      });
+
+      var packKey = (opts.subscriptionPlan || 'DEMO').toUpperCase();
+      var preset = PACK_PRESETS[packKey] || PACK_PRESETS.DEMO;
+      var now = Date.now();
+      var id = opts.id || ('sim_' + emailClean.replace(/[^a-z0-9]/g, '').substring(0, 10) + '_' + Math.floor(1000 + Math.random() * 9000));
+
+      var acc = {
+        id: id,
+        displayName: (opts.displayName || 'Placeholder User').trim(),
+        email: emailClean || (id + '@pinpulse.test'),
+        friendCode: codeClean,
+        statusMessage: (opts.statusMessage !== undefined ? opts.statusMessage : '🏠 At Home').trim(),
+        latitude: opts.latitude || (36.8065 + (Math.random() - 0.5) * 0.045),
+        longitude: opts.longitude || (10.1815 + (Math.random() - 0.5) * 0.045),
+        speedKmh: opts.speedKmh || 0,
+        batteryPercent: opts.batteryPercent || Math.floor(65 + Math.random() * 35),
+        isCharging: false,
+        isSharingLocation: true,
+        isGpsEnabled: true,
+        subscriptionPlan: preset.plan,
+        accountStatus: 'ACTIVE',
+        isLifetime: false,
+        subscriptionStartAt: now,
+        subscriptionExpiresAt: now + preset.defaultDays * 86400000,
+        maxFriends: preset.maxFriends,
+        maxGroups: preset.maxGroups,
+        rateLimitSec: preset.rateLimitSec,
+        monthlyRateUsd: preset.monthlyRateUsd,
+        friends: [],
+        groups: [],
+        friendsCount: 0,
+        groupsCount: 0,
+        lastUpdated: now
+      };
+
+      accounts[id] = acc;
+      selectedId = id;
+      saveAccounts();
+      broadcastAccountFullState(acc, true);
+      renderAll();
+      logEvent('✅ Created placeholder account <b>' + esc(acc.displayName) + '</b> [' + esc(acc.friendCode) + '] on <b>' + acc.subscriptionPlan + '</b> (' + acc.maxFriends + 'F/' + acc.maxGroups + 'G • Rate ' + acc.rateLimitSec + 's)', '#34d399');
+      return acc;
+    }
+
+    function createPlaceholderFromForm() {
+      var name = document.getElementById('new-name').value.trim() || 'Test User';
+      var email = document.getElementById('new-email').value.trim() || ('user' + Math.floor(Math.random() * 999) + '@pinpulse.test');
+      var code = document.getElementById('new-code').value.trim().toUpperCase();
+      var pack = document.getElementById('new-pack').value;
+      var status = document.getElementById('new-status').value.trim();
+
+      createPlaceholderAccount({
+        displayName: name,
+        email: email,
+        friendCode: code || generateFriendCode(),
+        subscriptionPlan: pack,
+        statusMessage: status
+      });
+
+      var nextNum = Object.keys(accounts).length + 1;
+      document.getElementById('new-name').value = 'Test User ' + nextNum;
+      document.getElementById('new-email').value = 'user' + nextNum + '@pinpulse.test';
+      document.getElementById('new-code').value = '';
+    }
+
+    function spawnPresetAccounts() {
+      createPlaceholderAccount({
+        id: 'sim_demo_ali',
+        displayName: 'Ali (Demo 1F Max)',
+        email: 'ali.demo@pinpulse.test',
+        friendCode: 'DEMO-1111',
+        subscriptionPlan: 'DEMO',
+        statusMessage: '🏠 Testing Demo (1F Max)'
+      });
+      createPlaceholderAccount({
+        id: 'sim_demo_sami',
+        displayName: 'Sami (Demo 1F Max)',
+        email: 'sami.demo@pinpulse.test',
+        friendCode: 'DEMO-2222',
+        subscriptionPlan: 'DEMO',
+        statusMessage: '🚗 Driving Downtown'
+      });
+      createPlaceholderAccount({
+        id: 'sim_family_nour',
+        displayName: 'Nour (Family 10F/2G)',
+        email: 'nour.family@pinpulse.test',
+        friendCode: 'FAML-3333',
+        subscriptionPlan: 'FAMILY',
+        statusMessage: '👨‍👩‍👧‍👦 Family Pack Active'
+      });
+      createPlaceholderAccount({
+        id: 'sim_biz_omar',
+        displayName: 'Omar (Business 50F/10G)',
+        email: 'omar.biz@pinpulse.test',
+        friendCode: 'BIZZ-4444',
+        subscriptionPlan: 'BUSINESS',
+        statusMessage: '🏢 Fleet HQ Commander'
+      });
+      selectedId = 'sim_demo_ali';
+      saveAccounts();
+      renderAll();
+    }
+
+    function clearAllPlaceholders() {
+      if (!confirm('Remove all placeholder accounts from the simulator and radar?')) return;
+      Object.keys(accounts).forEach(function(id) {
+        if (client && client.connected) {
+          client.publish('pinpulse/v1/user/' + id + '/loc', '', { qos: 0, retain: true });
+          client.publish('pinpulse/v1/registry/user/' + id, '', { qos: 1, retain: true });
+        }
+      });
+      accounts = {};
+      selectedId = null;
+      saveAccounts();
+      renderAll();
+      logEvent('🗑️ Cleared all placeholder accounts.', '#fbbf24');
+    }
+
+    // Lookup any user (placeholder OR real phone on MQTT) by Friend Code or Email
+    function findUserByCodeOrEmail(query) {
+      var q = (query || '').trim();
+      if (!q) return null;
+      var qNoDash = q.replace(/-/g, '').toUpperCase();
+      var qLower = q.toLowerCase();
+
+      var all = Object.values(accounts).concat(Object.values(externalUsers));
+      for (var i = 0; i < all.length; i++) {
+        var u = all[i];
+        if (!u) continue;
+        var uCodeNoDash = (u.friendCode || '').replace(/-/g, '').toUpperCase();
+        if (uCodeNoDash && uCodeNoDash === qNoDash) return u;
+        if (u.email && u.email.toLowerCase() === qLower) return u;
+      }
+      return null;
+    }
+
+    function onFriendInputChanged() {
+      var acc = accounts[selectedId];
+      var fb = document.getElementById('ph-lookup-feedback');
+      var addBtn = document.getElementById('ph-add-friend-btn');
+      if (!acc || !fb) return;
+
+      var myLimitReached = (acc.friends.length >= acc.maxFriends) || isAccountExpired(acc);
+      if (myLimitReached) {
+        fb.style.display = 'none';
+        addBtn.disabled = true;
+        return;
+      }
+
+      var raw = document.getElementById('ph-friend-input').value.trim();
+      if (raw.length < 4) {
+        fb.style.display = 'none';
+        addBtn.disabled = true;
+        return;
+      }
+
+      var found = findUserByCodeOrEmail(raw);
+      fb.style.display = 'block';
+
+      if (!found) {
+        fb.className = 'alert-banner error';
+        fb.innerHTML = '❌ No user found with code or email <b>' + esc(raw) + '</b>';
+        addBtn.disabled = true;
+        return;
+      }
+
+      if (found.id === acc.id) {
+        fb.className = 'alert-banner info';
+        fb.innerHTML = '⚠️ You cannot add your own Friend Code / Email.';
+        addBtn.disabled = true;
+        return;
+      }
+
+      var already = (acc.friends || []).some(function(f) { return f.id === found.id; });
+      if (already) {
+        fb.className = 'alert-banner info';
+        fb.innerHTML = 'ℹ️ Already friends with <b>' + esc(found.displayName) + '</b>.';
+        addBtn.disabled = true;
+        return;
+      }
+
+      var targetFriendsCount = found.friends ? found.friends.length : (found.friendsCount || 0);
+      var targetMaxFriends = found.maxFriends !== undefined ? found.maxFriends : 1;
+      var targetExpired = isAccountExpired(found);
+
+      if (targetFriendsCount >= targetMaxFriends || targetExpired) {
+        fb.className = 'alert-banner error';
+        fb.innerHTML = '🔒 <b>Requested friend (' + esc(found.displayName) + ') is out of limit!</b><br/>' +
+                       esc(found.displayName) + ' has reached their plan limit (' + targetFriendsCount + '/' + targetMaxFriends + ' friends on ' + esc(found.subscriptionPlan || 'DEMO') + '). Tell them to upgrade!';
+        addBtn.disabled = true;
+        return;
+      }
+
+      fb.className = 'alert-banner success';
+      fb.innerHTML = '✅ Found <b>' + esc(found.displayName) + '</b> (' + esc(found.friendCode) + ' • ' + targetFriendsCount + '/' + targetMaxFriends + ' friends on ' + esc(found.subscriptionPlan || 'DEMO') + ') — Ready to add!';
+      addBtn.disabled = false;
+    }
+
+    function sendFriendRequestFromCurrent() {
+      var acc = accounts[selectedId];
+      if (!acc) return;
+
+      if (acc.friends.length >= acc.maxFriends || isAccountExpired(acc)) {
+        logEvent('🔒 Blocked: <b>' + esc(acc.displayName) + '</b> has reached their max friends limit (' + acc.friends.length + '/' + acc.maxFriends + ').', '#f87171');
+        renderAll();
+        return;
+      }
+
+      var raw = document.getElementById('ph-friend-input').value.trim();
+      var found = findUserByCodeOrEmail(raw);
+      if (!found || found.id === acc.id) return;
+
+      var targetFriendsCount = found.friends ? found.friends.length : (found.friendsCount || 0);
+      var targetMaxFriends = found.maxFriends !== undefined ? found.maxFriends : 1;
+
+      if (targetFriendsCount >= targetMaxFriends || isAccountExpired(found)) {
+        logEvent('🔒 Blocked adding <b>' + esc(found.displayName) + '</b>: Requested friend is out of limit (' + targetFriendsCount + '/' + targetMaxFriends + ' friends) — tell them to upgrade!', '#f87171');
+        onFriendInputChanged();
+        return;
+      }
+
+      // If target is one of our virtual accounts, link them mutually right away!
+      if (accounts[found.id]) {
+        var targetAcc = accounts[found.id];
+        acc.friends.push({ id: targetAcc.id, name: targetAcc.displayName, friendCode: targetAcc.friendCode, email: targetAcc.email });
+        targetAcc.friends.push({ id: acc.id, name: acc.displayName, friendCode: acc.friendCode, email: acc.email });
+        enforceQuotasOnAccount(acc);
+        enforceQuotasOnAccount(targetAcc);
+        saveAccounts();
+        broadcastAccountFullState(acc, true);
+        broadcastAccountFullState(targetAcc, true);
+        document.getElementById('ph-friend-input').value = '';
+        logEvent('🤝 <b>' + esc(acc.displayName) + '</b> (' + acc.friendsCount + '/' + acc.maxFriends + 'F) and <b>' + esc(targetAcc.displayName) + '</b> (' + targetAcc.friendsCount + '/' + targetAcc.maxFriends + 'F) are now friends!', '#34d399');
+        renderAll();
+      } else {
+        // Target is a real phone on MQTT — send real MQTT FriendRequest packet!
+        var reqPayload = JSON.stringify({
+          id: 'req_' + Math.random().toString(36).substring(2, 10),
+          fromUserId: acc.id,
+          fromUserName: acc.displayName,
+          fromUserEmail: acc.email,
+          fromFriendCode: acc.friendCode,
+          toUserId: found.id,
+          toFriendCode: found.friendCode,
+          status: 'PENDING'
+        });
+        if (client && client.connected) {
+          client.publish('pinpulse/v1/invites/' + found.friendCode.toUpperCase(), reqPayload, { qos: 1, retain: true });
+          client.publish('pinpulse/v1/invites/' + found.id, reqPayload, { qos: 1, retain: true });
+          client.publish('pinpulse/v1/direct/' + found.id, reqPayload, { qos: 1 });
+        }
+        document.getElementById('ph-friend-input').value = '';
+        logEvent('📨 Sent live MQTT Friend Request from <b>' + esc(acc.displayName) + '</b> to real device <b>' + esc(found.displayName) + '</b>!', '#38bdf8');
+        renderAll();
+      }
+    }
+
+    function removeFriendFromCurrent(friendId) {
+      var acc = accounts[selectedId];
+      if (!acc) return;
+      acc.friends = (acc.friends || []).filter(function(f) { return f.id !== friendId; });
+      acc.friendsCount = acc.friends.length;
+
+      if (accounts[friendId]) {
+        accounts[friendId].friends = (accounts[friendId].friends || []).filter(function(f) { return f.id !== acc.id; });
+        accounts[friendId].friendsCount = accounts[friendId].friends.length;
+        broadcastAccountFullState(accounts[friendId], true);
+      } else if (client && client.connected) {
+        var unfriendJson = JSON.stringify({ type: 'UNFRIEND', fromUserId: acc.id });
+        client.publish('pinpulse/v1/direct/' + friendId, unfriendJson, { qos: 1 });
+      }
+
+      saveAccounts();
+      broadcastAccountFullState(acc, true);
+      renderAll();
+      logEvent('👋 Removed friend from <b>' + esc(acc.displayName) + '</b> (' + acc.friendsCount + '/' + acc.maxFriends + ' friends used). Input box is now unlocked!', '#fbbf24');
+    }
+
+    function createGroupFromCurrent() {
+      var acc = accounts[selectedId];
+      if (!acc) return;
+      if (acc.groups.length >= acc.maxGroups || isAccountExpired(acc)) {
+        logEvent('🔒 Group Limit Reached for <b>' + esc(acc.displayName) + '</b> (' + acc.groups.length + '/' + acc.maxGroups + ' groups allowed on ' + acc.subscriptionPlan + '). Upgrade to Family or Business!', '#f87171');
+        renderAll();
+        return;
+      }
+      var name = document.getElementById('ph-group-input').value.trim() || 'Squad Group';
+      var code = name.replace(/[^a-zA-Z]/g, '').substring(0, 3).toUpperCase().padEnd(3, 'G') + '-' + Math.floor(100 + Math.random() * 900);
+      acc.groups.push({ id: 'grp_' + code, name: name, code: code });
+      acc.groupsCount = acc.groups.length;
+      document.getElementById('ph-group-input').value = '';
+      saveAccounts();
+      broadcastAccountFullState(acc, true);
+      renderAll();
+      logEvent('🛡️ Created group <b>' + esc(name) + '</b> (' + code + ') for <b>' + esc(acc.displayName) + '</b> (' + acc.groupsCount + '/' + acc.maxGroups + ' groups)', '#34d399');
+    }
+
+    function removeGroupFromCurrent(grpId) {
+      var acc = accounts[selectedId];
+      if (!acc) return;
+      acc.groups = (acc.groups || []).filter(function(g) { return g.id !== grpId; });
+      acc.groupsCount = acc.groups.length;
+      saveAccounts();
+      broadcastAccountFullState(acc, true);
+      renderAll();
+    }
+
+    function saveCurrentStatus() {
+      var acc = accounts[selectedId];
+      if (!acc) return;
+      acc.statusMessage = document.getElementById('ph-status-input').value.trim();
+      acc.lastUpdated = Date.now();
+      saveAccounts();
+      broadcastAccountFullState(acc, true);
+      renderAll();
+      logEvent('💬 Status updated for <b>' + esc(acc.displayName) + '</b>: "' + esc(acc.statusMessage || 'Cleared') + '"', '#38bdf8');
+    }
+
+    function setPresetStatus(text) {
+      document.getElementById('ph-status-input').value = text;
+      saveCurrentStatus();
+    }
+
+    function toggleCurrentGps() {
+      var acc = accounts[selectedId];
+      if (!acc) return;
+      acc.isGpsEnabled = !acc.isGpsEnabled;
+      acc.lastUpdated = Date.now();
+      saveAccounts();
+      broadcastAccountFullState(acc, true);
+      renderAll();
+      logEvent((acc.isGpsEnabled ? '📍 GPS Turned ON' : '⚠️ GPS Turned OFF') + ' for <b>' + esc(acc.displayName) + '</b>', acc.isGpsEnabled ? '#34d399' : '#fbbf24');
+    }
+
+    function triggerSosFromCurrent() {
+      var acc = accounts[selectedId];
+      if (!acc) return;
+      if (acc.accountStatus === 'BANNED' || acc.accountStatus === 'DEACTIVATED' || isAccountExpired(acc)) {
+        logEvent('🔒 Cannot send SOS: <b>' + esc(acc.displayName) + '</b> is cut off / expired. Upgrade plan to unlock.', '#f87171');
+        return;
+      }
+      acc.statusMessage = '🆘 SOS EMERGENCY!';
+      acc.lastUpdated = Date.now();
+      saveAccounts();
+      broadcastAccountFullState(acc, true);
+
+      var sosAlert = {
+        id: 'sos_' + Date.now(),
+        senderId: acc.id,
+        senderName: acc.displayName,
+        type: 'SOS_EMERGENCY',
+        latitude: acc.latitude,
+        longitude: acc.longitude,
+        batteryPercent: acc.batteryPercent,
+        message: '🆘 SOS EMERGENCY from ' + acc.displayName + '! Battery: ' + acc.batteryPercent + '% • Coords: ' + acc.latitude.toFixed(5) + ', ' + acc.longitude.toFixed(5),
+        timestamp: Date.now()
+      };
+      var sosJson = JSON.stringify(sosAlert);
+      var ringJson = JSON.stringify({
+        type: 'RING_PHONE',
+        callerName: '🆘 SOS EMERGENCY: ' + acc.displayName,
+        timestamp: Date.now()
+      });
+
+      if (client && client.connected) {
+        (acc.friends || []).forEach(function(f) {
+          client.publish('pinpulse/v1/alerts/' + f.id, sosJson, { qos: 1 });
+          client.publish('pinpulse/v1/ring/' + f.id, ringJson, { qos: 1 });
+          if (f.friendCode) {
+            client.publish('pinpulse/v1/alerts/' + f.friendCode.toUpperCase(), sosJson, { qos: 1 });
+            client.publish('pinpulse/v1/ring/' + f.friendCode.toUpperCase(), ringJson, { qos: 1 });
+          }
+        });
+        client.publish('pinpulse/v1/alerts/broadcast', sosJson, { qos: 1 });
+      }
+      renderAll();
+      logEvent('🆘 Dispatched SOS Emergency + Loud Siren + Vibration alert from <b>' + esc(acc.displayName) + '</b> to ' + (acc.friends || []).length + ' friend(s) & Web Dashboard!', '#ef4444');
+    }
+
+    function quickSetPack(packName) {
+      var acc = accounts[selectedId];
+      if (!acc) return;
+      var preset = PACK_PRESETS[packName] || PACK_PRESETS.DEMO;
+      var now = Date.now();
+      acc.subscriptionPlan = preset.plan;
+      acc.accountStatus = 'ACTIVE';
+      acc.isLifetime = false;
+      acc.subscriptionStartAt = now;
+      acc.subscriptionExpiresAt = now + preset.defaultDays * 86400000;
+      acc.maxFriends = preset.maxFriends;
+      acc.maxGroups = preset.maxGroups;
+      acc.rateLimitSec = preset.rateLimitSec;
+      acc.monthlyRateUsd = preset.monthlyRateUsd;
+
+      enforceQuotasOnAccount(acc);
+      saveAccounts();
+      broadcastAccountFullState(acc, true);
+      renderAll();
+      logEvent('💼 Switched <b>' + esc(acc.displayName) + '</b> to <b>' + preset.plan + '</b> (' + preset.maxFriends + 'F / ' + preset.maxGroups + 'G • Rate ' + preset.rateLimitSec + 's)', '#34d399');
+    }
+
+    function quickActivateLifetime() {
+      var acc = accounts[selectedId];
+      if (!acc) return;
+      if (acc.subscriptionPlan === 'DEMO') acc.subscriptionPlan = 'FAMILY';
+      acc.accountStatus = 'ACTIVE';
+      acc.isLifetime = true;
+      acc.subscriptionExpiresAt = LIFETIME_EXPIRES_AT;
+      acc.maxFriends = Math.max(acc.maxFriends || 1, 10);
+      acc.maxGroups = Math.max(acc.maxGroups || 0, 2);
+      acc.rateLimitSec = Math.min(acc.rateLimitSec || 3, 2);
+
+      enforceQuotasOnAccount(acc);
+      saveAccounts();
+      broadcastAccountFullState(acc, true);
+      renderAll();
+      logEvent('♾️ Activated <b>LIFETIME ACCESS</b> for <b>' + esc(acc.displayName) + '</b> (' + acc.subscriptionPlan + ' • ' + acc.maxFriends + 'F/' + acc.maxGroups + 'G • Never Expires)', '#10b981');
+    }
+
+    function quickSetRateLimit(sec) {
+      var acc = accounts[selectedId];
+      if (!acc) return;
+      acc.rateLimitSec = Math.max(1, Math.min(300, parseInt(sec, 10) || 3));
+      saveAccounts();
+      broadcastAccountFullState(acc, true);
+      renderAll();
+      logEvent('⏱️ Updated telemetry Rate Limit for <b>' + esc(acc.displayName) + '</b> to <b>every ' + acc.rateLimitSec + 's</b>', '#38bdf8');
+    }
+
+    function quickSetCustomMaxFriends(maxF) {
+      var acc = accounts[selectedId];
+      if (!acc) return;
+      acc.maxFriends = Math.max(0, parseInt(maxF, 10) || 0);
+      enforceQuotasOnAccount(acc);
+      saveAccounts();
+      broadcastAccountFullState(acc, true);
+      renderAll();
+      logEvent('👥 Set Max Friends limit for <b>' + esc(acc.displayName) + '</b> to <b>' + acc.maxFriends + '</b>', '#c084fc');
+    }
+
+    function quickSetStatus(st) {
+      var acc = accounts[selectedId];
+      if (!acc) return;
+      if (st === 'EXPIRED') {
+        acc.isLifetime = false;
+        acc.subscriptionExpiresAt = Date.now() - 60000;
+        acc.accountStatus = 'EXPIRED';
+      } else {
+        acc.accountStatus = st;
+      }
+      saveAccounts();
+      broadcastAccountFullState(acc, true);
+      renderAll();
+      logEvent('🔒 Changed account state for <b>' + esc(acc.displayName) + '</b> to <b>' + st + '</b>', '#f87171');
+    }
+
+    function copyCurrentCode() {
+      var acc = accounts[selectedId];
+      if (!acc) return;
+      navigator.clipboard.writeText(acc.friendCode);
+      logEvent('📋 Copied Friend Code <b>' + esc(acc.friendCode) + '</b> to clipboard.', '#38bdf8');
+    }
+
+    function renderAll() {
+      var listEl = document.getElementById('account-list');
+      var ids = Object.keys(accounts);
+      document.getElementById('acc-count').textContent = ids.length;
+
+      if (ids.length === 0) {
+        listEl.innerHTML = '<div style="text-align:center; padding:24px 10px; color:var(--muted); font-size:0.8rem;">No placeholder accounts yet.<br/>Click <b>"Spawn 4 Test Accounts"</b> above!</div>';
+        document.getElementById('empty-phone-state').style.display = 'block';
+        document.getElementById('phone-container').style.display = 'none';
+        return;
+      }
+
+      if (!selectedId || !accounts[selectedId]) {
+        selectedId = ids[0];
+      }
+
+      var listHtml = '';
+      ids.forEach(function(id) {
+        var a = accounts[id];
+        var isSel = (id === selectedId);
+        var plan = (a.subscriptionPlan || 'DEMO').toUpperCase();
+        listHtml += '<div class="account-item ' + (isSel ? 'active' : '') + '" onclick="selectedId=\'' + id + '\'; renderAll();">';
+        listHtml += '  <div>';
+        listHtml += '    <div style="font-weight:800; font-size:0.84rem;">' + esc(a.displayName) + ' <span class="pack-pill pack-' + plan + '">' + plan + '</span></div>';
+        listHtml += '    <div style="font-size:0.72rem; color:var(--muted); font-family:\'JetBrains Mono\',monospace;">' + esc(a.friendCode) + ' • 👥 ' + (a.friends ? a.friends.length : 0) + '/' + a.maxFriends + 'F • ⚡ ' + a.rateLimitSec + 's</div>';
+        if (a.statusMessage) {
+          listHtml += '    <div style="font-size:0.7rem; color:#38bdf8; font-weight:700; margin-top:2px;">💬 ' + esc(a.statusMessage) + '</div>';
+        }
+        listHtml += '  </div>';
+        listHtml += '  <button class="btn danger" style="padding:4px 8px; font-size:0.68rem;" onclick="event.stopPropagation(); deleteSingleAccount(\'' + id + '\')">✕</button>';
+        listHtml += '</div>';
+      });
+      listEl.innerHTML = listHtml;
+
+      document.getElementById('empty-phone-state').style.display = 'none';
+      document.getElementById('phone-container').style.display = 'flex';
+
+      var acc = accounts[selectedId];
+      enforceQuotasOnAccount(acc);
+
+      var plan = (acc.subscriptionPlan || 'DEMO').toUpperCase();
+      document.getElementById('ph-rate-ticker').textContent = 'Rate: ' + acc.rateLimitSec + 's';
+      document.getElementById('ph-bat').textContent = acc.batteryPercent + '%';
+      var packBadge = document.getElementById('ph-pack-badge');
+      packBadge.className = 'pack-pill pack-' + plan;
+      packBadge.textContent = plan;
+      document.getElementById('ph-time-left').textContent = formatRemaining(acc);
+      document.getElementById('ph-quotas').textContent = '• 👥 ' + acc.friends.length + '/' + acc.maxFriends + 'F • 🛡️ ' + acc.groups.length + '/' + acc.maxGroups + 'G';
+
+      var isLocked = (acc.accountStatus === 'BANNED' || acc.accountStatus === 'DEACTIVATED' || isAccountExpired(acc));
+      document.getElementById('ph-status-pill').textContent = isLocked ? (isAccountExpired(acc) ? 'EXPIRED' : acc.accountStatus) : 'ACTIVE';
+      document.getElementById('ph-status-pill').style.color = isLocked ? '#f87171' : '#10b981';
+
+      document.getElementById('ctrl-rate').value = String(acc.rateLimitSec || 3);
+      document.getElementById('ctrl-max-friends').value = acc.maxFriends;
+
+      if (isLocked) {
+        document.getElementById('ph-lock-screen').style.display = 'flex';
+        document.getElementById('ph-active-body').style.display = 'none';
+        document.getElementById('ph-lock-title').textContent =
+          acc.accountStatus === 'BANNED' ? '🚫 Account Suspended' :
+          acc.accountStatus === 'DEACTIVATED' ? '⏸️ Account Deactivated — Payment Required' :
+          '⌛ ' + plan + ' Pack Expired (0 Days Left)';
+        document.getElementById('ph-lock-desc').textContent =
+          'This placeholder account is locked in real time. Unlock it from the right-hand controls or from the Web Admin CRM Dashboard!';
+        document.getElementById('ph-lock-code').textContent = 'Account Code: ' + acc.friendCode + ' • ' + acc.email;
+        return;
+      }
+
+      document.getElementById('ph-lock-screen').style.display = 'none';
+      document.getElementById('ph-active-body').style.display = 'flex';
+
+      document.getElementById('ph-name').textContent = acc.displayName;
+      document.getElementById('ph-email').textContent = acc.email;
+      document.getElementById('ph-code').textContent = acc.friendCode;
+      document.getElementById('ph-status-input').value = acc.statusMessage || '';
+
+      var gpsBtn = document.getElementById('ph-gps-btn');
+      gpsBtn.textContent = acc.isGpsEnabled ? '📍 GPS ON' : '📍 GPS OFF';
+      gpsBtn.className = acc.isGpsEnabled ? 'btn primary' : 'btn warn';
+
+      // Friends Quota & Input Lock
+      var myFriendLimitReached = acc.friends.length >= acc.maxFriends;
+      document.getElementById('ph-friends-count').textContent = acc.friends.length + '/' + acc.maxFriends;
+      var friendInput = document.getElementById('ph-friend-input');
+      var addFriendBtn = document.getElementById('ph-add-friend-btn');
+      var myLimitBanner = document.getElementById('ph-my-limit-banner');
+
+      if (myFriendLimitReached) {
+        friendInput.value = '';
+        friendInput.disabled = true;
+        friendInput.placeholder = '🔒 Limit reached (' + acc.friends.length + '/' + acc.maxFriends + ' friends) — Upgrade or remove a friend';
+        addFriendBtn.disabled = true;
+        myLimitBanner.style.display = 'block';
+        myLimitBanner.innerHTML = '🔒 <b>Max friends reached (' + acc.friends.length + '/' + acc.maxFriends + ' on ' + plan + ')</b>. Typing a Friend Code or Email is disabled until you remove a friend or upgrade your plan!';
+      } else {
+        friendInput.disabled = false;
+        friendInput.placeholder = 'Enter 8-digit Friend Code or Email...';
+        myLimitBanner.style.display = 'none';
+      }
+
+      // Quick-pick chips for other accounts so user can test with 1 click
+      var qpHtml = '';
+      ids.forEach(function(otherId) {
+        if (otherId === acc.id) return;
+        var other = accounts[otherId];
+        var isFull = other.friends.length >= other.maxFriends;
+        qpHtml += '<button class="btn" style="padding:3px 8px; font-size:0.68rem; border-color:' + (isFull ? '#ef4444' : '#334155') + ';" onclick="document.getElementById(\'ph-friend-input\').value=\'' + other.friendCode + '\'; onFriendInputChanged();">' +
+                  esc(other.displayName.split(' ')[0]) + ' (' + other.friends.length + '/' + other.maxFriends + 'F' + (isFull ? ' 🔒FULL' : '') + ')</button>';
+      });
+      document.getElementById('quick-pick-friends').innerHTML = qpHtml;
+
+      onFriendInputChanged();
+
+      // Render Friends List
+      var flHtml = '';
+      (acc.friends || []).forEach(function(f) {
+        flHtml += '<div class="friend-row">';
+        flHtml += '  <div><strong>' + esc(f.name) + '</strong> <span style="color:var(--primary); font-family:\'JetBrains Mono\',monospace; font-size:0.72rem;">' + esc(f.friendCode) + '</span></div>';
+        flHtml += '  <button class="btn danger" style="padding:3px 8px; font-size:0.68rem;" onclick="removeFriendFromCurrent(\'' + f.id + '\')">Remove Friend</button>';
+        flHtml += '</div>';
+      });
+      document.getElementById('ph-friends-list').innerHTML = flHtml || '<div style="font-size:0.74rem; color:var(--muted);">No friends added yet.</div>';
+
+      // Render Groups Quota & List
+      var myGroupLimitReached = acc.groups.length >= acc.maxGroups;
+      document.getElementById('ph-groups-count').textContent = acc.groups.length + '/' + acc.maxGroups;
+      var grpInput = document.getElementById('ph-group-input');
+      var grpBtn = document.getElementById('ph-create-group-btn');
+      var grpBanner = document.getElementById('ph-group-limit-banner');
+
+      if (myGroupLimitReached) {
+        grpInput.value = '';
+        grpInput.disabled = true;
+        grpInput.placeholder = '🔒 Group limit reached (' + acc.groups.length + '/' + acc.maxGroups + ' groups)';
+        grpBtn.disabled = true;
+        grpBanner.style.display = 'block';
+        grpBanner.innerHTML = '🔒 <b>Max groups reached (' + acc.groups.length + '/' + acc.maxGroups + ' on ' + plan + ')</b>. Upgrade to Family (2 Groups) or Business (10 Groups) to create or join groups!';
+      } else {
+        grpInput.disabled = false;
+        grpInput.placeholder = 'Group Name (e.g. Family Circle)';
+        grpBtn.disabled = false;
+        grpBanner.style.display = 'none';
+      }
+
+      var glHtml = '';
+      (acc.groups || []).forEach(function(g) {
+        glHtml += '<div class="friend-row">';
+        glHtml += '  <div>🛡️ <strong>' + esc(g.name) + '</strong> <span style="color:var(--accent); font-family:\'JetBrains Mono\',monospace; font-size:0.72rem;">' + esc(g.code) + '</span></div>';
+        glHtml += '  <button class="btn danger" style="padding:3px 8px; font-size:0.68rem;" onclick="removeGroupFromCurrent(\'' + g.id + '\')">Leave</button>';
+        glHtml += '</div>';
+      });
+      document.getElementById('ph-groups-list').innerHTML = glHtml;
+    }
+
+    function deleteSingleAccount(id) {
+      var a = accounts[id];
+      if (!a) return;
+      if (client && client.connected) {
+        client.publish('pinpulse/v1/user/' + id + '/loc', '', { qos: 0, retain: true });
+        client.publish('pinpulse/v1/registry/user/' + id, '', { qos: 1, retain: true });
+      }
+      delete accounts[id];
+      if (selectedId === id) selectedId = Object.keys(accounts)[0] || null;
+      saveAccounts();
+      renderAll();
+    }
+
+    // Publish full state of a placeholder account to MQTT so Web Dashboard & Real Phones see it live!
+    function broadcastAccountFullState(acc, force) {
+      if (!client || !client.connected || !acc) return;
+      var now = Date.now();
+      var lastPub = lastPublishByAccount[acc.id] || 0;
+      var rateMs = Math.max(1, acc.rateLimitSec || 3) * 1000;
+      if (!force && (now - lastPub) < (rateMs - 150)) return;
+      lastPublishByAccount[acc.id] = now;
+
+      var isCutOff = (acc.accountStatus === 'BANNED' || acc.accountStatus === 'DEACTIVATED' || acc.accountStatus === 'EXPIRED' || isAccountExpired(acc));
+      if (isCutOff) {
+        // Cut-off / Expired: Wipe location from broker and mark offline so no one sees this pin on the radar
+        client.publish('pinpulse/v1/user/' + acc.id + '/loc', '', { qos: 0, retain: true });
+        var offlinePacket = {
+          type: 'PHONE_OFFLINE',
+          status: 'OFFLINE',
+          userId: acc.id,
+          accountStatus: isAccountExpired(acc) ? 'EXPIRED' : acc.accountStatus,
+          isGpsEnabled: false,
+          isSharingLocation: false,
+          statusMessage: '🔒 Plan Expired / Cut Off',
+          timestamp: now
+        };
+        client.publish('pinpulse/v1/user/' + acc.id + '/status', JSON.stringify(offlinePacket), { qos: 1, retain: true });
+        return;
+      }
+
+      // Visual pulse on the phone header when selected account transmits a packet
+      if (acc.id === selectedId) {
+        var dot = document.getElementById('ph-pulse-dot');
+        if (dot) {
+          dot.style.transform = 'scale(1.6)';
+          setTimeout(function() { dot.style.transform = 'scale(1)'; }, 220);
+        }
+      }
+
+      var locPacket = {
+        userId: acc.id,
+        displayName: acc.displayName,
+        email: acc.email,
+        friendCode: acc.friendCode,
+        avatarBase64: null,
+        statusMessage: acc.statusMessage || '',
+        latitude: acc.latitude,
+        longitude: acc.longitude,
+        speedKmh: acc.speedKmh || 0,
+        batteryPercent: acc.batteryPercent,
+        isCharging: !!acc.isCharging,
+        isSharingLocation: true,
+        isGpsEnabled: acc.isGpsEnabled !== false,
+        timestamp: now,
+        subscriptionPlan: acc.subscriptionPlan,
+        accountStatus: acc.accountStatus,
+        subscriptionExpiresAt: acc.subscriptionExpiresAt,
+        maxFriends: acc.maxFriends,
+        maxGroups: acc.maxGroups,
+        rateLimitSec: acc.rateLimitSec,
+        monthlyRateUsd: acc.monthlyRateUsd,
+        friendsCount: (acc.friends || []).length,
+        groupsCount: (acc.groups || []).length
+      };
+      var locJson = JSON.stringify(locPacket);
+      client.publish('pinpulse/v1/user/' + acc.id + '/loc', locJson, { qos: 0, retain: true });
+      client.publish('pinpulse/v1/network/live', locJson, { qos: 0, retain: false });
+
+      var regUser = Object.assign({ id: acc.id, lastUpdated: now }, locPacket);
+      var regJson = JSON.stringify(regUser);
+      client.publish('pinpulse/v1/registry/user/' + acc.id, regJson, { qos: 1, retain: true });
+      client.publish('pinpulse/v1/registry/code/' + acc.friendCode.toUpperCase(), regJson, { qos: 1, retain: true });
+      client.publish('pinpulse/v1/registry/code/' + acc.friendCode.replace(/-/g, '').toUpperCase(), regJson, { qos: 1, retain: true });
+      client.publish('pinpulse/v1/registry/email/' + cleanEmailForApp(acc.email), regJson, { qos: 1, retain: true });
+    }
+
+    function connectSimulatorMqtt() {
+      var badge = document.getElementById('mqtt-badge');
+      client = mqtt.connect('wss://broker.emqx.io:8084/mqtt', {
+        clientId: 'pinpulse_sim_' + Math.random().toString(16).substring(2, 10),
+        clean: true,
+        reconnectPeriod: 3000
+      });
+
+      client.on('connect', function() {
+        badge.textContent = '🟢 MQTT Live (Synced with Admin & Phones)';
+        badge.style.color = '#10b981';
+        client.subscribe([
+          'pinpulse/v1/admin/users/+',
+          'pinpulse/v1/admin/broadcast',
+          'pinpulse/v1/registry/user/+',
+          'pinpulse/v1/invites/+',
+          'pinpulse/v1/ring/+',
+          'pinpulse/v1/alerts/+'
+        ]);
+        Object.values(accounts).forEach(function(acc) {
+          broadcastAccountFullState(acc, true);
+        });
+      });
+
+      client.on('message', function(topic, payloadBuf) {
+        var raw = payloadBuf.toString();
+        if (!raw) return;
+        try {
+          var data = JSON.parse(raw);
+
+          // 1. Admin Dashboard Policy Changes (Pack, Lifetime, Rate Limit, Ban, Deactivate, Delete)
+          if (topic.indexOf('/admin/') !== -1) {
+            Object.values(accounts).forEach(function(acc) {
+              var match =
+                data.userId === acc.id || data.targetUserId === acc.id ||
+                (data.friendCode && data.friendCode.toUpperCase() === acc.friendCode.toUpperCase()) ||
+                (data.targetFriendCode && data.targetFriendCode.toUpperCase() === acc.friendCode.toUpperCase()) ||
+                (data.email && data.email.toLowerCase() === acc.email.toLowerCase()) ||
+                (data.targetEmail && data.targetEmail.toLowerCase() === acc.email.toLowerCase());
+
+              if (match) {
+                if (data.accountStatus === 'DELETED' || data.action === 'DELETE_ACCOUNT') {
+                  logEvent('🗑️ Admin Dashboard deleted placeholder account <b>' + esc(acc.displayName) + '</b>', '#ef4444');
+                  deleteSingleAccount(acc.id);
+                  return;
+                }
+                if (data.subscriptionPlan) acc.subscriptionPlan = data.subscriptionPlan;
+                if (data.accountStatus) acc.accountStatus = data.accountStatus;
+                if (data.isLifetime !== undefined) acc.isLifetime = !!data.isLifetime;
+                if (data.subscriptionExpiresAt !== undefined) acc.subscriptionExpiresAt = Number(data.subscriptionExpiresAt);
+                if (data.maxFriends !== undefined) acc.maxFriends = Number(data.maxFriends);
+                if (data.maxGroups !== undefined) acc.maxGroups = Number(data.maxGroups);
+                if (data.rateLimitSec !== undefined) acc.rateLimitSec = Number(data.rateLimitSec);
+                if (data.monthlyRateUsd !== undefined) acc.monthlyRateUsd = Number(data.monthlyRateUsd);
+
+                enforceQuotasOnAccount(acc);
+                saveAccounts();
+                broadcastAccountFullState(acc, true);
+                renderAll();
+                logEvent('⚡ Admin Dashboard updated <b>' + esc(acc.displayName) + '</b>: Pack=' + acc.subscriptionPlan + ', FriendsMax=' + acc.maxFriends + ', Rate=' + acc.rateLimitSec + 's, Status=' + acc.accountStatus, '#10b981');
+              }
+            });
+          }
+
+          // 2. Discover external real phones for lookup testing
+          if (topic.indexOf('/registry/user/') !== -1 && data.id && !accounts[data.id]) {
+            externalUsers[data.id] = data;
+          }
+
+          // 3. Incoming Friend Requests to any virtual account
+          if (topic.indexOf('/invites/') !== -1 && data.fromUserId && data.status === 'PENDING') {
+            Object.values(accounts).forEach(function(acc) {
+              var isForAcc = (data.toUserId === acc.id) || (data.toFriendCode && data.toFriendCode.toUpperCase() === acc.friendCode.toUpperCase());
+              if (!isForAcc) return;
+
+              if (acc.friends.length >= acc.maxFriends || isAccountExpired(acc)) {
+                // Auto-reject because recipient is at their limit!
+                var rejectAlert = JSON.stringify({
+                  id: 'limit_' + Date.now(),
+                  senderId: 'system',
+                  senderName: 'Friend Limit Reached',
+                  type: 'FRIEND_LIMIT_REACHED',
+                  message: '🔒 Requested friend (' + acc.displayName + ') is out of limit (' + acc.friends.length + '/' + acc.maxFriends + ' friends) — tell them to upgrade!',
+                  timestamp: Date.now()
+                });
+                client.publish('pinpulse/v1/alerts/' + data.fromUserId, rejectAlert, { qos: 1 });
+                logEvent('🔒 Auto-rejected incoming friend request from <b>' + esc(data.fromUserName) + '</b> to <b>' + esc(acc.displayName) + '</b> (already at ' + acc.friends.length + '/' + acc.maxFriends + ' limit!)', '#f87171');
+              } else {
+                // Auto-accept on virtual account for easy testing!
+                var already = acc.friends.some(function(f) { return f.id === data.fromUserId; });
+                if (!already) {
+                  acc.friends.push({ id: data.fromUserId, name: data.fromUserName || 'Friend', friendCode: data.fromFriendCode || '', email: data.fromUserEmail || '' });
+                  acc.friendsCount = acc.friends.length;
+                  saveAccounts();
+                  broadcastAccountFullState(acc, true);
+                  var acceptJson = JSON.stringify({ type: 'FRIEND_ACCEPTED', friend: acc });
+                  client.publish('pinpulse/v1/direct/' + data.fromUserId, acceptJson, { qos: 1 });
+                  renderAll();
+                  logEvent('🤝 Virtual account <b>' + esc(acc.displayName) + '</b> accepted friend request from <b>' + esc(data.fromUserName) + '</b>!', '#34d399');
+                }
+              }
+            });
+          }
+        } catch (e) {}
+      });
+    }
+
+    // Background 1-second loop that broadcasts each placeholder account strictly according to its own rateLimitSec!
+    setInterval(function() {
+      Object.values(accounts).forEach(function(acc) {
+        if (acc.accountStatus === 'BANNED' || acc.accountStatus === 'DEACTIVATED' || isAccountExpired(acc)) return;
+        // Slight simulated movement jitter if GPS is enabled
+        if (acc.isGpsEnabled !== false) {
+          acc.latitude += (Math.random() - 0.5) * 0.00015;
+          acc.longitude += (Math.random() - 0.5) * 0.00015;
+        }
+        broadcastAccountFullState(acc, false);
+      });
+    }, 1000);
+
+    // Initialize on load
+    window.addEventListener('DOMContentLoaded', function() {
+      if (Object.keys(accounts).length === 0) {
+        spawnPresetAccounts();
+      } else {
+        renderAll();
+      }
+      connectSimulatorMqtt();
+    });
+  </script>
+</body>
+</html>

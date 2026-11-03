@@ -36,11 +36,41 @@ data class User(
     @SerializedName("friendsCount") val friendsCount: Int = 0,
     @SerializedName("groupsCount") val groupsCount: Int = 0
 ) {
+    val isLifetime: Boolean
+        get() = effectiveExpiresAt >= 3_000_000_000_000L || subscriptionPlan.equals("LIFETIME", ignoreCase = true)
+
+    val effectiveExpiresAt: Long
+        get() = when {
+            accountStatus.equals("EXPIRED", ignoreCase = true) && subscriptionExpiresAt > System.currentTimeMillis() -> System.currentTimeMillis() - 60_000L
+            subscriptionExpiresAt > 1_000_000_000_000L -> subscriptionExpiresAt
+            else -> (if (subscriptionStartAt > 1_000_000_000_000L) subscriptionStartAt else System.currentTimeMillis()) + 7L * 24L * 3600L * 1000L
+        }
+
+    val remainingSubscriptionMs: Long
+        get() = if (accountStatus.equals("EXPIRED", ignoreCase = true) && !isLifetime) 0L else (effectiveExpiresAt - System.currentTimeMillis()).coerceAtLeast(0L)
+
+    val remainingDaysCount: Int
+        get() = if (isLifetime) 99999 else kotlin.math.ceil(remainingSubscriptionMs.toDouble() / (24.0 * 3600.0 * 1000.0)).toInt()
+
+    val isSubscriptionExpired: Boolean
+        get() = !isLifetime && (accountStatus.equals("EXPIRED", ignoreCase = true) || remainingSubscriptionMs <= 0L)
+
+    /**
+     * True when the user's plan has expired or their account has been deactivated/banned/deleted.
+     * When true, the user's app is completely locked on the Plan Upgrade screen and nobody can see them on the radar.
+     */
+    val isAccountCutOff: Boolean
+        get() {
+            val st = accountStatus.uppercase()
+            return st == "BANNED" || st == "DEACTIVATED" || st == "DELETED" || st == "EXPIRED" || isSubscriptionExpired
+        }
+
     val isLive: Boolean
-        get() = isSharingLocation && (System.currentTimeMillis() - lastUpdated < 60_000)
+        get() = !isAccountCutOff && isSharingLocation && (System.currentTimeMillis() - lastUpdated < 60_000)
 
     val lastSeenText: String
         get() {
+            if (isAccountCutOff) return "🔒 Plan Expired / Cut Off"
             if (!isSharingLocation) return "Offline"
             val diffSec = (System.currentTimeMillis() - lastUpdated) / 1000
             val base = when {
@@ -51,25 +81,6 @@ data class User(
             }
             return if (!isGpsEnabled) "$base • GPS OFF" else base
         }
-
-    val effectiveExpiresAt: Long
-        get() = if (subscriptionExpiresAt > 1_000_000_000_000L) {
-            subscriptionExpiresAt
-        } else {
-            (if (subscriptionStartAt > 1_000_000_000_000L) subscriptionStartAt else System.currentTimeMillis()) + 7L * 24L * 3600L * 1000L
-        }
-
-    val isLifetime: Boolean
-        get() = effectiveExpiresAt >= 3_000_000_000_000L || subscriptionPlan.equals("LIFETIME", ignoreCase = true)
-
-    val remainingSubscriptionMs: Long
-        get() = (effectiveExpiresAt - System.currentTimeMillis()).coerceAtLeast(0L)
-
-    val remainingDaysCount: Int
-        get() = if (isLifetime) 99999 else kotlin.math.ceil(remainingSubscriptionMs.toDouble() / (24.0 * 3600.0 * 1000.0)).toInt()
-
-    val isSubscriptionExpired: Boolean
-        get() = !isLifetime && (accountStatus.equals("EXPIRED", ignoreCase = true) || remainingSubscriptionMs <= 0L)
 
     val remainingTimeFormatted: String
         get() {
@@ -106,10 +117,10 @@ data class User(
         val cleanStatus = ((accountStatus as String?) ?: "ACTIVE").uppercase().ifBlank { "ACTIVE" }
         val now = System.currentTimeMillis()
         val cleanStart = if (subscriptionStartAt > 1_000_000_000_000L) subscriptionStartAt else now
-        val cleanExpires = if (subscriptionExpiresAt > 1_000_000_000_000L) {
-            subscriptionExpiresAt
-        } else {
-            cleanStart + 7L * 24L * 3600L * 1000L
+        val cleanExpires = when {
+            cleanStatus == "EXPIRED" && subscriptionExpiresAt > now -> now - 60_000L
+            subscriptionExpiresAt > 1_000_000_000_000L -> subscriptionExpiresAt
+            else -> cleanStart + 7L * 24L * 3600L * 1000L
         }
         val defaultMaxFriends = when (cleanPlan) {
             "FAMILY" -> 10
