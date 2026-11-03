@@ -84,6 +84,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _isSirenPinDialogOpen = MutableStateFlow(false)
     val isSirenPinDialogOpen: StateFlow<Boolean> = _isSirenPinDialogOpen.asStateFlow()
 
+    private val _showSubscriptionDialog = MutableStateFlow(false)
+    val showSubscriptionDialog: StateFlow<Boolean> = _showSubscriptionDialog.asStateFlow()
+
+    fun openSubscriptionDialog() {
+        _showSubscriptionDialog.value = true
+    }
+
+    fun closeSubscriptionDialog() {
+        _showSubscriptionDialog.value = false
+    }
+
     val updateState: StateFlow<UpdateState> = UpdateManager.updateState
 
     private val _kickState = MutableStateFlow<KickConfirmationState?>(null)
@@ -201,31 +212,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val me = prefs.loadCurrentUser()
                     if (alert.senderId == me?.id) return@collect
 
-                    // 1. Only show alerts for confirmed friends (or system/group kick events)
+                    // 1. Only show alerts for confirmed friends, group members (for SOS), or system/group kick events
                     val currentFriends = prefs.loadFriends()
                     val isFriend = currentFriends.any {
                         it.id == alert.senderId ||
                         (it.friendCode.isNotBlank() && it.friendCode.equals(alert.senderId, ignoreCase = true))
                     }
+                    val isGroupMember = prefs.loadGroups().any { it.memberIds.contains(alert.senderId) }
+                    val isSos = alert.type.contains("SOS", ignoreCase = true)
                     val isSystemOrKick = alert.senderId == "system" || alert.type.contains("KICKED") || alert.type.contains("SIREN")
-                    if (!isFriend && !isSystemOrKick) {
+                    if (!isFriend && !(isGroupMember && isSos) && !isSystemOrKick) {
                         // Non-friends MUST NEVER trigger alert notifications!
                         return@collect
                     }
 
                     // 2. Suppress non-critical alerts during startup sync (first 15 seconds) so stale broker messages never popup
-                    if (!isSystemOrKick && (System.currentTimeMillis() - appStartTime < 15_000L)) {
+                    if (!isSystemOrKick && !isSos && (System.currentTimeMillis() - appStartTime < 15_000L)) {
                         return@collect
                     }
 
-                    // 3. Suppress stale alerts older than 20 seconds
-                    if (alert.timestamp > 0 && (System.currentTimeMillis() - alert.timestamp > 20_000L)) {
+                    // 3. Suppress stale alerts older than 20 seconds (or 60s for SOS)
+                    val maxAgeMs = if (isSos) 60_000L else 20_000L
+                    if (alert.timestamp > 0 && (System.currentTimeMillis() - alert.timestamp > maxAgeMs)) {
                         return@collect
                     }
 
                     _activeAlert.value = alert
-                    // Auto dismiss banner after 7 seconds without corrupting saved friends
-                    delay(7000)
+                    // Auto dismiss banner after 15 seconds for SOS or 7 seconds for normal alerts
+                    delay(if (isSos) 15000L else 7000L)
                     if (_activeAlert.value?.id == alert.id) {
                         _activeAlert.value = null
                     }
@@ -328,6 +342,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             realtime.connect(activeUser)
             val accountTopic = "pinpulse/v1/accounts/${realtime.cleanEmail(activeUser.email)}/backup"
             realtime.subscribe(accountTopic)
+            realtime.subscribe("pinpulse/v1/admin/users/${activeUser.id}")
+            if (activeUser.friendCode.isNotBlank()) {
+                realtime.subscribe("pinpulse/v1/admin/users/${activeUser.friendCode.uppercase()}")
+            }
+            if (activeUser.email.isNotBlank()) {
+                realtime.subscribe("pinpulse/v1/admin/users/${realtime.cleanEmail(activeUser.email)}")
+            }
             // Resubscribe to existing groups
             prefs.loadGroups().forEach { g ->
                 realtime.subscribe("pinpulse/v1/groups/${g.code}/info")
@@ -403,19 +424,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val index = currentFriends.indexOfFirst { it.id == packet.userId }
         if (index >= 0) {
             val existing = currentFriends[index]
+            val hasNewCoords = packet.latitude != 0.0 || packet.longitude != 0.0
             val updated = existing.copy(
                 displayName = packet.displayName.ifBlank { existing.displayName },
                 email = packet.email.ifBlank { existing.email },
                 friendCode = packet.friendCode.ifBlank { existing.friendCode },
                 avatarBase64 = packet.avatarBase64 ?: existing.avatarBase64,
                 statusMessage = packet.statusMessage ?: existing.statusMessage,
-                latitude = packet.latitude,
-                longitude = packet.longitude,
+                latitude = if (hasNewCoords) packet.latitude else existing.latitude,
+                longitude = if (hasNewCoords) packet.longitude else existing.longitude,
                 speedKmh = packet.speedKmh,
                 batteryPercent = packet.batteryPercent,
                 isCharging = packet.isCharging,
                 isSharingLocation = packet.isSharingLocation,
-                lastUpdated = packet.timestamp
+                isGpsEnabled = packet.isGpsEnabled,
+                lastUpdated = packet.timestamp,
+                subscriptionPlan = packet.subscriptionPlan.ifBlank { existing.subscriptionPlan },
+                accountStatus = packet.accountStatus.ifBlank { existing.accountStatus }
             )
             currentFriends[index] = updated
             prefs.saveFriends(currentFriends)
@@ -431,6 +456,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val isInAnyGroup = allGroups.any { it.memberIds.contains(packet.userId) }
         if (isInAnyGroup) {
             val prev = _groupMembers.value[packet.userId]
+            val hasNewCoords = packet.latitude != 0.0 || packet.longitude != 0.0
             val memberUser = User(
                 id = packet.userId,
                 displayName = packet.displayName.ifBlank { prev?.displayName ?: "Member" },
@@ -438,13 +464,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 avatarBase64 = packet.avatarBase64 ?: prev?.avatarBase64,
                 friendCode = packet.friendCode.ifBlank { prev?.friendCode ?: "" },
                 statusMessage = packet.statusMessage ?: prev?.statusMessage,
-                latitude = packet.latitude,
-                longitude = packet.longitude,
+                latitude = if (hasNewCoords) packet.latitude else (prev?.latitude ?: 0.0),
+                longitude = if (hasNewCoords) packet.longitude else (prev?.longitude ?: 0.0),
                 speedKmh = packet.speedKmh,
                 batteryPercent = packet.batteryPercent,
                 isCharging = packet.isCharging,
                 isSharingLocation = packet.isSharingLocation,
-                lastUpdated = packet.timestamp
+                isGpsEnabled = packet.isGpsEnabled,
+                lastUpdated = packet.timestamp,
+                subscriptionPlan = packet.subscriptionPlan.ifBlank { prev?.subscriptionPlan ?: "DEMO" },
+                accountStatus = packet.accountStatus.ifBlank { prev?.accountStatus ?: "ACTIVE" }
             )
             // Update group members map only - NEVER add to friends list!
             _groupMembers.value = _groupMembers.value + (packet.userId to memberUser)
@@ -666,6 +695,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val existing = prefs.loadCurrentUser()
         val userId = existing?.id ?: prefs.generateDeterministicUserId(email)
         val friendCode = existing?.friendCode ?: prefs.generateDeterministicFriendCode(email, displayName)
+        val now = System.currentTimeMillis()
+        val startAt = if (existing != null && existing.subscriptionStartAt > 1_000_000_000_000L) existing.subscriptionStartAt else now
+        val expiresAt = if (existing != null && existing.subscriptionExpiresAt > 1_000_000_000_000L) {
+            existing.subscriptionExpiresAt
+        } else {
+            startAt + 7L * 24L * 3600L * 1000L // 7-Day Free Trial for Demo Pack
+        }
 
         val user = User(
             id = userId,
@@ -675,17 +711,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             friendCode = friendCode,
             statusMessage = existing?.statusMessage,
             isSharingLocation = true,
-            latitude = existing?.latitude ?: 36.8065,
-            longitude = existing?.longitude ?: 10.1815,
+            isGpsEnabled = isSystemGpsEnabled(),
+            latitude = existing?.latitude ?: 0.0,
+            longitude = existing?.longitude ?: 0.0,
             speedKmh = 0f,
-            lastUpdated = System.currentTimeMillis()
-        )
+            lastUpdated = now,
+            subscriptionPlan = existing?.subscriptionPlan ?: "DEMO",
+            accountStatus = existing?.accountStatus ?: "ACTIVE",
+            subscriptionStartAt = startAt,
+            subscriptionExpiresAt = expiresAt,
+            maxFriends = existing?.maxFriends ?: 1,
+            maxGroups = existing?.maxGroups ?: 0,
+            rateLimitSec = existing?.rateLimitSec ?: 3,
+            monthlyRateUsd = existing?.monthlyRateUsd ?: 0.0,
+            friendsCount = prefs.loadFriends().size,
+            groupsCount = prefs.loadGroups().size
+        ).sanitize()
         prefs.saveCurrentUser(user)
         realtime.connect(user)
 
-        // Subscribe to cloud account backup channel for this email
+        // Subscribe to cloud account backup and admin governance channels for this user
         val accountTopic = "pinpulse/v1/accounts/${realtime.cleanEmail(email)}/backup"
         realtime.subscribe(accountTopic)
+        realtime.subscribe("pinpulse/v1/admin/users/$userId")
+        realtime.subscribe("pinpulse/v1/admin/users/${friendCode.uppercase()}")
+        realtime.subscribe("pinpulse/v1/admin/users/${realtime.cleanEmail(email)}")
 
         // Resubscribe to existing groups and friends
         prefs.loadGroups().forEach { g ->
@@ -708,10 +758,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         LocationTrackingService.start(app)
     }
 
+    fun isSystemGpsEnabled(): Boolean {
+        return try {
+            val lm = app.getSystemService(Context.LOCATION_SERVICE) as? android.location.LocationManager ?: return false
+            lm.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER) ||
+                lm.isProviderEnabled(android.location.LocationManager.NETWORK_PROVIDER)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     fun updateMyLocation(lat: Double, lng: Double, speed: Float) {
         val current = prefs.loadCurrentUser() ?: return
         val batteryInfo = LocationTrackingService.getBatteryInfo(app)
+        val gpsOn = isSystemGpsEnabled()
         val now = System.currentTimeMillis()
+        val friendsCount = prefs.loadFriends().size
+        val groupsCount = prefs.loadGroups().size
         val updated = current.copy(
             latitude = lat,
             longitude = lng,
@@ -719,6 +782,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             batteryPercent = batteryInfo.first,
             isCharging = batteryInfo.second,
             isSharingLocation = true,
+            isGpsEnabled = gpsOn,
+            friendsCount = friendsCount,
+            groupsCount = groupsCount,
             lastUpdated = now
         )
         prefs.saveCurrentUser(updated)
@@ -736,7 +802,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             batteryPercent = batteryInfo.first,
             isCharging = batteryInfo.second,
             isSharingLocation = true,
-            timestamp = now
+            isGpsEnabled = gpsOn,
+            timestamp = now,
+            subscriptionPlan = updated.subscriptionPlan,
+            accountStatus = updated.accountStatus,
+            subscriptionExpiresAt = updated.effectiveExpiresAt,
+            maxFriends = updated.maxFriends,
+            maxGroups = updated.maxGroups,
+            rateLimitSec = updated.rateLimitSec,
+            monthlyRateUsd = updated.monthlyRateUsd,
+            friendsCount = friendsCount,
+            groupsCount = groupsCount
         )
         realtime.publishLocation(packet)
     }
@@ -746,10 +822,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val cleanStatus = status.trim().take(28)
         val now = System.currentTimeMillis()
         val batteryInfo = LocationTrackingService.getBatteryInfo(app)
+        val gpsOn = isSystemGpsEnabled()
+        val friendsCount = prefs.loadFriends().size
+        val groupsCount = prefs.loadGroups().size
         val updated = current.copy(
             statusMessage = cleanStatus,
             batteryPercent = batteryInfo.first,
             isCharging = batteryInfo.second,
+            isGpsEnabled = gpsOn,
+            friendsCount = friendsCount,
+            groupsCount = groupsCount,
             lastUpdated = now
         )
         prefs.saveCurrentUser(updated)
@@ -772,7 +854,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             batteryPercent = batteryInfo.first,
             isCharging = batteryInfo.second,
             isSharingLocation = true,
-            timestamp = now
+            isGpsEnabled = gpsOn,
+            timestamp = now,
+            subscriptionPlan = updated.subscriptionPlan,
+            accountStatus = updated.accountStatus,
+            subscriptionExpiresAt = updated.effectiveExpiresAt,
+            maxFriends = updated.maxFriends,
+            maxGroups = updated.maxGroups,
+            rateLimitSec = updated.rateLimitSec,
+            monthlyRateUsd = updated.monthlyRateUsd,
+            friendsCount = friendsCount,
+            groupsCount = groupsCount
         )
         realtime.publishLocation(packet)
     }
@@ -884,6 +976,119 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+    /**
+     * 🆘 1-Tap SOS Emergency Broadcast Button:
+     * Alerts ALL friends, ALL group members, and the Fleet Command Console simultaneously
+     * with exact GPS coordinates, battery level, and a direct Google Maps navigation link.
+     */
+    fun triggerSosEmergencyBroadcast() {
+        val me = prefs.loadCurrentUser() ?: return
+        val batteryInfo = LocationTrackingService.getBatteryInfo(app)
+        val lat = me.latitude
+        val lng = me.longitude
+        val mapsLink = if (lat != 0.0 || lng != 0.0) {
+            "https://www.google.com/maps/dir/?api=1&destination=$lat,$lng"
+        } else {
+            "Waiting for GPS fix"
+        }
+
+        val sosMessage = "🆘 SOS EMERGENCY from ${me.displayName}! Battery: ${batteryInfo.first}%${if (batteryInfo.second) " ⚡" else ""} • Coords: ${String.format(java.util.Locale.US, "%.5f, %.5f", lat, lng)} • Maps: $mapsLink"
+
+        val sosAlert = AlertMessage(
+            id = "sos_" + System.currentTimeMillis(),
+            senderId = me.id,
+            senderName = me.displayName,
+            type = "SOS_EMERGENCY",
+            message = sosMessage,
+            timestamp = System.currentTimeMillis()
+        )
+        val sosJson = gson.toJson(sosAlert)
+
+        // 1. Update our floating radar status bubble to SOS EMERGENCY
+        updateMyStatusMessage("🆘 SOS EMERGENCY!")
+
+        // 2. Broadcast to all accepted friends
+        prefs.loadFriends().forEach { f ->
+            if (f.id.isNotBlank()) {
+                realtime.publish("pinpulse/v1/alerts/${f.id}", sosJson, qosLevel = 1)
+            }
+            if (f.friendCode.isNotBlank()) {
+                realtime.publish("pinpulse/v1/alerts/${f.friendCode.uppercase()}", sosJson, qosLevel = 1)
+            }
+        }
+
+        // 3. Broadcast to all group members & group channels
+        val allGroupMemberIds = prefs.loadGroups().flatMap { it.memberIds }.distinct().filterNot { it == me.id }
+        allGroupMemberIds.forEach { memberId ->
+            if (memberId.isNotBlank()) {
+                realtime.publish("pinpulse/v1/alerts/$memberId", sosJson, qosLevel = 1)
+            }
+        }
+
+        // 4. Broadcast to global fleet emergency alert channel (for Web Admin Console)
+        realtime.publish("pinpulse/v1/alerts/broadcast", sosJson, qosLevel = 1)
+
+        // 5. Show local confirmation banner
+        _activeAlert.value = AlertMessage(
+            senderId = "system",
+            senderName = "SOS Dispatched",
+            type = "SOS_SENT",
+            message = "🆘 Emergency SOS Broadcast sent to all friends & groups with your coordinates and Google Maps link!"
+        )
+    }
+
+    // --- Subscription Plan Quotas & Enforcement ---
+
+    fun canAddMoreFriends(): Pair<Boolean, String> {
+        val me = prefs.loadCurrentUser() ?: return Pair(false, "Please sign in first.")
+        if (me.isSubscriptionExpired) {
+            return Pair(false, "Your ${me.planDisplayName} has expired (0 days left). Please renew or upgrade your plan!")
+        }
+        val currentCount = prefs.loadFriends().size
+        val maxAllowed = me.maxFriends
+        return if (currentCount >= maxAllowed) {
+            Pair(
+                false,
+                "Plan Limit Reached: Your ${me.planDisplayName} allows up to $maxAllowed friend${if (maxAllowed == 1) "" else "s"} ($currentCount/$maxAllowed used). Upgrade to Family (10 Friends) or Business (50 Friends)!"
+            )
+        } else {
+            Pair(true, "")
+        }
+    }
+
+    fun canJoinOrCreateGroup(): Pair<Boolean, String> {
+        val me = prefs.loadCurrentUser() ?: return Pair(false, "Please sign in first.")
+        if (me.isSubscriptionExpired) {
+            return Pair(false, "Your ${me.planDisplayName} has expired (0 days left). Please renew or upgrade your plan!")
+        }
+        val currentCount = prefs.loadGroups().size
+        val maxAllowed = me.maxGroups
+        if (maxAllowed <= 0) {
+            return Pair(
+                false,
+                "Plan Limit Reached: The 7-Day Demo Pack does not include Groups (0 Groups allowed). Upgrade to Family (2 Groups, 10 Friends) or Business (10 Groups, 50 Friends)!"
+            )
+        }
+        return if (currentCount >= maxAllowed) {
+            Pair(
+                false,
+                "Plan Limit Reached: Your ${me.planDisplayName} allows up to $maxAllowed group${if (maxAllowed == 1) "" else "s"} ($currentCount/$maxAllowed used). Upgrade to Business (10 Groups) or Custom Enterprise!"
+            )
+        } else {
+            Pair(true, "")
+        }
+    }
+
+    private fun notifyPlanLimitBlocked(reason: String) {
+        _activeAlert.value = AlertMessage(
+            senderId = "system",
+            senderName = "Plan Limit Reached",
+            type = "PLAN_LIMIT",
+            message = "🔒 $reason"
+        )
+        _showSubscriptionDialog.value = true
+    }
+
     fun setSelfMarkerMode(mode: String) {
         prefs.setSelfMarkerMode(mode)
     }
@@ -896,6 +1101,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun createGroup(name: String) {
         val me = prefs.loadCurrentUser() ?: return
+        val (allowed, reason) = canJoinOrCreateGroup()
+        if (!allowed) {
+            notifyPlanLimitBlocked(reason)
+            return
+        }
         val cleanName = name.filter { it.isLetter() }.take(3).uppercase().ifEmpty { "GRP" }
         val randomCode = "$cleanName-" + (100..999).random()
         val group = Group(
@@ -917,6 +1127,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val me = prefs.loadCurrentUser() ?: return
         val cleanCode = code.trim().uppercase()
         if (cleanCode.isBlank()) return
+        val alreadyInGroup = prefs.loadGroups().any { it.code.equals(cleanCode, ignoreCase = true) }
+        if (!alreadyInGroup) {
+            val (allowed, reason) = canJoinOrCreateGroup()
+            if (!allowed) {
+                notifyPlanLimitBlocked(reason)
+                return
+            }
+        }
 
         pendingJoinGroupCodes.add(cleanCode)
 
@@ -1078,6 +1296,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun sendFriendRequest(targetFriendCodeOrEmail: String, isEmail: Boolean = false) {
         val me = prefs.loadCurrentUser() ?: return
+        val (allowed, reason) = canAddMoreFriends()
+        if (!allowed) {
+            notifyPlanLimitBlocked(reason)
+            return
+        }
         val rawInput = targetFriendCodeOrEmail.trim()
         val actualIsEmail = isEmail || rawInput.contains("@")
         val found = if (actualIsEmail) lookupUserByEmail(rawInput) else lookupUserByCode(rawInput)
@@ -1102,6 +1325,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun acceptFriendRequest(request: FriendRequest) {
         val me = prefs.loadCurrentUser() ?: return
+        val (allowed, reason) = canAddMoreFriends()
+        if (!allowed) {
+            notifyPlanLimitBlocked(reason)
+            return
+        }
         val known = registeredUsers.value[request.fromUserId]
         val newFriend = User(
             id = request.fromUserId,

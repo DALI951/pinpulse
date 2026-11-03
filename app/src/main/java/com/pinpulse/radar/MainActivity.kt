@@ -147,4 +147,52 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    /**
+     * Native 1-Tap "Turn On Location (GPS)" popup inside the app using Google Play Services
+     * LocationSettingsRequest, with fallback to Location Settings screen.
+     */
+    fun promptTurnOnGpsDialog() {
+        try {
+            val locationRequest = com.google.android.gms.location.LocationRequest.Builder(
+                Priority.PRIORITY_HIGH_ACCURACY,
+                2500L
+            ).build()
+            val builder = com.google.android.gms.location.LocationSettingsRequest.Builder()
+                .addLocationRequest(locationRequest)
+                .setAlwaysShow(true)
+
+            val task = LocationServices.getSettingsClient(this).checkLocationSettings(builder.build())
+            task.addOnSuccessListener {
+                fetchImmediateLocation()
+            }
+            task.addOnFailureListener { exception ->
+                if (exception is com.google.android.gms.common.api.ResolvableApiException) {
+                    try {
+                        exception.startResolutionForResult(this, 9522)
+                    } catch (_: Exception) {
+                        try {
+                            startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+                        } catch (_: Exception) {}
+                    }
+                } else {
+                    try {
+                        startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+                    } catch (_: Exception) {}
+                }
+            }
+        } catch (_: Exception) {
+            try {
+                startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+            } catch (_: Exception) {}
+        }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == 9522) {
+            fetchImmediateLocation()
+        }
+    }
 }

@@ -44,6 +44,9 @@ fun AlertNotificationBanner(
         modifier = modifier
     ) {
         if (alert != null) {
+            val context = androidx.compose.ui.platform.LocalContext.current
+            val mapsUrl = Regex("https://www\\.google\\.com/maps/[^\\s]+").find(alert.message)?.value
+
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -69,10 +72,34 @@ fun AlertNotificationBanner(
                     Text(
                         text = alert.message,
                         color = Color(0xFFFEE2E2),
-                        fontSize = 13.sp,
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.weight(1f)
                     )
+
+                    if (mapsUrl != null) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        androidx.compose.material3.Button(
+                            onClick = {
+                                try {
+                                    val intent = android.content.Intent(
+                                        android.content.Intent.ACTION_VIEW,
+                                        android.net.Uri.parse(mapsUrl)
+                                    ).apply {
+                                        addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    }
+                                    context.startActivity(intent)
+                                } catch (_: Exception) {}
+                            },
+                            colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFFEF4444)
+                            ),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("🗺️ Map", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
 
                     IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
                         Icon(

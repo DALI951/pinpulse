@@ -9,6 +9,14 @@ const DB_FILE = path.join(__dirname, 'db.json');
 
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
+app.use(express.static(path.join(__dirname, '..', 'web')));
+
+const PACK_PRESETS = {
+  DEMO:     { subscriptionPlan: 'DEMO',     maxFriends: 1,   maxGroups: 0,  monthlyRateUsd: 0.00,  rateLimitSec: 5, defaultDays: 7 },
+  FAMILY:   { subscriptionPlan: 'FAMILY',   maxFriends: 10,  maxGroups: 2,  monthlyRateUsd: 9.99,  rateLimitSec: 3, defaultDays: 30 },
+  BUSINESS: { subscriptionPlan: 'BUSINESS', maxFriends: 50,  maxGroups: 10, monthlyRateUsd: 29.99, rateLimitSec: 2, defaultDays: 30 },
+  CUSTOM:   { subscriptionPlan: 'CUSTOM',   maxFriends: 100, maxGroups: 25, monthlyRateUsd: 49.99, rateLimitSec: 1, defaultDays: 30 }
+};
 
 // Initial DB structure
 let db = {
@@ -46,13 +54,23 @@ app.post('/api/users/register', (req, res) => {
     return res.status(400).json({ error: 'Missing id or friendCode' });
   }
 
+  const existing = db.users[id] || {};
+  const now = Date.now();
   const user = {
     id,
-    email: email || '',
-    displayName: displayName || 'User',
+    email: email || existing.email || '',
+    displayName: displayName || existing.displayName || 'User',
     friendCode: friendCode.toUpperCase(),
-    avatarBase64: avatarBase64 || null,
-    lastUpdated: Date.now()
+    avatarBase64: avatarBase64 || existing.avatarBase64 || null,
+    subscriptionPlan: existing.subscriptionPlan || 'DEMO',
+    accountStatus: existing.accountStatus || 'ACTIVE',
+    subscriptionStartAt: existing.subscriptionStartAt || now,
+    subscriptionExpiresAt: existing.subscriptionExpiresAt || (now + 7 * 86400000),
+    maxFriends: existing.maxFriends !== undefined ? existing.maxFriends : 1,
+    maxGroups: existing.maxGroups !== undefined ? existing.maxGroups : 0,
+    rateLimitSec: existing.rateLimitSec || 5,
+    monthlyRateUsd: existing.monthlyRateUsd || 0.0,
+    lastUpdated: now
   };
 
   db.users[id] = user;
@@ -226,6 +244,58 @@ app.post('/api/groups/kick', (req, res) => {
 // 12. Master Web Radar: List all users
 app.get('/api/users/all', (req, res) => {
   res.json({ status: 'ok', users: Object.values(db.users) });
+});
+
+// 13. Admin: Update User Subscription Pack, Rate Limit, Quotas, or Account Status
+app.post('/api/admin/users/:id/policy', (req, res) => {
+  const userId = req.params.id;
+  const user = db.users[userId];
+  if (!user) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+
+  const {
+    subscriptionPlan,
+    accountStatus,
+    subscriptionExpiresAt,
+    maxFriends,
+    maxGroups,
+    rateLimitSec,
+    monthlyRateUsd
+  } = req.body;
+
+  if (subscriptionPlan) {
+    const preset = PACK_PRESETS[subscriptionPlan.toUpperCase()] || PACK_PRESETS.DEMO;
+    user.subscriptionPlan = preset.subscriptionPlan;
+    if (maxFriends === undefined) user.maxFriends = preset.maxFriends;
+    if (maxGroups === undefined) user.maxGroups = preset.maxGroups;
+    if (monthlyRateUsd === undefined) user.monthlyRateUsd = preset.monthlyRateUsd;
+    if (rateLimitSec === undefined) user.rateLimitSec = preset.rateLimitSec;
+  }
+  if (accountStatus) user.accountStatus = accountStatus.toUpperCase();
+  if (subscriptionExpiresAt !== undefined) user.subscriptionExpiresAt = Number(subscriptionExpiresAt);
+  if (maxFriends !== undefined) user.maxFriends = Number(maxFriends);
+  if (maxGroups !== undefined) user.maxGroups = Number(maxGroups);
+  if (rateLimitSec !== undefined) user.rateLimitSec = Number(rateLimitSec);
+  if (monthlyRateUsd !== undefined) user.monthlyRateUsd = Number(monthlyRateUsd);
+  user.lastUpdated = Date.now();
+
+  saveDb();
+  res.json({ status: 'ok', user });
+});
+
+// 14. Admin: Delete User Account
+app.delete('/api/admin/users/:id', (req, res) => {
+  const userId = req.params.id;
+  const user = db.users[userId];
+  if (!user) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+  if (user.friendCode) delete db.codes[user.friendCode];
+  if (user.email) delete db.emails[user.email.toLowerCase()];
+  delete db.users[userId];
+  saveDb();
+  res.json({ status: 'ok', deletedUserId: userId });
 });
 
 app.listen(PORT, () => {

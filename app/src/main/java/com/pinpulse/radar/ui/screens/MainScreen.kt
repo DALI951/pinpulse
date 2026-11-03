@@ -111,11 +111,26 @@ fun MainScreen(
     val kickState by viewModel.kickState.collectAsState()
     val isSirenActive by com.pinpulse.radar.util.SirenHelper.isSirenActive.collectAsState()
     val isSirenPinDialogOpen by viewModel.isSirenPinDialogOpen.collectAsState()
+    val showSubscriptionDialog by viewModel.showSubscriptionDialog.collectAsState()
 
     var activeTab by remember { mutableStateOf("map") } // "map", "friends", "groups"
     var showProfileDialog by remember { mutableStateOf(false) }
     var showSettingsDialog by remember { mutableStateOf(false) }
+    var showSosDialog by remember { mutableStateOf(false) }
     var centerTarget by remember { mutableStateOf<User?>(null) }
+
+    // Enforce Account Status & Subscription Expiry Lock Screen
+    val meUser = currentUser
+    if (meUser != null) {
+        val statusUpper = meUser.accountStatus.uppercase()
+        if (statusUpper == "BANNED" || statusUpper == "DEACTIVATED" || meUser.isSubscriptionExpired) {
+            AccountLockScreen(
+                user = meUser,
+                onSignOut = { viewModel.signOut() }
+            )
+            return
+        }
+    }
 
     val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
 
@@ -136,20 +151,30 @@ fun MainScreen(
 
     var isBackgroundLocationGranted by remember { mutableStateOf(checkBgLocationGranted(context)) }
     var isBatteryIgnored by remember { mutableStateOf(checkBatteryIgnored(context)) }
+    var isGpsSwitchOn by remember { mutableStateOf(viewModel.isSystemGpsEnabled()) }
 
     androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
                 isBackgroundLocationGranted = checkBgLocationGranted(context)
                 isBatteryIgnored = checkBatteryIgnored(context)
+                isGpsSwitchOn = viewModel.isSystemGpsEnabled()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
+    // Periodically refresh GPS switch state and prompt 1-Tap Turn On Location on startup if off
     LaunchedEffect(Unit) {
         viewModel.checkForUpdates()
+        if (!viewModel.isSystemGpsEnabled()) {
+            (context as? com.pinpulse.radar.MainActivity)?.promptTurnOnGpsDialog()
+        }
+        while (true) {
+            kotlinx.coroutines.delay(2500L)
+            isGpsSwitchOn = viewModel.isSystemGpsEnabled()
+        }
     }
 
     // Background Location ("Allow all the time") Permission Launcher for Android 10+
@@ -277,11 +302,68 @@ fun MainScreen(
                 }
             }
 
-            // Live Alert Banner (when someone turns off location)
+            // Live Alert Banner (when someone turns off location or SOS is received)
             AlertNotificationBanner(
                 alert = activeAlert,
                 onDismiss = { viewModel.dismissAlert() }
             )
+
+            // Active Subscription Plan & Free Days Countdown Bar (visible to every user on app open)
+            if (meUser != null) {
+                SubscriptionStatusBanner(
+                    user = meUser,
+                    friendsCount = friends.size,
+                    groupsCount = groups.size,
+                    onClick = { viewModel.openSubscriptionDialog() }
+                )
+            }
+
+            // 1-Tap Native Turn On Location (GPS) Banner when Phone GPS Switch is OFF
+            if (!isGpsSwitchOn) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 4.dp)
+                        .background(Color(0xFF451A03), RoundedCornerShape(10.dp))
+                        .border(1.5.dp, Color(0xFFF59E0B), RoundedCornerShape(10.dp))
+                        .clickable {
+                            (context as? com.pinpulse.radar.MainActivity)?.promptTurnOnGpsDialog()
+                        }
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "📍 Phone GPS is Turned OFF",
+                                color = Color(0xFFFDE68A),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                            Text(
+                                text = "Tap here to turn on GPS in 1 click for exact street tracking",
+                                color = Color.White,
+                                fontSize = 11.sp
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .background(Color(0xFFF59E0B), RoundedCornerShape(8.dp))
+                                .padding(horizontal = 10.dp, vertical = 5.dp)
+                        ) {
+                            Text(
+                                text = "Turn On",
+                                color = Color.Black,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                        }
+                    }
+                }
+            }
 
             // Filter Chips Bar
             Row(
@@ -458,6 +540,26 @@ fun MainScreen(
             }
         }
 
+        // 🆘 1-Tap SOS Emergency Broadcast Button (Above My Location)
+        FloatingActionButton(
+            onClick = { showSosDialog = true },
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .navigationBarsPadding()
+                .padding(bottom = 152.dp, end = 16.dp)
+                .size(52.dp),
+            containerColor = DangerRed,
+            contentColor = Color.White,
+            shape = CircleShape
+        ) {
+            Text(
+                text = "SOS",
+                color = Color.White,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.ExtraBold
+            )
+        }
+
         // Center on My Location Button
         FloatingActionButton(
             onClick = {
@@ -630,6 +732,27 @@ fun MainScreen(
             KickConfirmationDialog(
                 state = state,
                 viewModel = viewModel
+            )
+        }
+
+        // Subscription Plan & Quotas Dialog
+        if (showSubscriptionDialog && currentUser != null) {
+            SubscriptionPlanDialog(
+                user = currentUser!!,
+                friendsCount = friends.size,
+                groupsCount = groups.size,
+                onDismiss = { viewModel.closeSubscriptionDialog() }
+            )
+        }
+
+        // 🆘 SOS Emergency Broadcast 3-Second Countdown / Confirm Dialog
+        if (showSosDialog) {
+            SosBroadcastDialog(
+                onConfirmSendSos = {
+                    showSosDialog = false
+                    viewModel.triggerSosEmergencyBroadcast()
+                },
+                onDismiss = { showSosDialog = false }
             )
         }
     }

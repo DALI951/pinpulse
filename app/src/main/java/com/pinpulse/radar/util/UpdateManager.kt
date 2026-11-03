@@ -36,9 +36,8 @@ data class UpdateState(
 
 object UpdateManager {
     private const val TAG = "UpdateManager"
-    private const val GITHUB_REPO = "DALI951/pinpulse"
-    private const val RELEASES_LIST_API = "https://api.github.com/repos/$GITHUB_REPO/releases?per_page=30"
-    private const val LATEST_RELEASE_API = "https://api.github.com/repos/$GITHUB_REPO/releases/latest"
+    private const val PRIVATE_GITHUB_REPO = "DALI951/pinpulse"
+    private const val PUBLIC_MIRROR_REPO = "DALI951/pinpulse-releases"
 
     private val _updateState = MutableStateFlow(UpdateState())
     val updateState: StateFlow<UpdateState> = _updateState.asStateFlow()
@@ -46,96 +45,129 @@ object UpdateManager {
     private data class ReleaseCandidate(
         val tagName: String,
         val apkUrl: String,
+        val fallbackMirrorApkUrl: String = "",
         val body: String
     )
 
-    private fun extractApkUrl(releaseObj: JSONObject): String {
+    private fun decodeGhToken(): String {
+        return try {
+            val hex = BuildConfig.GH_TOKEN_HEX
+            if (hex.isBlank() || hex.length % 2 != 0) return ""
+            val bytes = ByteArray(hex.length / 2)
+            for (i in bytes.indices) {
+                val byteVal = hex.substring(i * 2, i * 2 + 2).toInt(16)
+                bytes[i] = (byteVal xor 0x5A).toByte()
+            }
+            String(bytes, Charsets.UTF_8).trim()
+        } catch (_: Exception) {
+            ""
+        }
+    }
+
+    private fun extractApkUrl(releaseObj: JSONObject, preferApiAssetUrl: Boolean): String {
         val assets = releaseObj.optJSONArray("assets") ?: return ""
         for (i in 0 until assets.length()) {
             val asset = assets.optJSONObject(i) ?: continue
             val name = asset.optString("name", "")
-            val url = asset.optString("browser_download_url", "")
-            if (name.endsWith(".apk", ignoreCase = true) && url.isNotBlank()) {
-                return url
+            if (!name.endsWith(".apk", ignoreCase = true)) continue
+            val apiAssetUrl = asset.optString("url", "")
+            val browserUrl = asset.optString("browser_download_url", "")
+            val chosen = if (preferApiAssetUrl && apiAssetUrl.isNotBlank()) apiAssetUrl else browserUrl
+            if (chosen.isNotBlank()) {
+                return chosen
             }
         }
         return ""
     }
 
     /**
-     * Scans ALL recent GitHub releases (not stopping at the first update found)
+     * Scans ALL recent GitHub releases across both the private repository (authenticated via API asset stream)
+     * and the public release binary mirror (DALI951/pinpulse-releases), never stopping at the first update found,
      * and always picks the single highest version number that has a ready APK.
-     * This ensures that even if a user is 4 or 5 updates behind, they jump
-     * straight to the absolute latest version in a single install.
      */
     private fun fetchHighestRelease(): ReleaseCandidate? {
         var highestCandidate: ReleaseCandidate? = null
+        val token = decodeGhToken()
 
-        // 1. Scan full releases list and compare every release to find the highest version
-        try {
-            val conn = (URL(RELEASES_LIST_API).openConnection() as HttpURLConnection).apply {
-                connectTimeout = 8000
-                readTimeout = 8000
-                useCaches = false
-                setRequestProperty("User-Agent", "PinPulse-Android")
-                setRequestProperty("Accept", "application/vnd.github.v3+json")
-                setRequestProperty("Cache-Control", "no-cache")
-            }
-            if (conn.responseCode == 200) {
-                val jsonStr = conn.inputStream.bufferedReader().use { it.readText() }
-                val releasesArray = org.json.JSONArray(jsonStr)
-                for (i in 0 until releasesArray.length()) {
-                    val rel = releasesArray.optJSONObject(i) ?: continue
-                    if (rel.optBoolean("draft", false)) continue
-                    val tag = rel.optString("tag_name", "").trim()
-                    if (tag.isBlank()) continue
-                    val apk = extractApkUrl(rel)
-                    if (apk.isBlank()) continue
-                    val notes = rel.optString("body", "")
+        val reposToScan = listOf(
+            Pair(PUBLIC_MIRROR_REPO, false),
+            Pair(PRIVATE_GITHUB_REPO, token.isNotBlank())
+        )
 
-                    // Do NOT stop at the first release found — keep checking all releases
-                    // and retain only the one with the highest semantic version!
-                    if (highestCandidate == null || compareVersions(tag, highestCandidate.tagName)) {
-                        highestCandidate = ReleaseCandidate(
-                            tagName = tag,
-                            apkUrl = apk,
-                            body = notes
-                        )
+        for ((repo, isPrivateRepo) in reposToScan) {
+            val listUrl = "https://api.github.com/repos/$repo/releases?per_page=30"
+            val latestUrl = "https://api.github.com/repos/$repo/releases/latest"
+
+            // 1. Scan full releases list and compare every release to find the highest version
+            try {
+                val conn = (URL(listUrl).openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 8000
+                    readTimeout = 8000
+                    useCaches = false
+                    setRequestProperty("User-Agent", "PinPulse-Android")
+                    setRequestProperty("Accept", "application/vnd.github.v3+json")
+                    setRequestProperty("Cache-Control", "no-cache")
+                    if (token.isNotBlank()) {
+                        setRequestProperty("Authorization", "Bearer $token")
                     }
                 }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Releases list scan fallback: ${e.message}")
-        }
+                if (conn.responseCode == 200) {
+                    val jsonStr = conn.inputStream.bufferedReader().use { it.readText() }
+                    val releasesArray = org.json.JSONArray(jsonStr)
+                    for (i in 0 until releasesArray.length()) {
+                        val rel = releasesArray.optJSONObject(i) ?: continue
+                        if (rel.optBoolean("draft", false)) continue
+                        val tag = rel.optString("tag_name", "").trim()
+                        if (tag.isBlank()) continue
+                        val apk = extractApkUrl(rel, preferApiAssetUrl = isPrivateRepo)
+                        if (apk.isBlank()) continue
+                        val notes = rel.optString("body", "")
 
-        // 2. Also check /releases/latest and take whichever is strictly newer
-        try {
-            val conn = (URL(LATEST_RELEASE_API).openConnection() as HttpURLConnection).apply {
-                connectTimeout = 8000
-                readTimeout = 8000
-                useCaches = false
-                setRequestProperty("User-Agent", "PinPulse-Android")
-                setRequestProperty("Accept", "application/vnd.github.v3+json")
-                setRequestProperty("Cache-Control", "no-cache")
-            }
-            if (conn.responseCode == 200) {
-                val jsonStr = conn.inputStream.bufferedReader().use { it.readText() }
-                val root = JSONObject(jsonStr)
-                val tag = root.optString("tag_name", "").trim()
-                val apk = extractApkUrl(root)
-                val notes = root.optString("body", "")
-                if (tag.isNotBlank() && apk.isNotBlank()) {
-                    if (highestCandidate == null || compareVersions(tag, highestCandidate.tagName)) {
-                        highestCandidate = ReleaseCandidate(
-                            tagName = tag,
-                            apkUrl = apk,
-                            body = notes
-                        )
+                        if (highestCandidate == null || compareVersions(tag, highestCandidate.tagName)) {
+                            highestCandidate = ReleaseCandidate(
+                                tagName = tag,
+                                apkUrl = apk,
+                                body = notes
+                            )
+                        }
                     }
                 }
+            } catch (e: Exception) {
+                Log.w(TAG, "Releases list scan fallback ($repo): ${e.message}")
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "Latest release check failed: ${e.message}")
+
+            // 2. Also check /releases/latest and take whichever is strictly newer
+            try {
+                val conn = (URL(latestUrl).openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 8000
+                    readTimeout = 8000
+                    useCaches = false
+                    setRequestProperty("User-Agent", "PinPulse-Android")
+                    setRequestProperty("Accept", "application/vnd.github.v3+json")
+                    setRequestProperty("Cache-Control", "no-cache")
+                    if (token.isNotBlank()) {
+                        setRequestProperty("Authorization", "Bearer $token")
+                    }
+                }
+                if (conn.responseCode == 200) {
+                    val jsonStr = conn.inputStream.bufferedReader().use { it.readText() }
+                    val root = JSONObject(jsonStr)
+                    val tag = root.optString("tag_name", "").trim()
+                    val apk = extractApkUrl(root, preferApiAssetUrl = isPrivateRepo)
+                    val notes = root.optString("body", "")
+                    if (tag.isNotBlank() && apk.isNotBlank()) {
+                        if (highestCandidate == null || compareVersions(tag, highestCandidate.tagName)) {
+                            highestCandidate = ReleaseCandidate(
+                                tagName = tag,
+                                apkUrl = apk,
+                                body = notes
+                            )
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Latest release check failed ($repo): ${e.message}")
+            }
         }
 
         return highestCandidate
@@ -364,17 +396,25 @@ object UpdateManager {
 
         try {
             var currentUrl = apkUrl
+            val token = decodeGhToken()
             var conn: HttpURLConnection
             var redirects = 0
             while (true) {
+                val isGitHubApiAsset = currentUrl.contains("api.github.com/")
                 conn = (URL(currentUrl).openConnection() as HttpURLConnection).apply {
                     connectTimeout = 15000
                     readTimeout = 15000
-                    instanceFollowRedirects = true
+                    instanceFollowRedirects = !isGitHubApiAsset
                     setRequestProperty("User-Agent", "PinPulse-Android")
+                    if (isGitHubApiAsset) {
+                        setRequestProperty("Accept", "application/octet-stream")
+                        if (token.isNotBlank()) {
+                            setRequestProperty("Authorization", "Bearer $token")
+                        }
+                    }
                 }
                 val code = conn.responseCode
-                if (code == HttpURLConnection.HTTP_MOVED_PERM || code == HttpURLConnection.HTTP_MOVED_TEMP || code == 307 || code == 308) {
+                if (code == HttpURLConnection.HTTP_MOVED_PERM || code == HttpURLConnection.HTTP_MOVED_TEMP || code == 303 || code == 307 || code == 308) {
                     currentUrl = conn.getHeaderField("Location") ?: break
                     redirects++
                     if (redirects > 5) break

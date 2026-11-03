@@ -5,6 +5,12 @@ plugins {
 
 val propVersionCode = (project.findProperty("versionCode") as? String)?.toIntOrNull() ?: 1
 val propVersionName = (project.findProperty("versionName") as? String) ?: "0.1"
+val rawUpdateToken = (project.findProperty("updateReadToken") as? String)
+    ?: System.getenv("RELEASE_MIRROR_TOKEN")
+    ?: ""
+val xorTokenHex = rawUpdateToken.encodeToByteArray().joinToString("") { b ->
+    ((b.toInt() and 0xFF) xor 0x5A).toString(16).padStart(2, '0')
+}
 
 android {
     namespace = "com.pinpulse.radar"
@@ -24,6 +30,7 @@ android {
 
         buildConfigField("String", "APPLICATION_ID", "\"com.pinpulse.radar\"")
         buildConfigField("String", "VERSION_NAME", "\"$propVersionName\"")
+        buildConfigField("String", "GH_TOKEN_HEX", "\"$xorTokenHex\"")
     }
 
     signingConfigs {

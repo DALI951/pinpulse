@@ -1269,6 +1269,151 @@
       top: 4px;
       left: 4px;
     }
+
+    /* ---------------- SAAS SUBSCRIPTIONS & USERS CRM DASHBOARD ---------------- */
+    #crm-view {
+      display: none;
+      flex: 1;
+      background: var(--bg);
+      overflow-y: auto;
+      padding: 20px 24px 60px;
+      flex-direction: column;
+      gap: 18px;
+    }
+    #crm-view.active {
+      display: flex;
+    }
+    .crm-kpi-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+      gap: 12px;
+    }
+    .crm-kpi-card {
+      background: var(--panel);
+      border: 1px solid var(--panel-border);
+      border-radius: 12px;
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .crm-kpi-lbl {
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      font-weight: 700;
+    }
+    .crm-kpi-val {
+      font-size: 1.45rem;
+      font-weight: 800;
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--text);
+    }
+    .crm-kpi-sub {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+    }
+    .crm-toolbar {
+      background: var(--panel);
+      border: 1px solid var(--panel-border);
+      border-radius: 12px;
+      padding: 12px 16px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .crm-table-wrap {
+      background: var(--panel);
+      border: 1px solid var(--panel-border);
+      border-radius: 14px;
+      overflow-x: auto;
+    }
+    .crm-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.8rem;
+      min-width: 1050px;
+    }
+    .crm-table th {
+      text-align: left;
+      padding: 12px 14px;
+      background: var(--panel-secondary);
+      color: var(--text-muted);
+      font-size: 0.7rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      border-bottom: 1px solid var(--panel-border);
+    }
+    .crm-table td {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--panel-border);
+      vertical-align: middle;
+    }
+    .crm-table tr:hover td {
+      background: rgba(59, 130, 246, 0.05);
+    }
+    .pack-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 8px;
+      border-radius: 6px;
+      font-size: 0.68rem;
+      font-weight: 800;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+    }
+    .pack-DEMO { background: rgba(245, 158, 11, 0.16); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.45); }
+    .pack-FAMILY { background: rgba(16, 185, 129, 0.16); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.45); }
+    .pack-BUSINESS { background: rgba(59, 130, 246, 0.16); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.45); }
+    .pack-CUSTOM { background: rgba(168, 85, 247, 0.18); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.5); }
+
+    .status-pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 99px;
+      font-size: 0.66rem;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+    .status-ACTIVE { background: rgba(16, 185, 129, 0.16); color: #34d399; }
+    .status-DEACTIVATED { background: rgba(245, 158, 11, 0.2); color: #fbbf24; }
+    .status-BANNED { background: rgba(239, 68, 68, 0.22); color: #f87171; }
+    .status-EXPIRED { background: rgba(148, 163, 184, 0.2); color: #cbd5e1; }
+    .status-DELETED { background: rgba(239, 68, 68, 0.35); color: #fecaca; }
+
+    .crm-btn {
+      padding: 5px 9px;
+      border-radius: 6px;
+      border: 1px solid var(--panel-border-bright);
+      background: var(--panel-secondary);
+      color: var(--text);
+      font-size: 0.7rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: 0.15s;
+    }
+    .crm-btn:hover { filter: brightness(1.2); border-color: var(--accent); }
+    .crm-btn.warn { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border-color: rgba(245, 158, 11, 0.45); }
+    .crm-btn.danger { background: rgba(239, 68, 68, 0.16); color: #f87171; border-color: rgba(239, 68, 68, 0.45); }
+    .crm-btn.success { background: rgba(16, 185, 129, 0.16); color: #34d399; border-color: rgba(16, 185, 129, 0.45); }
+    .crm-select {
+      background: var(--panel-secondary);
+      color: var(--text);
+      border: 1px solid var(--panel-border-bright);
+      border-radius: 6px;
+      padding: 4px 6px;
+      font-size: 0.72rem;
+      font-weight: 700;
+    }
+    #person-modal {
+      max-height: calc(100vh - 95px);
+      overflow-y: auto;
+    }
   </style>
 
   <!-- SVG Filters for Colorblind simulation -->
@@ -1322,6 +1467,13 @@
 
     <!-- Header Operations & Accessibility Buttons -->
     <div class="header-actions">
+      <button class="btn-admin accent-btn" id="btn-view-map" onclick="switchMainWorkspaceView('map')" style="background: var(--primary); color: #000;">
+        🗺️ Live Radar Map
+      </button>
+      <button class="btn-admin" id="btn-view-crm" onclick="switchMainWorkspaceView('crm')">
+        💼 Users & Subscriptions CRM
+      </button>
+
       <button class="btn-admin danger-btn" id="btn-fleet-silence" onclick="silenceAllFleetSirens()" title="Stop all ringing sirens remotely (Alt+M)" aria-label="Stop all sirens remotely">
         🛑 Silence All Sirens
       </button>
@@ -1507,6 +1659,34 @@
           </div>
         </div>
 
+        <!-- Subscription & Governance Quick Controls in Inspector -->
+        <div style="background: var(--panel-secondary); border: 1px solid var(--panel-border); border-radius: 10px; padding: 10px; margin-bottom: 10px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+            <span style="font-size:0.7rem; font-weight:800; color:var(--text-muted); text-transform:uppercase;">Subscription & Quotas</span>
+            <span id="m-sub-status-badge" class="status-pill status-ACTIVE">ACTIVE</span>
+          </div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; font-size:0.74rem; margin-bottom:8px;">
+            <div>Pack: <strong id="m-sub-plan" style="color:var(--primary);">DEMO</strong></div>
+            <div>Rate: <strong id="m-sub-rate" style="color:#fbbf24;">$0.00/mo</strong></div>
+            <div>Free/Paid Left: <strong id="m-sub-days" style="color:#38bdf8;">7d left</strong></div>
+            <div>Rate Limit: <strong id="m-sub-ratelimit">3s</strong></div>
+            <div style="grid-column:span 2;">Quotas: <strong id="m-sub-quotas">0/1 Friends • 0/0 Groups</strong></div>
+          </div>
+
+          <div style="display:flex; gap:4px; flex-wrap:wrap; margin-bottom:6px;">
+            <button class="crm-btn" onclick="adminSetPack(selectedUserId, 'DEMO')" title="1 Friend, 0 Groups, 7 Days Free">🎁 Demo (7d)</button>
+            <button class="crm-btn success" onclick="adminSetPack(selectedUserId, 'FAMILY')" title="10 Friends, 2 Groups, 30 Days">👨‍👩‍👧‍👦 Family</button>
+            <button class="crm-btn" style="color:#60a5fa; border-color:#3b82f6;" onclick="adminSetPack(selectedUserId, 'BUSINESS')" title="50 Friends, 10 Groups, 30 Days">🏢 Business</button>
+            <button class="crm-btn" style="color:#c084fc; border-color:#a855f7;" onclick="openCustomPlanModal(selectedUserId)" title="100+ Friends, Custom Quotas & Price">⚡ Custom</button>
+          </div>
+
+          <div style="display:flex; gap:4px; flex-wrap:wrap;">
+            <button class="crm-btn warn" id="m-deactivate-btn" onclick="adminToggleDeactivate(selectedUserId)">⏸️ Deactivate (Unpaid)</button>
+            <button class="crm-btn danger" id="m-ban-btn" onclick="adminToggleBan(selectedUserId)">🚫 Ban</button>
+            <button class="crm-btn danger" onclick="adminDeleteAccount(selectedUserId)">🗑️ Delete Acc</button>
+          </div>
+        </div>
+
         <!-- DUAL SIREN EMERGENCY CONTROLS -->
         <div class="siren-control-row">
           <button class="btn-action-ring" id="m-ring-btn" onclick="ringSelectedUser()">
@@ -1529,7 +1709,143 @@
         </div>
       </div>
     </section>
+
+    <!-- ==================== FULL SAAS USERS & SUBSCRIPTIONS CRM VIEW ==================== -->
+    <section id="crm-view" aria-label="Users and Subscriptions Management Dashboard">
+      <div class="crm-kpi-row">
+        <div class="crm-kpi-card">
+          <span class="crm-kpi-lbl">Total Registered Users</span>
+          <span class="crm-kpi-val" id="crm-kpi-total">0</span>
+          <span class="crm-kpi-sub" id="crm-kpi-online">0 currently online</span>
+        </div>
+        <div class="crm-kpi-card">
+          <span class="crm-kpi-lbl">Demo Pack (7-Day Free)</span>
+          <span class="crm-kpi-val" id="crm-kpi-demo" style="color:#fbbf24;">0</span>
+          <span class="crm-kpi-sub">1 Friend • 0 Groups • 7d Trial</span>
+        </div>
+        <div class="crm-kpi-card">
+          <span class="crm-kpi-lbl">Paid Subscribers</span>
+          <span class="crm-kpi-val" id="crm-kpi-paid" style="color:var(--primary);">0</span>
+          <span class="crm-kpi-sub">Family (10F/2G) • Business (50F/10G) • Custom</span>
+        </div>
+        <div class="crm-kpi-card">
+          <span class="crm-kpi-lbl">Deactivated / Banned</span>
+          <span class="crm-kpi-val" id="crm-kpi-locked" style="color:var(--danger);">0</span>
+          <span class="crm-kpi-sub">Paused until payment or banned</span>
+        </div>
+        <div class="crm-kpi-card">
+          <span class="crm-kpi-lbl">Monthly Recurring Revenue</span>
+          <span class="crm-kpi-val" id="crm-kpi-mrr" style="color:#38bdf8;">$0.00</span>
+          <span class="crm-kpi-sub">Active subscription billing rate</span>
+        </div>
+      </div>
+
+      <div class="crm-toolbar">
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+          <input type="text" id="crm-search" class="search-input" style="width:280px; padding-left:12px;" placeholder="Search user name, email, friend code, or pack..." oninput="renderCrmTable()" />
+          <select id="crm-filter-pack" class="crm-select" onchange="renderCrmTable()">
+            <option value="ALL">All Packs (Demo, Family, Business, Custom)</option>
+            <option value="DEMO">🎁 Demo Pack (1F / 0G / 7d Free)</option>
+            <option value="FAMILY">👨‍👩‍👧‍👦 Family Pack (10F / 2G)</option>
+            <option value="BUSINESS">🏢 Business Pack (50F / 10G)</option>
+            <option value="CUSTOM">⚡ Custom Enterprise (100+ Users)</option>
+          </select>
+          <select id="crm-filter-status" class="crm-select" onchange="renderCrmTable()">
+            <option value="ALL">All Account Statuses</option>
+            <option value="ACTIVE">🟢 Active</option>
+            <option value="DEACTIVATED">⏸️ Deactivated (Unpaid)</option>
+            <option value="BANNED">🚫 Banned</option>
+            <option value="EXPIRED">⌛ Expired (0 Free Days Left)</option>
+          </select>
+        </div>
+        <div style="font-size:0.75rem; color:var(--text-muted);">
+          Changes sync <strong>instantly in real time</strong> to the user's phone via MQTT Retained Governance.
+        </div>
+      </div>
+
+      <div class="crm-table-wrap">
+        <table class="crm-table">
+          <thead>
+            <tr>
+              <th>User / Account</th>
+              <th>GPS & Telemetry</th>
+              <th>Subscription Pack</th>
+              <th>Rate ($/mo)</th>
+              <th>Free / Remaining Days</th>
+              <th>Quotas (Friends & Groups)</th>
+              <th>Rate Limit</th>
+              <th>Account Status</th>
+              <th>Admin Actions (Pack / Lock / Ban / Delete)</th>
+            </tr>
+          </thead>
+          <tbody id="crm-table-body">
+            <tr>
+              <td colspan="9" style="text-align:center; padding:36px; color:var(--text-muted);">
+                Waiting for user registry & live packets...
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
   </main>
+
+  <!-- ==================== CUSTOM ENTERPRISE PLAN & USER EDITOR MODAL ==================== -->
+  <div id="custom-plan-modal" role="dialog" aria-modal="true" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:3000; align-items:center; justify-content:center; padding:16px;">
+    <div style="background:var(--panel); border:1px solid var(--panel-border-bright); border-radius:16px; width:100%; max-width:440px; padding:22px; box-shadow:0 20px 50px rgba(0,0,0,0.7);">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+        <h3 style="font-size:1.05rem; font-weight:800;">⚡ Configure User Plan, Quotas & Rate</h3>
+        <button class="modal-close-btn" onclick="closeCustomPlanModal()">✕</button>
+      </div>
+      <div id="cp-user-label" style="font-size:0.8rem; color:var(--primary); font-weight:700; margin-bottom:12px;">User</div>
+      <input type="hidden" id="cp-user-id" />
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:14px;">
+        <div>
+          <label style="font-size:0.7rem; color:var(--text-muted); display:block; margin-bottom:4px;">Subscription Pack</label>
+          <select id="cp-plan" class="crm-select" style="width:100%; padding:8px;" onchange="onCustomModalPackPresetChange()">
+            <option value="DEMO">🎁 DEMO (1F / 0G / 7d)</option>
+            <option value="FAMILY">👨‍👩‍👧‍👦 FAMILY (10F / 2G)</option>
+            <option value="BUSINESS">🏢 BUSINESS (50F / 10G)</option>
+            <option value="CUSTOM">⚡ CUSTOM ENTERPRISE (100+)</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:0.7rem; color:var(--text-muted); display:block; margin-bottom:4px;">Monthly Rate ($ USD)</label>
+          <input type="number" step="0.01" id="cp-rate-usd" class="search-input" style="padding:7px 10px;" value="49.99" />
+        </div>
+        <div>
+          <label style="font-size:0.7rem; color:var(--text-muted); display:block; margin-bottom:4px;">Max Friends Limit</label>
+          <input type="number" id="cp-max-friends" class="search-input" style="padding:7px 10px;" value="100" />
+        </div>
+        <div>
+          <label style="font-size:0.7rem; color:var(--text-muted); display:block; margin-bottom:4px;">Max Groups Limit</label>
+          <input type="number" id="cp-max-groups" class="search-input" style="padding:7px 10px;" value="25" />
+        </div>
+        <div>
+          <label style="font-size:0.7rem; color:var(--text-muted); display:block; margin-bottom:4px;">Remaining Days (Free/Paid)</label>
+          <input type="number" step="1" id="cp-days-left" class="search-input" style="padding:7px 10px;" value="30" />
+        </div>
+        <div>
+          <label style="font-size:0.7rem; color:var(--text-muted); display:block; margin-bottom:4px;">Telemetry Rate Limit (sec)</label>
+          <select id="cp-rate-limit" class="crm-select" style="width:100%; padding:8px;">
+            <option value="1">1s (Ultra Fast)</option>
+            <option value="2">2s (High Priority)</option>
+            <option value="3" selected>3s (Standard Live)</option>
+            <option value="5">5s (Balanced)</option>
+            <option value="10">10s (Eco)</option>
+            <option value="30">30s (Throttled)</option>
+            <option value="60">60s (Restricted)</option>
+          </select>
+        </div>
+      </div>
+
+      <div style="display:flex; gap:8px; justify-content:flex-end;">
+        <button class="btn-admin" onclick="closeCustomPlanModal()">Cancel</button>
+        <button class="btn-admin accent-btn" style="background:var(--primary); color:#000; font-weight:800;" onclick="saveCustomPlanModal()">💾 Save & Push to Phone</button>
+      </div>
+    </div>
+  </div>
 
   <!-- ==================== ACCESSIBILITY & DISPLAY DIALOG ==================== -->
   <div id="a11y-dialog" role="dialog" aria-modal="true" aria-labelledby="a11y-title" onclick="handleDialogBackdrop(event)">
@@ -1649,9 +1965,22 @@
 
     var REMOVED_KEY = 'pinpulse_master_removed_v1';
     var A11Y_KEY = 'pinpulse_admin_a11y_v1';
+    var CRM_USERS_KEY = 'pinpulse_admin_crm_users_v1';
+    var ADMIN_POLICIES_KEY = 'pinpulse_admin_policies_v1';
+    var DELETED_USERS_KEY = 'pinpulse_admin_deleted_v1';
 
     var removedIds = loadRemoved();
     var a11ySettings = loadA11y();
+    var adminPolicies = loadAdminPolicies();
+    var deletedUserIds = loadDeletedUsers();
+    var currentWorkspaceView = 'map';
+
+    var PACK_PRESETS = {
+      DEMO:     { plan: 'DEMO',     maxFriends: 1,   maxGroups: 0,  monthlyRateUsd: 0.00,  rateLimitSec: 5, defaultDays: 7 },
+      FAMILY:   { plan: 'FAMILY',   maxFriends: 10,  maxGroups: 2,  monthlyRateUsd: 9.99,  rateLimitSec: 3, defaultDays: 30 },
+      BUSINESS: { plan: 'BUSINESS', maxFriends: 50,  maxGroups: 10, monthlyRateUsd: 29.99, rateLimitSec: 2, defaultDays: 30 },
+      CUSTOM:   { plan: 'CUSTOM',   maxFriends: 100, maxGroups: 25, monthlyRateUsd: 49.99, rateLimitSec: 1, defaultDays: 30 }
+    };
 
     // Map Layers
     var layers = {
@@ -1706,6 +2035,63 @@
     function saveRemoved() {
       try { localStorage.setItem(REMOVED_KEY, JSON.stringify(removedIds)); } catch (e) {}
     }
+    function loadAdminPolicies() {
+      try { return JSON.parse(localStorage.getItem(ADMIN_POLICIES_KEY)) || {}; } catch (e) { return {}; }
+    }
+    function saveAdminPolicies() {
+      try { localStorage.setItem(ADMIN_POLICIES_KEY, JSON.stringify(adminPolicies)); } catch (e) {}
+    }
+    function loadDeletedUsers() {
+      try { return JSON.parse(localStorage.getItem(DELETED_USERS_KEY)) || {}; } catch (e) { return {}; }
+    }
+    function saveDeletedUsers() {
+      try { localStorage.setItem(DELETED_USERS_KEY, JSON.stringify(deletedUserIds)); } catch (e) {}
+    }
+    function loadCachedCrmUsers() {
+      try {
+        var cached = JSON.parse(localStorage.getItem(CRM_USERS_KEY)) || {};
+        Object.keys(cached).forEach(function(id) {
+          if (!deletedUserIds[id]) {
+            users[id] = applyAdminPolicyToUserObj(cached[id]);
+          }
+        });
+      } catch (e) {}
+    }
+    function saveCachedCrmUsers() {
+      try {
+        var compact = {};
+        Object.keys(users).forEach(function(id) {
+          if (deletedUserIds[id]) return;
+          var u = users[id];
+          compact[id] = {
+            id: u.id,
+            name: u.name,
+            email: u.email,
+            friendCode: u.friendCode,
+            lat: u.lat,
+            lng: u.lng,
+            speed: u.speed,
+            batteryPercent: u.batteryPercent,
+            isCharging: u.isCharging,
+            isSharing: u.isSharing,
+            isGpsEnabled: u.isGpsEnabled,
+            timestamp: u.timestamp,
+            subscriptionPlan: u.subscriptionPlan,
+            accountStatus: u.accountStatus,
+            subscriptionStartAt: u.subscriptionStartAt,
+            subscriptionExpiresAt: u.subscriptionExpiresAt,
+            maxFriends: u.maxFriends,
+            maxGroups: u.maxGroups,
+            rateLimitSec: u.rateLimitSec,
+            monthlyRateUsd: u.monthlyRateUsd,
+            friendsCount: u.friendsCount,
+            groupsCount: u.groupsCount
+          };
+        });
+        localStorage.setItem(CRM_USERS_KEY, JSON.stringify(compact));
+      } catch (e) {}
+    }
+
     function loadA11y() {
       var defaults = {
         theme: 'dark',
@@ -1755,11 +2141,58 @@
         : esc((u.name || '?').charAt(0).toUpperCase());
     }
 
+    function formatRemainingDays(u) {
+      if (!u) return '7d 0h left';
+      if (u.accountStatus === 'BANNED') return 'Banned';
+      if (u.accountStatus === 'DEACTIVATED') return 'Paused (Unpaid)';
+      var exp = u.subscriptionExpiresAt || (Date.now() + 7 * 86400000);
+      var diff = exp - Date.now();
+      if (diff <= 0) return '0d (Expired)';
+      var days = Math.floor(diff / 86400000);
+      var hours = Math.floor((diff % 86400000) / 3600000);
+      if (days > 0) return days + 'd ' + hours + 'h left';
+      var mins = Math.max(1, Math.floor((diff % 3600000) / 60000));
+      return hours + 'h ' + mins + 'm left';
+    }
+
+    function getRemainingDaysCount(u) {
+      var exp = (u && u.subscriptionExpiresAt) ? u.subscriptionExpiresAt : (Date.now() + 7 * 86400000);
+      return Math.max(0, Math.ceil((exp - Date.now()) / 86400000));
+    }
+
+    function getEffectiveAccountStatus(u) {
+      if (!u) return 'ACTIVE';
+      var st = (u.accountStatus || 'ACTIVE').toUpperCase();
+      if (st === 'BANNED' || st === 'DEACTIVATED' || st === 'DELETED') return st;
+      if (u.subscriptionExpiresAt && Date.now() > u.subscriptionExpiresAt) return 'EXPIRED';
+      return 'ACTIVE';
+    }
+
+    function applyAdminPolicyToUserObj(u) {
+      if (!u || !u.id) return u;
+      var pol = adminPolicies[u.id] || (u.friendCode && adminPolicies[u.friendCode]) || null;
+      var plan = ((pol && pol.subscriptionPlan) || u.subscriptionPlan || 'DEMO').toUpperCase();
+      var preset = PACK_PRESETS[plan] || PACK_PRESETS.DEMO;
+
+      u.subscriptionPlan = plan;
+      u.accountStatus = ((pol && pol.accountStatus) || u.accountStatus || 'ACTIVE').toUpperCase();
+      u.subscriptionStartAt = (pol && pol.subscriptionStartAt) || u.subscriptionStartAt || Date.now();
+      u.subscriptionExpiresAt = (pol && pol.subscriptionExpiresAt) || u.subscriptionExpiresAt || (u.subscriptionStartAt + preset.defaultDays * 86400000);
+      u.maxFriends = (pol && pol.maxFriends !== undefined) ? pol.maxFriends : (u.maxFriends !== undefined ? u.maxFriends : preset.maxFriends);
+      u.maxGroups = (pol && pol.maxGroups !== undefined) ? pol.maxGroups : (u.maxGroups !== undefined ? u.maxGroups : preset.maxGroups);
+      u.rateLimitSec = (pol && pol.rateLimitSec !== undefined) ? pol.rateLimitSec : (u.rateLimitSec || preset.rateLimitSec);
+      u.monthlyRateUsd = (pol && pol.monthlyRateUsd !== undefined) ? pol.monthlyRateUsd : (u.monthlyRateUsd !== undefined ? u.monthlyRateUsd : preset.monthlyRateUsd);
+      u.friendsCount = u.friendsCount || 0;
+      u.groupsCount = u.groupsCount || 0;
+      if (u.isGpsEnabled === undefined) u.isGpsEnabled = true;
+      return u;
+    }
+
     function getUser(id) {
       if (users[id]) return users[id];
       var s = removedIds[id];
       if (!s) return null;
-      return {
+      return applyAdminPolicyToUserObj({
         id: id,
         name: s.name || 'User ' + id.substring(0, 5),
         email: s.email || 'No email',
@@ -1770,9 +2203,10 @@
         batteryPercent: s.batteryPercent,
         isCharging: false,
         isSharing: true,
+        isGpsEnabled: s.isGpsEnabled !== false,
         timestamp: s.lastSeen || 0,
         snapshotOnly: true
-      };
+      });
     }
 
     function snapshotOf(u) {
@@ -1781,9 +2215,29 @@
         email: u.email,
         friendCode: u.friendCode,
         batteryPercent: u.batteryPercent,
+        isGpsEnabled: u.isGpsEnabled,
         lastSeen: u.timestamp,
         removedAt: Date.now()
       };
+    }
+
+    // ---------- Workspace View Switcher (Map vs SaaS CRM) ----------
+    function switchMainWorkspaceView(view) {
+      currentWorkspaceView = view;
+      var crmEl = document.getElementById('crm-view');
+      var btnMap = document.getElementById('view-btn-map');
+      var btnCrm = document.getElementById('view-btn-crm');
+      if (view === 'crm') {
+        if (crmEl) crmEl.classList.add('open');
+        if (btnCrm) btnCrm.classList.add('active');
+        if (btnMap) btnMap.classList.remove('active');
+        renderCrmTable();
+      } else {
+        if (crmEl) crmEl.classList.remove('open');
+        if (btnMap) btnMap.classList.add('active');
+        if (btnCrm) btnCrm.classList.remove('active');
+        setTimeout(function() { if (map) map.invalidateSize(); }, 150);
+      }
     }
 
     // ---------- Initialization ----------
@@ -1791,6 +2245,7 @@
 
     function init() {
       applyA11ySettings();
+      loadCachedCrmUsers();
 
       map = L.map('map', {
         center: [36.8065, 10.1815],
@@ -1819,16 +2274,23 @@
         layoutMarkers();
       });
 
+      Object.values(users).forEach(updateMarker);
+      layoutMarkers();
       connectMqtt();
       setupSearch();
       setupKeyboardShortcuts();
       renderUserList();
+      renderCrmTable();
+      updateTopTicker();
 
       setInterval(function() {
         Object.values(users).forEach(updateMarker);
         layoutMarkers();
         renderUserList();
         updateTopTicker();
+        if (currentWorkspaceView === 'crm') {
+          renderCrmTable();
+        }
         if (selectedUserId) {
           var su = getUser(selectedUserId);
           if (su) showUserModal(su);
@@ -1870,10 +2332,13 @@
         addAuditEntry('Connected to live broker ' + broker.name, 'connect');
         playTone(600, 'sine', 150);
 
-        // Wildcard subscriptions to monitor all global fleet nodes
+        // Wildcard subscriptions to monitor all global fleet nodes + retained user registry + admin policies
         client.subscribe('pinpulse/v1/user/+/loc', { qos: 0 });
         client.subscribe('pinpulse/v1/network/live', { qos: 0 });
         client.subscribe('pinpulse/v1/user/+/status', { qos: 0 });
+        client.subscribe('pinpulse/v1/registry/user/+', { qos: 1 });
+        client.subscribe('pinpulse/v1/accounts/+/backup', { qos: 1 });
+        client.subscribe('pinpulse/v1/admin/users/+', { qos: 1 });
         client.subscribe('pinpulse/v1/alerts/+', { qos: 1 });
         client.subscribe('pinpulse/v1/ring/+', { qos: 1 });
       });
@@ -1889,13 +2354,22 @@
         totalPacketsReceived++;
         document.getElementById('diag-pkt-count').textContent = totalPacketsReceived;
 
+        var raw = payload ? payload.toString() : '';
+        if (!raw || raw.trim() === '') return;
+
         try {
-          var data = JSON.parse(payload.toString());
-          if (topic.indexOf('/status') !== -1) {
+          var data = JSON.parse(raw);
+          if (topic.indexOf('/admin/users/') !== -1) {
+            handleAdminPolicySync(topic, data);
+          } else if (topic.indexOf('/registry/user/') !== -1 || topic.indexOf('/accounts/') !== -1) {
+            handleRegistryOrBackupPacket(topic, data);
+          } else if (topic.indexOf('/status') !== -1) {
             handleStatusUpdate(data);
+          } else if (data.type === 'SOS_EMERGENCY') {
+            handleSosEmergencyPacket(topic, data);
           } else if (topic.indexOf('/ring/') !== -1 || (data.type && data.type.indexOf('RING') !== -1)) {
             handleRingEvent(topic, data);
-          } else {
+          } else if (data.userId && (data.latitude !== undefined || data.displayName !== undefined)) {
             handleUserPacket(data);
           }
         } catch (e) {
@@ -1910,6 +2384,100 @@
       }
       currentBrokerIdx = idx;
       connectMqtt();
+    }
+
+    function handleAdminPolicySync(topic, data) {
+      if (!data) return;
+      var targetId = data.targetUserId || topic.split('/').pop();
+      if (!targetId) return;
+
+      if (data.accountStatus === 'DELETED' || data.action === 'DELETE_ACCOUNT') {
+        deletedUserIds[targetId] = Date.now();
+        saveDeletedUsers();
+        if (users[targetId]) {
+          removeMarker(targetId);
+          delete users[targetId];
+          saveCachedCrmUsers();
+          renderUserList();
+          renderCrmTable();
+          updateTopTicker();
+        }
+        return;
+      }
+
+      adminPolicies[targetId] = Object.assign(adminPolicies[targetId] || {}, data);
+      saveAdminPolicies();
+
+      if (users[targetId]) {
+        users[targetId] = applyAdminPolicyToUserObj(users[targetId]);
+        saveCachedCrmUsers();
+        updateMarker(users[targetId]);
+        renderUserList();
+        renderCrmTable();
+        updateTopTicker();
+        if (selectedUserId === targetId) showUserModal(users[targetId]);
+      }
+    }
+
+    function handleRegistryOrBackupPacket(topic, data) {
+      var uData = (data && data.user) ? data.user : data;
+      if (!uData || !uData.id) return;
+      var id = uData.id;
+      if (deletedUserIds[id] && (!adminPolicies[id] || adminPolicies[id].accountStatus === 'DELETED')) return;
+
+      var existing = users[id] || {};
+      var friendsCount = Array.isArray(data.friends) ? data.friends.filter(function(f) { return f.status === 'ACCEPTED'; }).length : (uData.friendsCount || existing.friendsCount || 0);
+      var groupsCount = Array.isArray(data.groups) ? data.groups.length : (uData.groupsCount || existing.groupsCount || 0);
+
+      users[id] = applyAdminPolicyToUserObj({
+        id: id,
+        name: uData.displayName || existing.name || ('User ' + id.substring(0, 5)),
+        email: uData.email || existing.email || 'No email',
+        friendCode: uData.friendCode || existing.friendCode || '----',
+        avatar: uData.avatarBase64 || existing.avatar || null,
+        lat: (uData.latitude && uData.latitude !== 0) ? parseFloat(uData.latitude) : (existing.lat !== undefined ? existing.lat : NaN),
+        lng: (uData.longitude && uData.longitude !== 0) ? parseFloat(uData.longitude) : (existing.lng !== undefined ? existing.lng : NaN),
+        speed: uData.speedKmh !== undefined ? uData.speedKmh : (existing.speed || 0),
+        batteryPercent: uData.batteryPercent !== undefined ? uData.batteryPercent : (existing.batteryPercent !== undefined ? existing.batteryPercent : 100),
+        isCharging: uData.isCharging !== undefined ? !!uData.isCharging : !!existing.isCharging,
+        isSharing: uData.isSharingLocation !== undefined ? !!uData.isSharingLocation : (existing.isSharing !== false),
+        isGpsEnabled: uData.isGpsEnabled !== undefined ? !!uData.isGpsEnabled : (existing.isGpsEnabled !== false),
+        timestamp: uData.lastUpdated || existing.timestamp || 0,
+        subscriptionPlan: uData.subscriptionPlan || existing.subscriptionPlan || 'DEMO',
+        accountStatus: uData.accountStatus || existing.accountStatus || 'ACTIVE',
+        subscriptionStartAt: uData.subscriptionStartAt || existing.subscriptionStartAt || Date.now(),
+        subscriptionExpiresAt: uData.subscriptionExpiresAt || existing.subscriptionExpiresAt || (Date.now() + 7 * 86400000),
+        maxFriends: uData.maxFriends !== undefined ? uData.maxFriends : existing.maxFriends,
+        maxGroups: uData.maxGroups !== undefined ? uData.maxGroups : existing.maxGroups,
+        rateLimitSec: uData.rateLimitSec || existing.rateLimitSec || 5,
+        monthlyRateUsd: uData.monthlyRateUsd !== undefined ? uData.monthlyRateUsd : existing.monthlyRateUsd,
+        friendsCount: friendsCount,
+        groupsCount: groupsCount
+      });
+
+      saveCachedCrmUsers();
+      updateMarker(users[id]);
+      layoutMarkers();
+      renderUserList();
+      renderCrmTable();
+      updateTopTicker();
+    }
+
+    function handleSosEmergencyPacket(topic, data) {
+      var sender = data.senderName || 'Unit';
+      var lat = parseFloat(data.latitude || 0);
+      var lng = parseFloat(data.longitude || 0);
+      var bat = data.batteryPercent !== undefined ? data.batteryPercent : '--';
+      addAuditEntry('🆘 SOS EMERGENCY BROADCAST from ' + sender + ' (' + lat.toFixed(5) + ', ' + lng.toFixed(5) + ' • Bat ' + bat + '%)', 'alarm');
+      playTone(920, 'sawtooth', 600);
+      var alertEl = document.getElementById('tk-siren-alert');
+      if (alertEl) {
+        alertEl.style.display = 'flex';
+        alertEl.innerHTML = '<span class="ticker-dot red"></span><span class="ticker-val" style="color: #f87171;">🆘 SOS: ' + esc(sender) + ' (' + bat + '%)</span>';
+      }
+      if (data.senderId && users[data.senderId]) {
+        selectUser(data.senderId);
+      }
     }
 
     function handleRingEvent(topic, data) {
@@ -1930,38 +2498,62 @@
       if (!data || !data.userId) return;
       var id = data.userId;
       if (users[id]) {
+        if (data.isGpsEnabled !== undefined) {
+          users[id].isGpsEnabled = !!data.isGpsEnabled;
+        }
         if (data.status === 'OFFLINE' || data.type === 'PHONE_OFFLINE') {
           users[id].isSharing = false;
           addAuditEntry('Device offline: ' + users[id].name + ' (' + id.substring(0, 8) + ')', 'normal');
-          updateMarker(users[id]);
-          renderUserList();
-          if (selectedUserId === id) showUserModal(users[id]);
+        } else if (data.type === 'GPS_STATUS_CHANGED') {
+          addAuditEntry((users[id].isGpsEnabled ? '📍 GPS Turned ON: ' : '⚠️ GPS Turned OFF: ') + users[id].name, users[id].isGpsEnabled ? 'connect' : 'alarm');
         }
+        saveCachedCrmUsers();
+        updateMarker(users[id]);
+        renderUserList();
+        renderCrmTable();
+        if (selectedUserId === id) showUserModal(users[id]);
       }
     }
 
     function handleUserPacket(data) {
       if (!data || !data.userId) return;
       var id = data.userId;
-      var isNew = !users[id];
+      if (deletedUserIds[id]) return;
 
-      users[id] = {
+      var isNew = !users[id];
+      var existing = users[id] || {};
+      var incomingLat = parseFloat(data.latitude);
+      var incomingLng = parseFloat(data.longitude);
+      var validIncoming = !(isNaN(incomingLat) || isNaN(incomingLng) || (incomingLat === 0 && incomingLng === 0));
+
+      users[id] = applyAdminPolicyToUserObj({
         id: id,
-        name: data.displayName || 'Unit ' + id.substring(0, 5),
-        email: data.email || 'No email',
-        friendCode: data.friendCode || '----',
-        avatar: data.avatarBase64 || null,
-        lat: parseFloat(data.latitude),
-        lng: parseFloat(data.longitude),
-        speed: data.speedKmh || 0,
-        batteryPercent: data.batteryPercent !== undefined ? data.batteryPercent : 100,
-        isCharging: !!data.isCharging,
+        name: data.displayName || existing.name || ('Unit ' + id.substring(0, 5)),
+        email: data.email || existing.email || 'No email',
+        friendCode: data.friendCode || existing.friendCode || '----',
+        avatar: data.avatarBase64 || existing.avatar || null,
+        lat: validIncoming ? incomingLat : (existing.lat !== undefined ? existing.lat : NaN),
+        lng: validIncoming ? incomingLng : (existing.lng !== undefined ? existing.lng : NaN),
+        speed: data.speedKmh !== undefined ? data.speedKmh : (existing.speed || 0),
+        batteryPercent: data.batteryPercent !== undefined ? data.batteryPercent : (existing.batteryPercent !== undefined ? existing.batteryPercent : 100),
+        isCharging: data.isCharging !== undefined ? !!data.isCharging : !!existing.isCharging,
         isSharing: data.isSharingLocation !== false,
-        timestamp: data.timestamp || Date.now()
-      };
+        isGpsEnabled: data.isGpsEnabled !== undefined ? !!data.isGpsEnabled : (existing.isGpsEnabled !== false),
+        timestamp: data.timestamp || Date.now(),
+        subscriptionPlan: data.subscriptionPlan || existing.subscriptionPlan || 'DEMO',
+        accountStatus: data.accountStatus || existing.accountStatus || 'ACTIVE',
+        subscriptionStartAt: data.subscriptionStartAt || existing.subscriptionStartAt || Date.now(),
+        subscriptionExpiresAt: data.subscriptionExpiresAt || existing.subscriptionExpiresAt || (Date.now() + 7 * 86400000),
+        maxFriends: data.maxFriends !== undefined ? data.maxFriends : existing.maxFriends,
+        maxGroups: data.maxGroups !== undefined ? data.maxGroups : existing.maxGroups,
+        rateLimitSec: data.rateLimitSec || existing.rateLimitSec || 5,
+        monthlyRateUsd: data.monthlyRateUsd !== undefined ? data.monthlyRateUsd : existing.monthlyRateUsd,
+        friendsCount: data.friendsCount !== undefined ? data.friendsCount : (existing.friendsCount || 0),
+        groupsCount: data.groupsCount !== undefined ? data.groupsCount : (existing.groupsCount || 0)
+      });
 
       if (isNew) {
-        addAuditEntry('New Node Registered: ' + users[id].name + ' [' + users[id].friendCode + ']', 'connect');
+        addAuditEntry('New Node Registered: ' + users[id].name + ' [' + users[id].friendCode + '] • Pack: ' + users[id].subscriptionPlan, 'connect');
         playTone(720, 'sine', 120);
       }
 
@@ -1972,9 +2564,11 @@
         saveRemoved();
       }
 
+      saveCachedCrmUsers();
       updateMarker(users[id]);
       layoutMarkers();
       renderUserList();
+      if (currentWorkspaceView === 'crm') renderCrmTable();
       updateTopTicker();
 
       if (selectedUserId === id) {
@@ -1984,17 +2578,18 @@
 
     // ---------- Markers & Canvas Layout ----------
     function updateMarker(u) {
-      if (!hasValidPos(u) || isRemoved(u.id)) {
-        removeMarker(u.id);
+      if (!u || !hasValidPos(u) || isRemoved(u.id) || deletedUserIds[u.id]) {
+        if (u && u.id) removeMarker(u.id);
         return;
       }
 
       var isLive = isLiveUser(u);
       var isDot = (a11ySettings.markerStyle === 'dot');
+      var gpsOff = (u.isGpsEnabled === false);
 
       var customIcon;
       if (isDot) {
-        var dotHtml = '<div class="minimal-dot-wrapper"><div class="minimal-dot-core"></div></div>';
+        var dotHtml = '<div class="minimal-dot-wrapper"><div class="minimal-dot-core" style="' + (gpsOff ? 'background:#f59e0b;' : '') + '"></div></div>';
         customIcon = L.divIcon({
           className: 'pinpulse-marker',
           html: dotHtml,
@@ -2002,10 +2597,12 @@
           iconAnchor: [11, 11]
         });
       } else {
+        var gpsTag = gpsOff ? ' <span style="color:#fbbf24;font-weight:900;">📍GPS OFF</span>' : '';
+        var ringStyle = gpsOff ? 'border-color:#f59e0b;' : '';
         var iconHtml = '<div class="pinpulse-marker-wrapper">' +
-                         (isLive ? '<div class="pulse-ring"></div>' : '') +
-                         '<div class="avatar-bubble">' + avatarHtml(u) + '</div>' +
-                         '<div class="name-pill">' + esc(u.name) + ' (' + esc(batteryText(u)) + ')</div>' +
+                         (isLive && !gpsOff ? '<div class="pulse-ring"></div>' : '') +
+                         '<div class="avatar-bubble" style="' + ringStyle + '">' + avatarHtml(u) + '</div>' +
+                         '<div class="name-pill">' + esc(u.name) + ' (' + esc(batteryText(u)) + ')' + gpsTag + '</div>' +
                        '</div>';
         customIcon = L.divIcon({
           className: 'pinpulse-marker',
@@ -2040,7 +2637,7 @@
 
       var OVERLAP_PX = (a11ySettings.markerStyle === 'dot') ? 28 : 64;
 
-      var items = Object.keys(markers).sort().map(function(id) {
+      var items = Object.keys(markers).sort().filter(function(id) { return !!users[id] && hasValidPos(users[id]); }).map(function(id) {
         var u = users[id];
         return { id: id, u: u, p: map.latLngToLayerPoint([u.lat, u.lng]) };
       });
@@ -2157,6 +2754,9 @@
       if (!u) return;
       selectedUserId = id;
 
+      if (currentWorkspaceView === 'crm') {
+        switchMainWorkspaceView('map');
+      }
       if (hasValidPos(u)) {
         map.flyTo([u.lat, u.lng], Math.max(map.getZoom(), 16), { duration: 1.0 });
       }
@@ -2180,21 +2780,59 @@
       document.getElementById('m-battery').textContent = batteryText(u);
       document.getElementById('m-speed').textContent = formatSpeed(u.speed);
 
+      var sharingEl = document.getElementById('m-sharing');
+      if (sharingEl) {
+        if (u.isGpsEnabled === false) {
+          sharingEl.textContent = '📍 GPS OFF';
+          sharingEl.style.color = '#fbbf24';
+        } else {
+          sharingEl.textContent = u.isSharing ? '📍 GPS ON' : 'Paused';
+          sharingEl.style.color = u.isSharing ? 'var(--primary)' : 'var(--text-muted)';
+        }
+      }
+
       document.getElementById('m-coords').textContent = hasValidPos(u)
-        ? (u.lat.toFixed(6) + ', ' + u.lng.toFixed(6))
+        ? (u.lat.toFixed(6) + ', ' + u.lng.toFixed(6) + (u.isGpsEnabled === false ? ' (Last Known • GPS OFF)' : ''))
         : 'Waiting for GPS fix...';
 
       var isLive = isLiveUser(u);
       var statusEl = document.getElementById('m-status');
       if (isLive) {
-        statusEl.textContent = 'Live Now';
-        statusEl.style.color = 'var(--primary)';
+        statusEl.textContent = u.isGpsEnabled === false ? 'Online (GPS Off)' : 'Live Now';
+        statusEl.style.color = u.isGpsEnabled === false ? '#fbbf24' : 'var(--primary)';
       } else if (u.timestamp) {
         statusEl.textContent = 'Last Seen ' + Math.round((Date.now() - u.timestamp) / 1000) + 's ago';
         statusEl.style.color = 'var(--text-muted)';
       } else {
         statusEl.textContent = 'Offline';
         statusEl.style.color = 'var(--danger)';
+      }
+
+      // Subscription & Governance fields inside Inspector
+      var effStatus = getEffectiveAccountStatus(u);
+      var badgeEl = document.getElementById('m-sub-status-badge');
+      if (badgeEl) {
+        badgeEl.className = 'status-pill status-' + effStatus;
+        badgeEl.textContent = effStatus;
+      }
+      var planEl = document.getElementById('m-sub-plan');
+      if (planEl) planEl.textContent = u.subscriptionPlan || 'DEMO';
+      var rateEl = document.getElementById('m-sub-rate');
+      if (rateEl) rateEl.textContent = '$' + Number(u.monthlyRateUsd || 0).toFixed(2) + '/mo';
+      var daysEl = document.getElementById('m-sub-days');
+      if (daysEl) daysEl.textContent = formatRemainingDays(u);
+      var rlEl = document.getElementById('m-sub-ratelimit');
+      if (rlEl) rlEl.textContent = (u.rateLimitSec || 3) + 's';
+      var qEl = document.getElementById('m-sub-quotas');
+      if (qEl) qEl.textContent = (u.friendsCount || 0) + '/' + (u.maxFriends !== undefined ? u.maxFriends : 1) + ' Friends • ' + (u.groupsCount || 0) + '/' + (u.maxGroups !== undefined ? u.maxGroups : 0) + ' Groups';
+
+      var deactBtn = document.getElementById('m-deactivate-btn');
+      if (deactBtn) {
+        deactBtn.textContent = (u.accountStatus === 'DEACTIVATED') ? '✅ Reactivate (Paid)' : '⏸️ Deactivate (Unpaid)';
+      }
+      var banBtn = document.getElementById('m-ban-btn');
+      if (banBtn) {
+        banBtn.textContent = (u.accountStatus === 'BANNED') ? '🔓 Unban' : '🚫 Ban';
       }
 
       var avatarEl = document.getElementById('m-avatar');
@@ -2212,6 +2850,352 @@
         : '#';
 
       document.getElementById('m-remove-btn').textContent = isRemoved(u.id) ? 'Restore Node' : 'Quarantine Node';
+    }
+
+    // ---------- Commercial SaaS Admin Governance & Subscription Controls ----------
+    function publishAdminGovernanceCommand(u, policyPatch, auditDescription) {
+      if (!u || !u.id) return;
+      var currentPol = adminPolicies[u.id] || {
+        subscriptionPlan: u.subscriptionPlan || 'DEMO',
+        accountStatus: u.accountStatus || 'ACTIVE',
+        subscriptionStartAt: u.subscriptionStartAt || Date.now(),
+        subscriptionExpiresAt: u.subscriptionExpiresAt || (Date.now() + 7 * 86400000),
+        maxFriends: u.maxFriends !== undefined ? u.maxFriends : 1,
+        maxGroups: u.maxGroups !== undefined ? u.maxGroups : 0,
+        rateLimitSec: u.rateLimitSec || 5,
+        monthlyRateUsd: u.monthlyRateUsd || 0.0
+      };
+
+      var merged = Object.assign({}, currentPol, policyPatch, {
+        targetUserId: u.id,
+        targetFriendCode: u.friendCode || '',
+        targetEmail: u.email || '',
+        updatedAt: Date.now()
+      });
+
+      adminPolicies[u.id] = merged;
+      saveAdminPolicies();
+
+      if (merged.accountStatus === 'DELETED' || merged.action === 'DELETE_ACCOUNT') {
+        deletedUserIds[u.id] = Date.now();
+        saveDeletedUsers();
+        removeMarker(u.id);
+        delete users[u.id];
+        if (selectedUserId === u.id) closeModal();
+      } else if (users[u.id]) {
+        users[u.id] = applyAdminPolicyToUserObj(users[u.id]);
+        updateMarker(users[u.id]);
+        if (selectedUserId === u.id) showUserModal(users[u.id]);
+      }
+
+      saveCachedCrmUsers();
+      renderUserList();
+      renderCrmTable();
+      updateTopTicker();
+
+      if (client && client.connected) {
+        var jsonStr = JSON.stringify(merged);
+        client.publish('pinpulse/v1/admin/users/' + u.id, jsonStr, { qos: 1, retain: true });
+        if (u.friendCode && u.friendCode !== '----') {
+          client.publish('pinpulse/v1/admin/users/' + u.friendCode, jsonStr, { qos: 1, retain: true });
+        }
+        if (u.email && u.email.indexOf('@') !== -1) {
+          var cleanEmail = u.email.trim().toLowerCase().replace(/[^a-z0-9]/g, '_');
+          client.publish('pinpulse/v1/admin/users/' + cleanEmail, jsonStr, { qos: 1, retain: true });
+        }
+        client.publish('pinpulse/v1/admin/broadcast', jsonStr, { qos: 1, retain: false });
+      }
+
+      if (auditDescription) {
+        addAuditEntry(auditDescription, 'connect');
+      }
+    }
+
+    function adminSetPack(userId, packName) {
+      var u = getUser(userId);
+      if (!u) return;
+      var preset = PACK_PRESETS[packName] || PACK_PRESETS.DEMO;
+      var now = Date.now();
+      var expiresAt = now + (preset.defaultDays * 86400000);
+
+      publishAdminGovernanceCommand(u, {
+        action: 'UPDATE_SUBSCRIPTION',
+        subscriptionPlan: preset.plan,
+        accountStatus: 'ACTIVE',
+        subscriptionStartAt: now,
+        subscriptionExpiresAt: expiresAt,
+        maxFriends: preset.maxFriends,
+        maxGroups: preset.maxGroups,
+        rateLimitSec: preset.rateLimitSec,
+        monthlyRateUsd: preset.monthlyRateUsd
+      }, '💼 Set Pack [' + preset.plan + '] for ' + u.name + ' (' + preset.maxFriends + 'F/' + preset.maxGroups + 'G • $' + preset.monthlyRateUsd + '/mo • ' + preset.defaultDays + 'd)');
+    }
+
+    function adminSetRateLimit(userId, rateSec) {
+      var u = getUser(userId);
+      if (!u) return;
+      var sec = Math.max(1, Math.min(300, parseInt(rateSec, 10) || 3));
+      publishAdminGovernanceCommand(u, {
+        action: 'UPDATE_RATE_LIMIT',
+        rateLimitSec: sec
+      }, '⏱️ Changed telemetry rate limit for ' + u.name + ' to ' + sec + 's');
+    }
+
+    function adminAddDays(userId, deltaDays) {
+      var u = getUser(userId);
+      if (!u) return;
+      var base = Math.max(Date.now(), u.subscriptionExpiresAt || Date.now());
+      var newExp = base + (deltaDays * 86400000);
+      publishAdminGovernanceCommand(u, {
+        action: 'EXTEND_SUBSCRIPTION',
+        accountStatus: 'ACTIVE',
+        subscriptionExpiresAt: newExp
+      }, '📅 Added +' + deltaDays + ' days to ' + u.name + ' subscription');
+    }
+
+    function adminToggleDeactivate(userId) {
+      var u = getUser(userId);
+      if (!u) return;
+      var nextStatus = (u.accountStatus === 'DEACTIVATED') ? 'ACTIVE' : 'DEACTIVATED';
+      var patch = {
+        action: nextStatus === 'DEACTIVATED' ? 'DEACTIVATE_ACCOUNT' : 'ACTIVATE_ACCOUNT',
+        accountStatus: nextStatus
+      };
+      if (nextStatus === 'ACTIVE' && (!u.subscriptionExpiresAt || Date.now() > u.subscriptionExpiresAt)) {
+        patch.subscriptionExpiresAt = Date.now() + 30 * 86400000;
+      }
+      publishAdminGovernanceCommand(u, patch,
+        (nextStatus === 'DEACTIVATED' ? '⏸️ Deactivated account (until payment): ' : '✅ Reactivated account: ') + u.name);
+    }
+
+    function adminToggleBan(userId) {
+      var u = getUser(userId);
+      if (!u) return;
+      var nextStatus = (u.accountStatus === 'BANNED') ? 'ACTIVE' : 'BANNED';
+      if (nextStatus === 'BANNED' && !confirm('Ban ' + u.name + ' (' + u.email + ') from PinPulse?\nTheir app will lock immediately.')) return;
+      publishAdminGovernanceCommand(u, {
+        action: nextStatus === 'BANNED' ? 'BAN_USER' : 'UNBAN_USER',
+        accountStatus: nextStatus
+      }, (nextStatus === 'BANNED' ? '🚫 BANNED user: ' : '🔓 Unbanned user: ') + u.name);
+    }
+
+    function adminDeleteAccount(userId) {
+      var u = getUser(userId);
+      if (!u) return;
+      if (!confirm('⚠️ PERMANENTLY DELETE account for ' + u.name + ' (' + u.email + ')?\nThis will wipe their session on their phone and remove them from the radar.')) return;
+      publishAdminGovernanceCommand(u, {
+        action: 'DELETE_ACCOUNT',
+        accountStatus: 'DELETED'
+      }, '🗑️ DELETED user account: ' + u.name + ' (' + u.email + ')');
+    }
+
+    function openCustomPlanModal(userId) {
+      var u = getUser(userId);
+      if (!u) return;
+      document.getElementById('cp-user-id').value = u.id;
+      document.getElementById('cp-user-label').textContent = u.name + ' (' + u.email + ' • Code: ' + u.friendCode + ')';
+      document.getElementById('cp-plan').value = u.subscriptionPlan || 'CUSTOM';
+      document.getElementById('cp-rate-usd').value = Number(u.monthlyRateUsd !== undefined ? u.monthlyRateUsd : 49.99).toFixed(2);
+      document.getElementById('cp-max-friends').value = u.maxFriends !== undefined ? u.maxFriends : 100;
+      document.getElementById('cp-max-groups').value = u.maxGroups !== undefined ? u.maxGroups : 25;
+      document.getElementById('cp-days-left').value = getRemainingDaysCount(u) || 30;
+      document.getElementById('cp-rate-limit').value = String(u.rateLimitSec || 3);
+      document.getElementById('custom-plan-modal').style.display = 'flex';
+    }
+
+    function closeCustomPlanModal() {
+      document.getElementById('custom-plan-modal').style.display = 'none';
+    }
+
+    function onCustomModalPackPresetChange() {
+      var plan = document.getElementById('cp-plan').value;
+      var preset = PACK_PRESETS[plan] || PACK_PRESETS.CUSTOM;
+      document.getElementById('cp-rate-usd').value = preset.monthlyRateUsd.toFixed(2);
+      document.getElementById('cp-max-friends').value = preset.maxFriends;
+      document.getElementById('cp-max-groups').value = preset.maxGroups;
+      document.getElementById('cp-days-left').value = preset.defaultDays;
+      document.getElementById('cp-rate-limit').value = String(preset.rateLimitSec);
+    }
+
+    function saveCustomPlanModal() {
+      var userId = document.getElementById('cp-user-id').value;
+      var u = getUser(userId);
+      if (!u) return;
+
+      var plan = document.getElementById('cp-plan').value;
+      var rateUsd = parseFloat(document.getElementById('cp-rate-usd').value) || 0;
+      var maxFriends = Math.max(0, parseInt(document.getElementById('cp-max-friends').value, 10) || 1);
+      var maxGroups = Math.max(0, parseInt(document.getElementById('cp-max-groups').value, 10) || 0);
+      var daysLeft = Math.max(0, parseInt(document.getElementById('cp-days-left').value, 10) || 0);
+      var rateLimitSec = Math.max(1, parseInt(document.getElementById('cp-rate-limit').value, 10) || 3);
+
+      var now = Date.now();
+      var expiresAt = now + (daysLeft * 86400000);
+
+      publishAdminGovernanceCommand(u, {
+        action: 'UPDATE_SUBSCRIPTION',
+        subscriptionPlan: plan,
+        accountStatus: daysLeft > 0 ? 'ACTIVE' : 'EXPIRED',
+        subscriptionStartAt: now,
+        subscriptionExpiresAt: expiresAt,
+        maxFriends: maxFriends,
+        maxGroups: maxGroups,
+        rateLimitSec: rateLimitSec,
+        monthlyRateUsd: rateUsd
+      }, '⚡ Updated Custom Plan [' + plan + '] for ' + u.name + ': ' + maxFriends + 'F/' + maxGroups + 'G, $' + rateUsd.toFixed(2) + '/mo, ' + daysLeft + 'd left, ' + rateLimitSec + 's rate');
+
+      closeCustomPlanModal();
+    }
+
+    function renderCrmTable() {
+      var tbody = document.getElementById('crm-table-body');
+      if (!tbody) return;
+
+      var allUsers = Object.values(users).filter(function(u) { return !deletedUserIds[u.id]; });
+      var onlineCount = allUsers.filter(isLiveUser).length;
+      var demoCount = 0;
+      var paidCount = 0;
+      var lockedCount = 0;
+      var totalMrr = 0;
+
+      allUsers.forEach(function(u) {
+        var eff = getEffectiveAccountStatus(u);
+        if (eff === 'BANNED' || eff === 'DEACTIVATED' || eff === 'EXPIRED') lockedCount++;
+        if ((u.subscriptionPlan || 'DEMO') === 'DEMO') {
+          demoCount++;
+        } else if (eff === 'ACTIVE') {
+          paidCount++;
+          totalMrr += Number(u.monthlyRateUsd || 0);
+        }
+      });
+
+      var kpiTotal = document.getElementById('crm-kpi-total');
+      if (kpiTotal) kpiTotal.textContent = allUsers.length;
+      var kpiOnline = document.getElementById('crm-kpi-online');
+      if (kpiOnline) kpiOnline.textContent = onlineCount + ' currently online';
+      var kpiDemo = document.getElementById('crm-kpi-demo');
+      if (kpiDemo) kpiDemo.textContent = demoCount;
+      var kpiPaid = document.getElementById('crm-kpi-paid');
+      if (kpiPaid) kpiPaid.textContent = paidCount;
+      var kpiLocked = document.getElementById('crm-kpi-locked');
+      if (kpiLocked) kpiLocked.textContent = lockedCount;
+      var kpiMrr = document.getElementById('crm-kpi-mrr');
+      if (kpiMrr) kpiMrr.textContent = '$' + totalMrr.toFixed(2);
+      var crmBadge = document.getElementById('crm-total-badge');
+      if (crmBadge) crmBadge.textContent = allUsers.length;
+
+      var q = (document.getElementById('crm-search') ? document.getElementById('crm-search').value : '').toLowerCase();
+      var packFilter = document.getElementById('crm-filter-pack') ? document.getElementById('crm-filter-pack').value : 'ALL';
+      var statusFilter = document.getElementById('crm-filter-status') ? document.getElementById('crm-filter-status').value : 'ALL';
+
+      var filtered = allUsers.filter(function(u) {
+        var matchText = !q ||
+          (u.name || '').toLowerCase().indexOf(q) !== -1 ||
+          (u.email || '').toLowerCase().indexOf(q) !== -1 ||
+          (u.friendCode || '').toLowerCase().indexOf(q) !== -1 ||
+          (u.subscriptionPlan || '').toLowerCase().indexOf(q) !== -1;
+        if (!matchText) return false;
+        if (packFilter !== 'ALL' && (u.subscriptionPlan || 'DEMO') !== packFilter) return false;
+        var eff = getEffectiveAccountStatus(u);
+        if (statusFilter !== 'ALL' && eff !== statusFilter) return false;
+        return true;
+      });
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; padding:36px; color:var(--text-muted);">No users match the current filter.</td></tr>';
+        return;
+      }
+
+      var html = '';
+      filtered.forEach(function(u) {
+        var isLive = isLiveUser(u);
+        var effStatus = getEffectiveAccountStatus(u);
+        var plan = (u.subscriptionPlan || 'DEMO').toUpperCase();
+        var remText = formatRemainingDays(u);
+        var remDays = getRemainingDaysCount(u);
+        var gpsHtml = (u.isGpsEnabled === false)
+          ? '<span style="color:#fbbf24; font-weight:800;">📍 GPS OFF</span>'
+          : '<span style="color:var(--primary); font-weight:700;">📍 GPS ON</span>';
+
+        html += '<tr>';
+        // 1. User / Account
+        html += '<td>';
+        html += '  <div style="display:flex; align-items:center; gap:10px;">';
+        html += '    <div class="card-avatar" style="width:34px; height:34px; font-size:0.8rem; cursor:pointer;" onclick="selectUser(\'' + u.id + '\')">' + avatarHtml(u) + '</div>';
+        html += '    <div>';
+        html += '      <div style="font-weight:800; color:var(--text); cursor:pointer;" onclick="selectUser(\'' + u.id + '\')">' + esc(u.name) + ' <span class="card-code">' + esc(u.friendCode) + '</span></div>';
+        html += '      <div style="font-size:0.72rem; color:var(--text-muted);">' + esc(u.email) + '</div>';
+        html += '    </div>';
+        html += '  </div>';
+        html += '</td>';
+
+        // 2. GPS & Telemetry
+        html += '<td>';
+        html += '  <div>' + (isLive ? '<span style="color:var(--primary);font-weight:700;">● Online</span>' : '<span style="color:var(--text-muted);">○ Offline</span>') + ' • ' + gpsHtml + '</div>';
+        html += '  <div style="font-size:0.7rem; color:var(--text-muted); margin-top:2px;">Bat: ' + esc(batteryText(u)) + ' • ' + esc(formatSpeed(u.speed)) + '</div>';
+        html += '</td>';
+
+        // 3. Subscription Pack
+        html += '<td>';
+        html += '  <span class="pack-badge pack-' + plan + '">' + plan + '</span>';
+        html += '  <div style="margin-top:4px;">';
+        html += '    <select class="crm-select" style="padding:3px 6px; font-size:0.68rem;" onchange="if(this.value===\'CUSTOM\'){openCustomPlanModal(\'' + u.id + '\');}else{adminSetPack(\'' + u.id + '\', this.value);}">';
+        html += '      <option value="DEMO" ' + (plan === 'DEMO' ? 'selected' : '') + '>🎁 Demo (1F/0G)</option>';
+        html += '      <option value="FAMILY" ' + (plan === 'FAMILY' ? 'selected' : '') + '>👨‍👩‍👧‍👦 Family (10F/2G)</option>';
+        html += '      <option value="BUSINESS" ' + (plan === 'BUSINESS' ? 'selected' : '') + '>🏢 Business (50F/10G)</option>';
+        html += '      <option value="CUSTOM" ' + (plan === 'CUSTOM' ? 'selected' : '') + '>⚡ Custom (100+)</option>';
+        html += '    </select>';
+        html += '  </div>';
+        html += '</td>';
+
+        // 4. Monthly Rate ($/mo)
+        html += '<td>';
+        html += '  <div style="font-weight:800; color:#fbbf24; font-family:\'JetBrains Mono\', monospace;">$' + Number(u.monthlyRateUsd || 0).toFixed(2) + '<span style="font-size:0.65rem; color:var(--text-muted);">/mo</span></div>';
+        html += '</td>';
+
+        // 5. Free / Remaining Days
+        html += '<td>';
+        html += '  <div style="font-weight:800; color:' + (remDays <= 2 ? '#f87171' : '#38bdf8') + ';">' + esc(remText) + '</div>';
+        html += '  <div style="display:flex; gap:4px; margin-top:4px;">';
+        html += '    <button class="crm-btn" onclick="adminAddDays(\'' + u.id + '\', 7)" title="Add 7 Free Days">+7d</button>';
+        html += '    <button class="crm-btn" onclick="adminAddDays(\'' + u.id + '\', 30)" title="Add 30 Days">+30d</button>';
+        html += '  </div>';
+        html += '</td>';
+
+        // 6. Quotas (Friends & Groups)
+        html += '<td>';
+        html += '  <div style="font-weight:700;">👥 ' + (u.friendsCount || 0) + ' / ' + (u.maxFriends !== undefined ? u.maxFriends : 1) + ' Friends</div>';
+        html += '  <div style="font-size:0.72rem; color:var(--text-muted); margin-top:2px;">🛡️ ' + (u.groupsCount || 0) + ' / ' + (u.maxGroups !== undefined ? u.maxGroups : 0) + ' Groups</div>';
+        html += '</td>';
+
+        // 7. Telemetry Rate Limit
+        html += '<td>';
+        html += '  <select class="crm-select" style="padding:4px 6px; font-size:0.72rem;" onchange="adminSetRateLimit(\'' + u.id + '\', this.value)">';
+        [1, 2, 3, 5, 10, 30, 60].forEach(function(sec) {
+          html += '<option value="' + sec + '" ' + ((u.rateLimitSec || 3) == sec ? 'selected' : '') + '>' + sec + 's</option>';
+        });
+        html += '  </select>';
+        html += '</td>';
+
+        // 8. Account Status
+        html += '<td>';
+        html += '  <span class="status-pill status-' + effStatus + '">' + effStatus + '</span>';
+        html += '</td>';
+
+        // 9. Admin Actions
+        html += '<td>';
+        html += '  <div class="crm-actions-cell">';
+        html += '    <button class="crm-btn" style="color:#c084fc; border-color:#a855f7;" onclick="openCustomPlanModal(\'' + u.id + '\')" title="Edit Custom Limits, Rate & Days">⚙️ Plan/Limits</button>';
+        html += '    <button class="crm-btn warn" onclick="adminToggleDeactivate(\'' + u.id + '\')" title="Deactivate until user pays or reactivate">' + (u.accountStatus === 'DEACTIVATED' ? '✅ Activate' : '⏸️ Deactivate') + '</button>';
+        html += '    <button class="crm-btn danger" onclick="adminToggleBan(\'' + u.id + '\')" title="Ban or Unban from PinPulse">' + (u.accountStatus === 'BANNED' ? '🔓 Unban' : '🚫 Ban') + '</button>';
+        html += '    <button class="crm-btn" onclick="selectedUserId=\'' + u.id + '\'; toggleRemoveSelected(); renderCrmTable();" title="Hide/Restore on Radar Map">' + (isRemoved(u.id) ? '👁️ Restore' : '🚫 Hide Map') + '</button>';
+        html += '    <button class="crm-btn danger" onclick="adminDeleteAccount(\'' + u.id + '\')" title="Permanently Delete User Account">🗑️ Delete</button>';
+        html += '  </div>';
+        html += '</td>';
+        html += '</tr>';
+      });
+
+      tbody.innerHTML = html;
     }
 
     function copySelectedCoords() {
@@ -2253,7 +3237,7 @@
 
     function fitAllMarkersOnMap() {
       var latlngs = Object.values(users)
-        .filter(function(u) { return hasValidPos(u) && !isRemoved(u.id); })
+        .filter(function(u) { return hasValidPos(u) && !isRemoved(u.id) && !deletedUserIds[u.id]; })
         .map(function(u) { return [u.lat, u.lng]; });
       if (latlngs.length > 0) {
         map.fitBounds(latlngs, { padding: [50, 50], maxZoom: 16 });
@@ -2285,7 +3269,7 @@
       var listEl = document.getElementById('user-list');
       var filterText = document.getElementById('search-box').value.toLowerCase();
 
-      var allNodes = Object.values(users).filter(function(u) { return !isRemoved(u.id); });
+      var allNodes = Object.values(users).filter(function(u) { return !isRemoved(u.id) && !deletedUserIds[u.id]; });
 
       var filtered = allNodes.filter(function(u) {
         var matchesText = u.name.toLowerCase().includes(filterText) ||
@@ -2301,6 +3285,8 @@
       });
 
       document.getElementById('badge-active-count').textContent = allNodes.length;
+      var crmBadge = document.getElementById('crm-total-badge');
+      if (crmBadge) crmBadge.textContent = allNodes.length;
 
       if (filtered.length === 0) {
         listEl.innerHTML = '<div style="padding: 30px 10px; text-align: center; color: var(--text-muted); font-size: 0.8rem;">No matching units found.</div>';
@@ -2312,17 +3298,26 @@
         var isSelected = (selectedUserId === u.id);
         var isLive = isLiveUser(u);
         var batClass = (u.batteryPercent <= 20) ? 'low' : 'normal';
+        var plan = (u.subscriptionPlan || 'DEMO').toUpperCase();
+        var effStatus = getEffectiveAccountStatus(u);
 
         html += '<div class="user-card ' + (isSelected ? 'active' : '') + '" onclick="selectUser(\'' + u.id + '\')">';
         html += '  <div class="card-avatar">' + avatarHtml(u) + '</div>';
         html += '  <div class="card-info">';
         html += '    <div class="card-title-row">';
         html += '      <span class="card-title">' + esc(u.name) + '</span>';
+        html += '      <span class="pack-badge pack-' + plan + '" style="font-size:0.58rem; padding:1px 5px;">' + plan + '</span>';
         html += '      <span class="card-code">' + esc(u.friendCode) + '</span>';
         html += '    </div>';
-        html += '    <div class="card-email">' + esc(u.email) + '</div>';
+        html += '    <div class="card-email">' + esc(u.email) + ' • <span style="color:#38bdf8;">' + esc(formatRemainingDays(u)) + '</span></div>';
         html += '    <div class="card-telemetry">';
         html += '      <span style="color:' + (isLive ? 'var(--primary)' : 'var(--text-muted)') + ';">' + (isLive ? '● Live' : '○ Idle') + '</span>';
+        if (u.isGpsEnabled === false) {
+          html += '      <span style="color:#fbbf24; font-weight:800;">📍 GPS OFF</span>';
+        }
+        if (effStatus !== 'ACTIVE') {
+          html += '      <span style="color:#f87171; font-weight:800;">' + effStatus + '</span>';
+        }
         html += '      <span class="badge-speed">' + formatSpeed(u.speed) + '</span>';
         html += '      <span class="badge-battery ' + batClass + '">' + batteryText(u) + '</span>';
         html += '    </div>';
@@ -2362,7 +3357,7 @@
     }
 
     function updateTopTicker() {
-      var all = Object.values(users).filter(function(u) { return !isRemoved(u.id); });
+      var all = Object.values(users).filter(function(u) { return !isRemoved(u.id) && !deletedUserIds[u.id]; });
       var live = all.filter(isLiveUser).length;
       document.getElementById('tk-live-count').textContent = live + ' Online';
 

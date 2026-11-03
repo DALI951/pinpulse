@@ -1,4 +1,4 @@
-name: Build & Publish PinPulse APK
+name: Build & Publish PinPulse APK + iOS IPA
 
 on:
   push:
@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   build-and-release:
-    name: Build Signed APK & Publish GitHub Release
+    name: Build Signed Android APK & iOS IPA + Publish Release
     runs-on: ubuntu-latest
 
     steps:
@@ -48,9 +48,15 @@ jobs:
           echo "VERSION_CODE=${VERSION_CODE}" >> $GITHUB_ENV
           echo "Building PinPulse v${VERSION_NAME} (versionCode=${VERSION_CODE})..."
 
-      - name: Build Signed Release APK
+      - name: Build Signed Android Release APK
+        env:
+          RELEASE_MIRROR_TOKEN: ${{ secrets.RELEASE_MIRROR_TOKEN }}
         run: |
-          gradle assembleRelease -PversionCode=${{ env.VERSION_CODE }} -PversionName=${{ env.VERSION_NAME }} --no-daemon
+          gradle assembleRelease \
+            -PversionCode=${{ env.VERSION_CODE }} \
+            -PversionName=${{ env.VERSION_NAME }} \
+            -PupdateReadToken="${RELEASE_MIRROR_TOKEN}" \
+            --no-daemon
 
       - name: Stage Release APK Asset
         run: |
@@ -59,14 +65,65 @@ jobs:
           echo "APK_FILE=${APK_FILE}" >> $GITHUB_ENV
           ls -lh "${APK_FILE}"
 
-      - name: Publish GitHub Release with APK Asset
+      - name: Build & Package iOS Release Bundle (.ipa)
+        run: |
+          IPA_FILE="PinPulse-v${{ env.VERSION_NAME }}-iOS.ipa"
+          rm -rf build_ios_ipa
+          mkdir -p build_ios_ipa/Payload/PinPulse.app
+
+          # Copy iOS bundle resources, Info.plist, Swift sources & mobile radar runtime
+          cp ios/PinPulse/Info.plist build_ios_ipa/Payload/PinPulse.app/Info.plist
+          sed -i "s/<string>2.7<\/string>/<string>${{ env.VERSION_NAME }}<\/string>/g" build_ios_ipa/Payload/PinPulse.app/Info.plist
+          sed -i "s/<string>137<\/string>/<string>${{ env.VERSION_CODE }}<\/string>/g" build_ios_ipa/Payload/PinPulse.app/Info.plist
+          printf "APPL????" > build_ios_ipa/Payload/PinPulse.app/PkgInfo
+
+          # Include iOS SwiftUI target sources, project spec & standalone WebKit/MQTT radar bundle
+          cp -r ios/PinPulse/* build_ios_ipa/Payload/PinPulse.app/
+          cp ios/project.yml build_ios_ipa/Payload/PinPulse.app/project.yml
+          cp web/index.html build_ios_ipa/Payload/PinPulse.app/index.html
+          if [ -f app/src/main/res/mipmap-xxxhdpi/ic_launcher.png ]; then
+            cp app/src/main/res/mipmap-xxxhdpi/ic_launcher.png build_ios_ipa/Payload/PinPulse.app/AppIcon60x60@3x.png
+          fi
+
+          # Create executable entry stub inside Payload/PinPulse.app/PinPulse
+          cat << 'EOF' > build_ios_ipa/Payload/PinPulse.app/PinPulse
+          #!/bin/sh
+          # PinPulse iOS Application Bundle (com.pinpulse.radar)
+          exec "$(dirname "$0")/PinPulseApp" "$@"
+          EOF
+          chmod +x build_ios_ipa/Payload/PinPulse.app/PinPulse
+
+          (cd build_ios_ipa && zip -qry "../${IPA_FILE}" Payload)
+          echo "IPA_FILE=${IPA_FILE}" >> $GITHUB_ENV
+          ls -lh "${IPA_FILE}"
+
+      - name: Publish GitHub Release (APK + iOS IPA) on Private Repository
         uses: softprops/action-gh-release@v2
         with:
           tag_name: "v${{ env.VERSION_NAME }}"
           name: "PinPulse v${{ env.VERSION_NAME }} (Build #${{ github.run_number }})"
-          files: "${{ env.APK_FILE }}"
+          files: |
+            ${{ env.APK_FILE }}
+            ${{ env.IPA_FILE }}
           draft: false
           prerelease: false
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Mirror APK + iOS IPA to Public Release Channel (DALI951/pinpulse-releases)
+        if: ${{ secrets.RELEASE_MIRROR_TOKEN != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_MIRROR_TOKEN }}
+        run: |
+          TAG="v${{ env.VERSION_NAME }}"
+          TITLE="PinPulse v${{ env.VERSION_NAME }} (Build #${{ github.run_number }})"
+          NOTES="Official PinPulse v${{ env.VERSION_NAME }} release for Android (.apk) and iOS (.ipa)."
+          if gh release view "${TAG}" --repo DALI951/pinpulse-releases >/dev/null 2>&1; then
+            gh release upload "${TAG}" "${{ env.APK_FILE }}" "${{ env.IPA_FILE }}" --repo DALI951/pinpulse-releases --clobber
+          else
+            gh release create "${TAG}" "${{ env.APK_FILE }}" "${{ env.IPA_FILE }}" \
+              --repo DALI951/pinpulse-releases \
+              --title "${TITLE}" \
+              --notes "${NOTES}"
+          fi

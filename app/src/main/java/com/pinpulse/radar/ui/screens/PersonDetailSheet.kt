@@ -197,9 +197,17 @@ fun PersonDetailSheet(
                     Spacer(modifier = Modifier.height(3.dp))
 
                     Text(
-                        text = if (targetUser.isLive) "● Live now" else "○ ${targetUser.lastSeenText}",
+                        text = when {
+                            !targetUser.isGpsEnabled && targetUser.isLive -> "● Online (📍 Phone GPS is OFF)"
+                            targetUser.isLive -> "● Live now"
+                            else -> "○ ${targetUser.lastSeenText}"
+                        },
                         fontSize = 13.sp,
-                        color = if (targetUser.isLive) PulseGreen else TextMuted,
+                        color = when {
+                            !targetUser.isGpsEnabled -> Color(0xFFF59E0B)
+                            targetUser.isLive -> PulseGreen
+                            else -> TextMuted
+                        },
                         fontWeight = FontWeight.Medium
                     )
 
@@ -211,6 +219,28 @@ fun PersonDetailSheet(
                             fontWeight = FontWeight.Medium
                         )
                     }
+                }
+            }
+
+            if (!targetUser.isGpsEnabled) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFF3B2307), RoundedCornerShape(10.dp))
+                        .border(1.dp, Color(0xFFF59E0B), RoundedCornerShape(10.dp))
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                ) {
+                    Text(
+                        text = if (isSelf) {
+                            "📍 Your phone's GPS switch is currently OFF. Friends see your last known spot."
+                        } else {
+                            "📍 ${targetUser.displayName}'s phone GPS is turned OFF. Showing their last known position while Battery & Connection stay live."
+                        },
+                        fontSize = 11.sp,
+                        color = Color(0xFFFDE68A),
+                        fontWeight = FontWeight.SemiBold
+                    )
                 }
             }
 

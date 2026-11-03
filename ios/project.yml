@@ -1,0 +1,44 @@
+name: PinPulse
+options:
+  bundleIdPrefix: com.pinpulse
+  deploymentTarget:
+    iOS: "16.0"
+settings:
+  base:
+    PRODUCT_BUNDLE_IDENTIFIER: com.pinpulse.radar
+    MARKETING_VERSION: 2.7
+    CURRENT_PROJECT_VERSION: 137
+    SWIFT_VERSION: 5.9
+    CODE_SIGN_IDENTITY: ""
+    CODE_SIGNING_REQUIRED: NO
+    CODE_SIGNING_ALLOWED: NO
+targets:
+  PinPulse:
+    type: application
+    platform: iOS
+    sources:
+      - path: PinPulse
+    info:
+      path: PinPulse/Info.plist
+      properties:
+        CFBundleDisplayName: PinPulse
+        CFBundleIdentifier: com.pinpulse.radar
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSRequiresIPhoneOS: true
+        UILaunchScreen: {}
+        NSLocationWhenInUseUsageDescription: "PinPulse requires your live GPS location to share your position with your trusted friends and family circles."
+        NSLocationAlwaysAndWhenInUseUsageDescription: "PinPulse uses background GPS so your family and emergency contacts can see your live position and SOS alerts even when your phone is in your pocket."
+        UIBackgroundModes:
+          - location
+          - fetch
+          - processing
+          - remote-notification
+        UIRequiredDeviceCapabilities:
+          - arm64
+          - location-services
+          - gps
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight

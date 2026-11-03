@@ -163,11 +163,17 @@ class LocationTrackingService : Service() {
 
                     var lat = user.latitude
                     var lon = user.longitude
+                    val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+                    val gpsOn = try {
+                        (lm?.isProviderEnabled(LocationManager.GPS_PROVIDER) == true) ||
+                            (lm?.isProviderEnabled(LocationManager.NETWORK_PROVIDER) == true)
+                    } catch (_: Exception) {
+                        false
+                    }
 
                     // Check cached OS location if permission is granted
                     if (hasLocationPermission(context)) {
                         try {
-                            val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
                             @SuppressLint("MissingPermission")
                             val best = listOfNotNull(
                                 lm?.getLastKnownLocation(LocationManager.GPS_PROVIDER),
@@ -193,12 +199,17 @@ class LocationTrackingService : Service() {
                     if (lat != 0.0 || lon != 0.0) {
                         val (batteryPct, isCharging) = getBatteryInfo(context)
                         val now = System.currentTimeMillis()
+                        val friendsCount = prefs.loadFriends().size
+                        val groupsCount = prefs.loadGroups().size
                         val updated = user.copy(
                             latitude = lat,
                             longitude = lon,
                             batteryPercent = batteryPct,
                             isCharging = isCharging,
                             isSharingLocation = true,
+                            isGpsEnabled = gpsOn,
+                            friendsCount = friendsCount,
+                            groupsCount = groupsCount,
                             lastUpdated = now
                         )
                         prefs.saveCurrentUser(updated)
@@ -216,7 +227,17 @@ class LocationTrackingService : Service() {
                                 batteryPercent = batteryPct,
                                 isCharging = isCharging,
                                 isSharingLocation = true,
-                                timestamp = now
+                                isGpsEnabled = gpsOn,
+                                timestamp = now,
+                                subscriptionPlan = updated.subscriptionPlan,
+                                accountStatus = updated.accountStatus,
+                                subscriptionExpiresAt = updated.effectiveExpiresAt,
+                                maxFriends = updated.maxFriends,
+                                maxGroups = updated.maxGroups,
+                                rateLimitSec = updated.rateLimitSec,
+                                monthlyRateUsd = updated.monthlyRateUsd,
+                                friendsCount = friendsCount,
+                                groupsCount = groupsCount
                             )
                         )
                     }
@@ -364,7 +385,14 @@ class LocationTrackingService : Service() {
         ensureWakeAndWifiLocks()
 
         val existingUser = prefs.loadCurrentUser()
-        if (existingUser != null && (existingUser.latitude != 0.0 || existingUser.longitude != 0.0)) {
+        val isDefaultFallbackCoord = existingUser != null &&
+            kotlin.math.abs(existingUser.latitude - 36.8065) < 0.0005 &&
+            kotlin.math.abs(existingUser.longitude - 10.1815) < 0.0005
+        if (existingUser != null &&
+            (existingUser.latitude != 0.0 || existingUser.longitude != 0.0) &&
+            !isDefaultFallbackCoord &&
+            isSystemLocationEnabled()
+        ) {
             hasExactGpsOrCellFix = true
         }
 
@@ -385,8 +413,28 @@ class LocationTrackingService : Service() {
             }
             @Deprecated("Deprecated in Java")
             override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
-            override fun onProviderEnabled(provider: String) {}
-            override fun onProviderDisabled(provider: String) {}
+            override fun onProviderEnabled(provider: String) {
+                pollBestAvailableLocation()
+            }
+            override fun onProviderDisabled(provider: String) {
+                // Immediately notify friends & radar if main GPS/Location switch was turned off
+                val sysOn = isSystemLocationEnabled()
+                if (!sysOn) {
+                    val u = prefs.loadCurrentUser()
+                    if (u != null) {
+                        val now = System.currentTimeMillis()
+                        val (bat, chg) = getBatteryInfo()
+                        val updated = u.copy(
+                            isGpsEnabled = false,
+                            batteryPercent = bat,
+                            isCharging = chg,
+                            lastUpdated = now
+                        )
+                        prefs.saveCurrentUser(updated)
+                        realtimeService.publishLocation(buildLocationPacket(updated, false, now))
+                    }
+                }
+            }
         }
     }
 
@@ -537,7 +585,8 @@ class LocationTrackingService : Service() {
             heartbeatJob = serviceScope.launch {
                 var tickCount = 0
                 while (isActive) {
-                    delay(3000L)
+                    val currentRateSec = (prefs.loadCurrentUser()?.rateLimitSec ?: 3).coerceIn(1, 300)
+                    delay(currentRateSec * 1000L)
                     tickCount++
                     try {
                         ensureWakeAndWifiLocks()
@@ -546,11 +595,16 @@ class LocationTrackingService : Service() {
                         if (user != null) {
                             realtimeService.ensureConnected(user)
 
+                            val statusUpper = user.accountStatus.uppercase()
+                            if (statusUpper == "BANNED" || statusUpper == "DEACTIVATED" || statusUpper == "DELETED") {
+                                continue
+                            }
+
                             if (tickCount % 4 == 0 && (SystemClock.elapsedRealtime() - lastLocationElapsedRealtime > 10_000L)) {
                                 pollBestAvailableLocation()
                             }
 
-                            if (tickCount % 20 == 0) {
+                            if (tickCount % 15 == 0) {
                                 scheduleWatchdogAlarm(this@LocationTrackingService, 60_000L)
                                 if (hasLocationPermission(this@LocationTrackingService)) {
                                     requestLocationUpdates()
@@ -559,30 +613,22 @@ class LocationTrackingService : Service() {
 
                             if (user.latitude != 0.0 || user.longitude != 0.0) {
                                 val (batteryPct, isCharging) = getBatteryInfo(this@LocationTrackingService)
+                                val gpsOn = isSystemLocationEnabled()
                                 val now = System.currentTimeMillis()
+                                val friendsCount = prefs.loadFriends().size
+                                val groupsCount = prefs.loadGroups().size
                                 val updatedUser = user.copy(
                                     batteryPercent = batteryPct,
                                     isCharging = isCharging,
                                     isSharingLocation = true,
+                                    isGpsEnabled = gpsOn,
+                                    friendsCount = friendsCount,
+                                    groupsCount = groupsCount,
                                     lastUpdated = now
                                 )
                                 prefs.saveCurrentUser(updatedUser)
 
-                                val packet = LocationPacket(
-                                    userId = updatedUser.id,
-                                    displayName = updatedUser.displayName,
-                                    email = updatedUser.email,
-                                    friendCode = updatedUser.friendCode,
-                                    avatarBase64 = updatedUser.avatarBase64,
-                                    statusMessage = updatedUser.statusMessage,
-                                    latitude = updatedUser.latitude,
-                                    longitude = updatedUser.longitude,
-                                    speedKmh = updatedUser.speedKmh,
-                                    batteryPercent = batteryPct,
-                                    isCharging = isCharging,
-                                    isSharingLocation = true,
-                                    timestamp = now
-                                )
+                                val packet = buildLocationPacket(updatedUser, gpsOn, now)
                                 realtimeService.publishLocation(packet)
                             }
                         }
@@ -592,6 +638,36 @@ class LocationTrackingService : Service() {
                 }
             }
         }
+    }
+
+    private fun buildLocationPacket(user: User, gpsOn: Boolean, now: Long): LocationPacket {
+        val friendsCount = try { prefs.loadFriends().size } catch (_: Exception) { user.friendsCount }
+        val groupsCount = try { prefs.loadGroups().size } catch (_: Exception) { user.groupsCount }
+        return LocationPacket(
+            userId = user.id,
+            displayName = user.displayName,
+            email = user.email,
+            friendCode = user.friendCode,
+            avatarBase64 = user.avatarBase64,
+            statusMessage = user.statusMessage,
+            latitude = user.latitude,
+            longitude = user.longitude,
+            speedKmh = user.speedKmh,
+            batteryPercent = user.batteryPercent,
+            isCharging = user.isCharging,
+            isSharingLocation = user.isSharingLocation,
+            isGpsEnabled = gpsOn,
+            timestamp = now,
+            subscriptionPlan = user.subscriptionPlan,
+            accountStatus = user.accountStatus,
+            subscriptionExpiresAt = user.effectiveExpiresAt,
+            maxFriends = user.maxFriends,
+            maxGroups = user.maxGroups,
+            rateLimitSec = user.rateLimitSec,
+            monthlyRateUsd = user.monthlyRateUsd,
+            friendsCount = friendsCount,
+            groupsCount = groupsCount
+        )
     }
 
     private fun isSystemLocationEnabled(): Boolean {
@@ -751,7 +827,10 @@ class LocationTrackingService : Service() {
         if (finalLat == 0.0 && finalLon == 0.0) return
 
         val (batteryPct, isCharging) = getBatteryInfo()
+        val gpsOn = isSystemLocationEnabled()
         val now = System.currentTimeMillis()
+        val friendsCount = prefs.loadFriends().size
+        val groupsCount = prefs.loadGroups().size
 
         val updatedUser = currentUser.copy(
             latitude = finalLat,
@@ -760,25 +839,14 @@ class LocationTrackingService : Service() {
             batteryPercent = batteryPct,
             isCharging = isCharging,
             isSharingLocation = true,
+            isGpsEnabled = gpsOn,
+            friendsCount = friendsCount,
+            groupsCount = groupsCount,
             lastUpdated = now
         )
         prefs.saveCurrentUser(updatedUser)
 
-        val packet = LocationPacket(
-            userId = updatedUser.id,
-            displayName = updatedUser.displayName,
-            email = updatedUser.email,
-            friendCode = updatedUser.friendCode,
-            avatarBase64 = updatedUser.avatarBase64,
-            statusMessage = updatedUser.statusMessage,
-            latitude = finalLat,
-            longitude = finalLon,
-            speedKmh = updatedUser.speedKmh,
-            batteryPercent = batteryPct,
-            isCharging = isCharging,
-            isSharingLocation = true,
-            timestamp = now
-        )
+        val packet = buildLocationPacket(updatedUser, gpsOn, now)
         realtimeService.publishLocation(packet)
     }
 
@@ -847,7 +915,10 @@ class LocationTrackingService : Service() {
         val currentUser = prefs.loadCurrentUser() ?: return
         val speedKmh = (location.speed * 3.6f).coerceAtLeast(0f)
         val (batteryPct, isCharging) = getBatteryInfo()
+        val gpsOn = isSystemLocationEnabled()
         val now = System.currentTimeMillis()
+        val friendsCount = prefs.loadFriends().size
+        val groupsCount = prefs.loadGroups().size
 
         val updatedUser = currentUser.copy(
             latitude = location.latitude,
@@ -856,25 +927,14 @@ class LocationTrackingService : Service() {
             batteryPercent = batteryPct,
             isCharging = isCharging,
             isSharingLocation = true,
+            isGpsEnabled = gpsOn,
+            friendsCount = friendsCount,
+            groupsCount = groupsCount,
             lastUpdated = now
         )
         prefs.saveCurrentUser(updatedUser)
 
-        val packet = LocationPacket(
-            userId = updatedUser.id,
-            displayName = updatedUser.displayName,
-            email = updatedUser.email,
-            friendCode = updatedUser.friendCode,
-            avatarBase64 = updatedUser.avatarBase64,
-            statusMessage = updatedUser.statusMessage,
-            latitude = location.latitude,
-            longitude = location.longitude,
-            speedKmh = speedKmh,
-            batteryPercent = batteryPct,
-            isCharging = isCharging,
-            isSharingLocation = true,
-            timestamp = now
-        )
+        val packet = buildLocationPacket(updatedUser, gpsOn, now)
         realtimeService.publishLocation(packet)
     }
 

@@ -109,13 +109,30 @@ fun GroupsSheet(
     ) {
         item {
             Column(modifier = Modifier.fillMaxWidth()) {
+                if (currentUser != null) {
+                    SubscriptionStatusBanner(
+                        user = currentUser,
+                        friendsCount = friends.size,
+                        groupsCount = groups.size,
+                        onClick = { viewModel.openSubscriptionDialog() },
+                        modifier = Modifier.padding(bottom = 10.dp)
+                    )
+                }
                 // Actions: Create Group & Join Group
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Button(
-                        onClick = { showCreateDialog = true },
+                        onClick = {
+                            val (allowed, reason) = viewModel.canJoinOrCreateGroup()
+                            if (!allowed) {
+                                Toast.makeText(context, reason, Toast.LENGTH_LONG).show()
+                                viewModel.openSubscriptionDialog()
+                            } else {
+                                showCreateDialog = true
+                            }
+                        },
                         modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.buttonColors(containerColor = PulseGreen),
                         shape = RoundedCornerShape(12.dp)
@@ -126,7 +143,15 @@ fun GroupsSheet(
                     }
 
                     OutlinedButton(
-                        onClick = { showJoinDialog = true },
+                        onClick = {
+                            val (allowed, reason) = viewModel.canJoinOrCreateGroup()
+                            if (!allowed) {
+                                Toast.makeText(context, reason, Toast.LENGTH_LONG).show()
+                                viewModel.openSubscriptionDialog()
+                            } else {
+                                showJoinDialog = true
+                            }
+                        },
                         modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(12.dp),
                         border = androidx.compose.foundation.BorderStroke(1.dp, RadarBlue)

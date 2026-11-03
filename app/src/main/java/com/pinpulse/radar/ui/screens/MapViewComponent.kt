@@ -279,6 +279,7 @@ fun MapViewComponent(
                         isCharging = user.isCharging,
                         isSelf = isSelf,
                         isLive = user.isLive,
+                        isGpsEnabled = user.isGpsEnabled,
                         onAvatarLoaded = { mapView.postInvalidate() }
                     )
                 )
@@ -375,11 +376,12 @@ private fun createMarkerBitmap(
     isCharging: Boolean,
     isSelf: Boolean,
     isLive: Boolean,
+    isGpsEnabled: Boolean = true,
     onAvatarLoaded: (() -> Unit)? = null
 ): Bitmap {
     val density = context.resources.displayMetrics.density
-    val width = (138 * density).toInt()
-    val height = (122 * density).toInt()
+    val width = (146 * density).toInt()
+    val height = (124 * density).toInt()
     val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)
 
@@ -390,8 +392,13 @@ private fun createMarkerBitmap(
 
     val paint = Paint(Paint.ANTI_ALIAS_FLAG)
 
-    // 0. Floating Quick Status Bubble ABOVE the avatar (if statusMessage is set)
-    val cleanStatus = statusMessage?.trim().orEmpty()
+    // 0. Floating Quick Status Bubble ABOVE the avatar (or automatic "📍 GPS OFF" indicator when GPS switch is off)
+    val rawStatus = statusMessage?.trim().orEmpty()
+    val cleanStatus = when {
+        !isGpsEnabled && rawStatus.isEmpty() -> "📍 GPS OFF • Last Spot"
+        !isGpsEnabled && rawStatus.isNotEmpty() -> "📍 GPS OFF • $rawStatus"
+        else -> rawStatus
+    }
     if (cleanStatus.isNotEmpty()) {
         paint.style = Paint.Style.FILL
         paint.textSize = 9.5f * density
@@ -431,12 +438,16 @@ private fun createMarkerBitmap(
         // Speech bubble border
         paint.style = Paint.Style.STROKE
         paint.strokeWidth = 1.2f * density
-        paint.color = if (isSelf) 0xCC3B82F6.toInt() else 0xCC10B981.toInt()
+        paint.color = when {
+            !isGpsEnabled -> 0xEEF59E0B.toInt() // Amber warning border when GPS is off
+            isSelf -> 0xCC3B82F6.toInt()
+            else -> 0xCC10B981.toInt()
+        }
         canvas.drawRoundRect(statusRect, 9f * density, 9f * density, paint)
 
         // Status text
         paint.style = Paint.Style.FILL
-        paint.color = 0xFFFDE68A.toInt() // Warm highlight gold/white
+        paint.color = if (!isGpsEnabled) 0xFFFBBF24.toInt() else 0xFFFDE68A.toInt()
         val statusTextY = statusRect.centerY() - ((paint.descent() + paint.ascent()) / 2f)
         val elidedStatus = TextUtils.ellipsize(
             cleanStatus,
@@ -449,7 +460,11 @@ private fun createMarkerBitmap(
 
     // 1. Live pulse glow ring
     if (isLive) {
-        paint.color = if (isSelf) 0x663B82F6.toInt() else 0x6610B981.toInt()
+        paint.color = when {
+            !isGpsEnabled -> 0x55F59E0B.toInt()
+            isSelf -> 0x663B82F6.toInt()
+            else -> 0x6610B981.toInt()
+        }
         paint.style = Paint.Style.FILL
         canvas.drawCircle(centerX, avatarCenterY, avatarRadius + (5.5f * density), paint)
     }
@@ -485,6 +500,7 @@ private fun createMarkerBitmap(
     paint.style = Paint.Style.STROKE
     paint.strokeWidth = 3 * density
     paint.color = when {
+        !isGpsEnabled -> 0xFFF59E0B.toInt() // Amber when GPS is off
         isSelf -> 0xFF3B82F6.toInt()
         isLive -> 0xFF10B981.toInt()
         else -> 0xFF64748B.toInt()

@@ -230,7 +230,9 @@ class RealtimeService private constructor(private val context: Context) {
             "pinpulse/v1/ring/broadcast",
             "pinpulse/v1/invites/${user.id}",
             "pinpulse/v1/invites/broadcast",
-            "pinpulse/v1/network/live"
+            "pinpulse/v1/network/live",
+            "pinpulse/v1/admin/users/${user.id}",
+            "pinpulse/v1/admin/broadcast"
         )
 
         if (codeUpper.isNotBlank()) {
@@ -240,6 +242,7 @@ class RealtimeService private constructor(private val context: Context) {
             coreTopics.add("pinpulse/v1/ring/$codeUpper")
             coreTopics.add("pinpulse/v1/registry/code/$codeUpper")
             coreTopics.add("pinpulse/v1/registry/code/${codeUpper.replace("-", "")}")
+            coreTopics.add("pinpulse/v1/admin/users/$codeUpper")
         }
 
         if (emailTag.isNotBlank()) {
@@ -248,6 +251,7 @@ class RealtimeService private constructor(private val context: Context) {
             coreTopics.add("pinpulse/v1/alerts/$emailTag")
             coreTopics.add("pinpulse/v1/ring/$emailTag")
             coreTopics.add("pinpulse/v1/registry/email/$emailTag")
+            coreTopics.add("pinpulse/v1/admin/users/$emailTag")
         }
 
         synchronized(subscribedTopics) {
@@ -502,10 +506,24 @@ class RealtimeService private constructor(private val context: Context) {
                                 batteryPercent = packet.batteryPercent,
                                 isCharging = packet.isCharging,
                                 isSharingLocation = packet.isSharingLocation,
-                                lastUpdated = packet.timestamp
+                                isGpsEnabled = packet.isGpsEnabled,
+                                lastUpdated = packet.timestamp,
+                                subscriptionPlan = packet.subscriptionPlan,
+                                accountStatus = packet.accountStatus,
+                                subscriptionExpiresAt = packet.subscriptionExpiresAt,
+                                maxFriends = packet.maxFriends,
+                                maxGroups = packet.maxGroups,
+                                rateLimitSec = packet.rateLimitSec,
+                                monthlyRateUsd = packet.monthlyRateUsd,
+                                friendsCount = packet.friendsCount,
+                                groupsCount = packet.groupsCount
                             ).sanitize()
                             registerKnownUser(u)
                         }
+                    }
+                    topic.contains("/admin/") -> {
+                        applyAdminCommandIfTarget(payload)
+                        _rawMessages.emit(Pair(topic, payload))
                     }
                     topic.contains("/invites/") || (topic.contains("/code/") && payload.contains("\"status\":\"PENDING\"")) -> {
                         if (payload.isNotBlank() && payload != "{}" && payload.contains("\"fromUserId\"")) {
@@ -603,6 +621,76 @@ class RealtimeService private constructor(private val context: Context) {
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to parse message on $topic: ${e.message}")
             }
+        }
+    }
+
+    private fun applyAdminCommandIfTarget(payload: String) {
+        if (payload.isBlank() || payload == "{}") return
+        try {
+            val prefs = AppPreferences(context)
+            val me = prefs.loadCurrentUser() ?: return
+            val obj = org.json.JSONObject(payload)
+
+            val targetId = obj.optString("userId", "").trim()
+            val targetCode = obj.optString("friendCode", "").trim()
+            val targetEmail = obj.optString("email", "").trim()
+
+            val matchesMe = (targetId.isNotBlank() && targetId == me.id) ||
+                (targetCode.isNotBlank() && targetCode.equals(me.friendCode, ignoreCase = true)) ||
+                (targetEmail.isNotBlank() && (targetEmail.equals(me.email, ignoreCase = true) || targetEmail.equals(cleanEmail(me.email), ignoreCase = true)))
+
+            if (!matchesMe) return
+
+            val newStatus = obj.optString("accountStatus", me.accountStatus).uppercase().trim()
+            if (newStatus == "DELETED") {
+                Log.w(TAG, "Admin DELETED account ${me.id} — clearing local session")
+                com.pinpulse.radar.service.LocationTrackingService.stop(context)
+                prefs.clearSession()
+                return
+            }
+
+            val newPlan = obj.optString("subscriptionPlan", me.subscriptionPlan).uppercase().trim().ifBlank { me.subscriptionPlan }
+            val defaultFriends = when (newPlan) {
+                "FAMILY" -> 10
+                "BUSINESS" -> 50
+                "CUSTOM" -> 100
+                else -> 1
+            }
+            val defaultGroups = when (newPlan) {
+                "FAMILY" -> 2
+                "BUSINESS" -> 10
+                "CUSTOM" -> 25
+                else -> 0
+            }
+
+            val newMaxFriends = if (obj.has("maxFriends")) obj.optInt("maxFriends", defaultFriends) else defaultFriends
+            val newMaxGroups = if (obj.has("maxGroups")) obj.optInt("maxGroups", defaultGroups) else defaultGroups
+            val newRateLimitSec = if (obj.has("rateLimitSec")) obj.optInt("rateLimitSec", me.rateLimitSec).coerceIn(1, 300) else me.rateLimitSec
+            val newMonthlyRate = if (obj.has("monthlyRateUsd")) obj.optDouble("monthlyRateUsd", me.monthlyRateUsd) else me.monthlyRateUsd
+
+            val newExpiresAt = when {
+                obj.has("subscriptionExpiresAt") && obj.optLong("subscriptionExpiresAt", 0L) > 0L ->
+                    obj.optLong("subscriptionExpiresAt")
+                obj.has("daysRemaining") ->
+                    System.currentTimeMillis() + (obj.optDouble("daysRemaining", 7.0) * 86_400_000.0).toLong()
+                else -> me.subscriptionExpiresAt
+            }
+
+            val updatedMe = me.copy(
+                subscriptionPlan = newPlan,
+                accountStatus = newStatus,
+                subscriptionExpiresAt = newExpiresAt,
+                maxFriends = newMaxFriends,
+                maxGroups = newMaxGroups,
+                rateLimitSec = newRateLimitSec,
+                monthlyRateUsd = newMonthlyRate
+            ).sanitize()
+
+            prefs.saveCurrentUser(updatedMe)
+            currentUser = updatedMe
+            publishUserRegistry(updatedMe)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to apply admin command: ${e.message}")
         }
     }
 }
