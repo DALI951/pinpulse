@@ -116,11 +116,50 @@ fun MainScreen(
     var showSettingsDialog by remember { mutableStateOf(false) }
     var centerTarget by remember { mutableStateOf<User?>(null) }
 
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+
+    fun checkBgLocationGranted(ctx: Context): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                ctx, Manifest.permission.ACCESS_BACKGROUND_LOCATION
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        } else true
+    }
+
+    fun checkBatteryIgnored(ctx: Context): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val pm = ctx.getSystemService(Context.POWER_SERVICE) as? PowerManager
+            pm?.isIgnoringBatteryOptimizations(ctx.packageName) ?: true
+        } else true
+    }
+
+    var isBackgroundLocationGranted by remember { mutableStateOf(checkBgLocationGranted(context)) }
+    var isBatteryIgnored by remember { mutableStateOf(checkBatteryIgnored(context)) }
+
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                isBackgroundLocationGranted = checkBgLocationGranted(context)
+                isBatteryIgnored = checkBatteryIgnored(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     LaunchedEffect(Unit) {
         viewModel.checkForUpdates()
     }
 
-    // Request Location and Notification Permissions
+    // Background Location ("Allow all the time") Permission Launcher for Android 10+
+    val backgroundLocationLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        isBackgroundLocationGranted = granted || checkBgLocationGranted(context)
+        com.pinpulse.radar.service.LocationTrackingService.start(context)
+    }
+
+    // Request Foreground Location and Notification Permissions
     val locationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
@@ -130,12 +169,18 @@ fun MainScreen(
             (context as? com.pinpulse.radar.MainActivity)?.fetchImmediateLocation()
             (context as? com.pinpulse.radar.MainActivity)?.requestBatteryOptimizationExemption()
             com.pinpulse.radar.service.LocationTrackingService.start(context)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && !checkBgLocationGranted(context)) {
+                backgroundLocationLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+            }
         }
     }
 
     LaunchedEffect(Unit) {
         val appPrefs = com.pinpulse.radar.data.AppPreferences(context)
-        if (!appPrefs.hasPromptedLocationPermissions) {
+        val fineAlready = androidx.core.content.ContextCompat.checkSelfPermission(
+            context, Manifest.permission.ACCESS_FINE_LOCATION
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (!appPrefs.hasPromptedLocationPermissions || !fineAlready) {
             appPrefs.hasPromptedLocationPermissions = true
             val permissions = mutableListOf(
                 Manifest.permission.ACCESS_FINE_LOCATION,
@@ -146,6 +191,8 @@ fun MainScreen(
             }
             locationPermissionLauncher.launch(permissions.toTypedArray())
             (context as? com.pinpulse.radar.MainActivity)?.requestBatteryOptimizationExemption(force = false)
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && !checkBgLocationGranted(context)) {
+            backgroundLocationLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
         }
     }
 
@@ -261,13 +308,26 @@ fun MainScreen(
                 }
             }
 
-            var isBatteryIgnored by remember {
-                mutableStateOf(
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                        val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
-                        pm?.isIgnoringBatteryOptimizations(context.packageName) ?: true
-                    } else true
-                )
+            if (!isBackgroundLocationGranted && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 4.dp)
+                        .background(Color(0xFF1E3A8A), RoundedCornerShape(10.dp))
+                        .border(1.dp, RadarBlue, RoundedCornerShape(10.dp))
+                        .clickable {
+                            backgroundLocationLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+                        }
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                ) {
+                    Text(
+                        text = "📍 24/7 Radar: Tap to set Location Permission to 'Allow all the time' so location keeps sending when app is closed.",
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        lineHeight = 15.sp
+                    )
+                }
             }
 
             if (!isBatteryIgnored) {
@@ -279,10 +339,7 @@ fun MainScreen(
                         .border(1.dp, Color(0xFFD97706), RoundedCornerShape(10.dp))
                         .clickable {
                             (context as? com.pinpulse.radar.MainActivity)?.requestBatteryOptimizationExemption(force = true)
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                                val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
-                                isBatteryIgnored = pm?.isIgnoringBatteryOptimizations(context.packageName) ?: true
-                            }
+                            isBatteryIgnored = checkBatteryIgnored(context)
                         }
                         .padding(horizontal = 12.dp, vertical = 8.dp)
                 ) {

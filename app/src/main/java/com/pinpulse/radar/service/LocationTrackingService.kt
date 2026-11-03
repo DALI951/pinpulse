@@ -1,6 +1,7 @@
 package com.pinpulse.radar.service
 
 import android.annotation.SuppressLint
+import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -12,11 +13,16 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.location.Location
+import android.location.LocationListener
+import android.location.LocationManager
+import android.net.wifi.WifiManager
 import android.os.BatteryManager
 import android.os.Build
+import android.os.Bundle
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -34,6 +40,7 @@ import com.pinpulse.radar.model.LocationPacket
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -47,6 +54,7 @@ class LocationTrackingService : Service() {
 
         const val ACTION_START = "ACTION_START_TRACKING"
         const val ACTION_STOP = "ACTION_STOP_TRACKING"
+        const val ACTION_KEEPALIVE_ALARM = "com.pinpulse.radar.ACTION_KEEPALIVE_ALARM"
 
         fun start(context: Context) {
             val hasFine = ContextCompat.checkSelfPermission(
@@ -61,35 +69,112 @@ class LocationTrackingService : Service() {
                 return
             }
 
-            val intent = Intent(context, LocationTrackingService::class.java).apply {
+            val appCtx = context.applicationContext
+            val intent = Intent(appCtx, LocationTrackingService::class.java).apply {
                 action = ACTION_START
             }
             try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    context.startForegroundService(intent)
+                    appCtx.startForegroundService(intent)
                 } else {
-                    context.startService(intent)
+                    appCtx.startService(intent)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to start service safely: ${e.message}")
+                scheduleWatchdogAlarm(appCtx, 2000L)
             }
         }
 
         fun stop(context: Context) {
-            val intent = Intent(context, LocationTrackingService::class.java).apply {
+            val appCtx = context.applicationContext
+            val intent = Intent(appCtx, LocationTrackingService::class.java).apply {
                 action = ACTION_STOP
             }
             try {
-                context.startService(intent)
+                appCtx.startService(intent)
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to stop service: ${e.message}")
+            }
+        }
+
+        fun scheduleWatchdogAlarm(context: Context, delayMs: Long = 60_000L) {
+            try {
+                val appCtx = context.applicationContext
+                val alarmManager = appCtx.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+                val triggerAt = SystemClock.elapsedRealtime() + delayMs
+
+                // 1. Broadcast alarm to BootReceiver (works reliably across all Android versions in Doze)
+                val receiverIntent = Intent(appCtx, BootReceiver::class.java).apply {
+                    action = ACTION_KEEPALIVE_ALARM
+                    setPackage(appCtx.packageName)
+                }
+                val receiverPending = PendingIntent.getBroadcast(
+                    appCtx,
+                    9511,
+                    receiverIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    try {
+                        alarmManager.setExactAndAllowWhileIdle(
+                            AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                            triggerAt,
+                            receiverPending
+                        )
+                    } catch (se: SecurityException) {
+                        alarmManager.setAndAllowWhileIdle(
+                            AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                            triggerAt,
+                            receiverPending
+                        )
+                    }
+                } else {
+                    alarmManager.setExact(
+                        AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                        triggerAt,
+                        receiverPending
+                    )
+                }
+
+                // 2. Direct ForegroundService PendingIntent safety net for short restarts
+                if (delayMs <= 5000L) {
+                    val serviceIntent = Intent(appCtx, LocationTrackingService::class.java).apply {
+                        action = ACTION_START
+                        setPackage(appCtx.packageName)
+                    }
+                    val servicePending = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        PendingIntent.getForegroundService(
+                            appCtx,
+                            9512,
+                            serviceIntent,
+                            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                        )
+                    } else {
+                        PendingIntent.getService(
+                            appCtx,
+                            9512,
+                            serviceIntent,
+                            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                        )
+                    }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        alarmManager.setAndAllowWhileIdle(
+                            AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                            triggerAt + 500L,
+                            servicePending
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to schedule watchdog alarm: ${e.message}")
             }
         }
 
         fun getBatteryInfo(context: Context): Pair<Int, Boolean> {
             return try {
                 val ifilter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
-                val batteryStatus = context.registerReceiver(null, ifilter)
+                val batteryStatus = context.applicationContext.registerReceiver(null, ifilter)
                 val level = batteryStatus?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
                 val scale = batteryStatus?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
                 val status = batteryStatus?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
@@ -102,42 +187,101 @@ class LocationTrackingService : Service() {
         }
     }
 
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private lateinit var fusedLocationClient: FusedLocationProviderClient
+    private lateinit var locationManager: LocationManager
     private lateinit var locationCallback: LocationCallback
+    private lateinit var nativeLocationListener: LocationListener
     private lateinit var prefs: AppPreferences
     private lateinit var realtimeService: RealtimeService
+
     private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
     private var heartbeatJob: Job? = null
+    private var isListenersRegistered = false
+    private var isExplicitlyStopped = false
+
+    @Volatile
+    private var lastLocationElapsedRealtime: Long = 0L
 
     override fun onCreate() {
         super.onCreate()
         prefs = AppPreferences(this)
         realtimeService = RealtimeService.getInstance(this)
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
+        locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
 
         createNotificationChannel()
-
-        try {
-            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-            wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "PinPulse::TrackingWakeLock")
-            wakeLock?.acquire(24 * 60 * 60 * 1000L) // 24 hours lock
-        } catch (e: Exception) {}
+        ensureWakeAndWifiLocks()
 
         locationCallback = object : LocationCallback() {
             override fun onLocationResult(result: LocationResult) {
                 val location = result.lastLocation ?: return
+                lastLocationElapsedRealtime = SystemClock.elapsedRealtime()
                 handleNewLocation(location)
             }
+        }
+
+        nativeLocationListener = object : LocationListener {
+            override fun onLocationChanged(location: Location) {
+                lastLocationElapsedRealtime = SystemClock.elapsedRealtime()
+                handleNewLocation(location)
+            }
+            @Deprecated("Deprecated in Java")
+            override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+            override fun onProviderEnabled(provider: String) {}
+            override fun onProviderDisabled(provider: String) {}
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun ensureWakeAndWifiLocks() {
+        try {
+            if (wakeLock == null) {
+                val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+                wakeLock = powerManager.newWakeLock(
+                    PowerManager.PARTIAL_WAKE_LOCK,
+                    "PinPulse::TrackingWakeLock"
+                ).apply {
+                    setReferenceCounted(false)
+                }
+            }
+            if (wakeLock?.isHeld != true) {
+                wakeLock?.acquire()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "WakeLock acquire error: ${e.message}")
+        }
+
+        try {
+            if (wifiLock == null) {
+                val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+                val lockType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+                } else {
+                    WifiManager.WIFI_MODE_FULL_HIGH_PERF
+                }
+                wifiLock = wm?.createWifiLock(lockType, "PinPulse::TrackingWifiLock")?.apply {
+                    setReferenceCounted(false)
+                }
+            }
+            if (wifiLock?.isHeld != true) {
+                wifiLock?.acquire()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "WifiLock acquire error: ${e.message}")
         }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
+                isExplicitlyStopped = true
                 handleStopTracking()
                 stopSelf()
             }
             else -> {
+                isExplicitlyStopped = false
                 startForegroundTracking()
             }
         }
@@ -145,7 +289,7 @@ class LocationTrackingService : Service() {
     }
 
     private fun startForegroundTracking() {
-        val notification = buildNotification("Sharing live location with friends")
+        val notification = buildNotification("24/7 Live Radar Active — Sharing location")
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(
@@ -161,78 +305,189 @@ class LocationTrackingService : Service() {
             return
         }
 
+        ensureWakeAndWifiLocks()
+        scheduleWatchdogAlarm(this, 60_000L)
+
         val currentUser = prefs.loadCurrentUser()
         if (currentUser != null) {
-            prefs.saveCurrentUser(currentUser.copy(isSharingLocation = true))
-            realtimeService.connect(currentUser)
+            val activeUser = if (!currentUser.isSharingLocation) {
+                val fixed = currentUser.copy(isSharingLocation = true)
+                prefs.saveCurrentUser(fixed)
+                fixed
+            } else {
+                currentUser
+            }
+            realtimeService.ensureConnected(activeUser)
         }
 
-        requestLocationUpdates()
+        if (!isListenersRegistered) {
+            requestLocationUpdates()
+        }
 
-        // Continuous 3-second live heartbeat: guarantees website and friends receive continuous telemetry even if stationary
-        heartbeatJob?.cancel()
-        heartbeatJob = CoroutineScope(Dispatchers.IO).launch {
-            while (isActive) {
-                delay(3000L)
-                try {
-                    val user = prefs.loadCurrentUser()
-                    if (user != null && user.isSharingLocation && (user.latitude != 0.0 || user.longitude != 0.0)) {
-                        val (batteryPct, isCharging) = getBatteryInfo(this@LocationTrackingService)
-                        val packet = LocationPacket(
-                            userId = user.id,
-                            displayName = user.displayName,
-                            email = user.email,
-                            friendCode = user.friendCode,
-                            avatarBase64 = user.avatarBase64,
-                            latitude = user.latitude,
-                            longitude = user.longitude,
-                            speedKmh = user.speedKmh,
-                            batteryPercent = batteryPct,
-                            isCharging = isCharging,
-                            isSharingLocation = true,
-                            timestamp = System.currentTimeMillis()
-                        )
-                        realtimeService.publishLocation(packet)
+        pollBestAvailableLocation()
+
+        // Only launch heartbeat coroutine if not already active (prevents resetting 3s loop on Activity resume)
+        if (heartbeatJob?.isActive != true) {
+            heartbeatJob = serviceScope.launch {
+                var tickCount = 0
+                while (isActive) {
+                    delay(3000L)
+                    tickCount++
+                    try {
+                        ensureWakeAndWifiLocks()
+
+                        val user = prefs.loadCurrentUser()
+                        if (user != null) {
+                            // Ensure MQTT stays connected 24/7 even across network switches or idle periods
+                            realtimeService.ensureConnected(user)
+
+                            // If no GPS callback arrived in the last 10 seconds, actively poll providers
+                            if (tickCount % 4 == 0 && (SystemClock.elapsedRealtime() - lastLocationElapsedRealtime > 10_000L)) {
+                                pollBestAvailableLocation()
+                            }
+
+                            // Every 60 seconds, refresh watchdog alarm and re-assert location listeners
+                            if (tickCount % 20 == 0) {
+                                scheduleWatchdogAlarm(this@LocationTrackingService, 60_000L)
+                                requestLocationUpdates()
+                            }
+
+                            if (user.latitude != 0.0 || user.longitude != 0.0) {
+                                val (batteryPct, isCharging) = getBatteryInfo(this@LocationTrackingService)
+                                val now = System.currentTimeMillis()
+                                val updatedUser = user.copy(
+                                    batteryPercent = batteryPct,
+                                    isCharging = isCharging,
+                                    isSharingLocation = true,
+                                    lastUpdated = now
+                                )
+                                prefs.saveCurrentUser(updatedUser)
+
+                                val packet = LocationPacket(
+                                    userId = updatedUser.id,
+                                    displayName = updatedUser.displayName,
+                                    email = updatedUser.email,
+                                    friendCode = updatedUser.friendCode,
+                                    avatarBase64 = updatedUser.avatarBase64,
+                                    latitude = updatedUser.latitude,
+                                    longitude = updatedUser.longitude,
+                                    speedKmh = updatedUser.speedKmh,
+                                    batteryPercent = batteryPct,
+                                    isCharging = isCharging,
+                                    isSharingLocation = true,
+                                    timestamp = now
+                                )
+                                realtimeService.publishLocation(packet)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Heartbeat tick error: ${e.message}")
                     }
-                } catch (e: Exception) {}
+                }
             }
         }
+    }
 
+    @SuppressLint("MissingPermission")
+    private fun pollBestAvailableLocation() {
         try {
             fusedLocationClient.lastLocation.addOnSuccessListener { loc ->
                 if (loc != null) handleNewLocation(loc)
             }
+            fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
+                .addOnSuccessListener { loc ->
+                    if (loc != null) handleNewLocation(loc)
+                }
         } catch (e: Exception) {
-            Log.e(TAG, "Error getting immediate last location: ${e.message}")
+            Log.w(TAG, "Fused poll error: ${e.message}")
+        }
+
+        try {
+            val gpsLoc = if (locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+            } else null
+            val netLoc = if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+                locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+            } else null
+
+            val bestNative = when {
+                gpsLoc != null && netLoc != null -> if (gpsLoc.time >= netLoc.time) gpsLoc else netLoc
+                gpsLoc != null -> gpsLoc
+                else -> netLoc
+            }
+            if (bestNative != null) {
+                handleNewLocation(bestNative)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Native location poll error: ${e.message}")
         }
     }
 
     @SuppressLint("MissingPermission")
     private fun requestLocationUpdates() {
         try {
-            val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 3000L)
-                .setMinUpdateIntervalMillis(2000L)
+            val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 2500L)
+                .setMinUpdateIntervalMillis(1500L)
+                .setMaxUpdateDelayMillis(3000L)
                 .setMinUpdateDistanceMeters(0f)
                 .setWaitForAccurateLocation(false)
                 .build()
 
+            fusedLocationClient.removeLocationUpdates(locationCallback)
             fusedLocationClient.requestLocationUpdates(
                 locationRequest,
                 locationCallback,
                 Looper.getMainLooper()
             )
-            Log.d(TAG, "Location updates requested successfully (3s interval)")
+            isListenersRegistered = true
+            Log.d(TAG, "FusedLocation updates registered (2.5s interval)")
         } catch (e: Exception) {
-            Log.e(TAG, "Error requesting location: ${e.message}")
+            Log.e(TAG, "Error requesting fused location: ${e.message}")
+        }
+
+        // Register native hardware GPS & Network listeners on main looper as Doze-proof fallback
+        try {
+            locationManager.removeUpdates(nativeLocationListener)
+            if (locationManager.allProviders.contains(LocationManager.GPS_PROVIDER)) {
+                locationManager.requestLocationUpdates(
+                    LocationManager.GPS_PROVIDER,
+                    3000L,
+                    0f,
+                    nativeLocationListener,
+                    Looper.getMainLooper()
+                )
+            }
+            if (locationManager.allProviders.contains(LocationManager.NETWORK_PROVIDER)) {
+                locationManager.requestLocationUpdates(
+                    LocationManager.NETWORK_PROVIDER,
+                    3000L,
+                    0f,
+                    nativeLocationListener,
+                    Looper.getMainLooper()
+                )
+            }
+            if (locationManager.allProviders.contains(LocationManager.PASSIVE_PROVIDER)) {
+                locationManager.requestLocationUpdates(
+                    LocationManager.PASSIVE_PROVIDER,
+                    2000L,
+                    0f,
+                    nativeLocationListener,
+                    Looper.getMainLooper()
+                )
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Native LocationManager registration warning: ${e.message}")
         }
     }
 
     private fun getBatteryInfo(): Pair<Int, Boolean> = getBatteryInfo(this)
 
     private fun handleNewLocation(location: Location) {
+        if (location.latitude == 0.0 && location.longitude == 0.0) return
         val currentUser = prefs.loadCurrentUser() ?: return
-        val speedKmh = (location.speed * 3.6f)
+        val speedKmh = (location.speed * 3.6f).coerceAtLeast(0f)
         val (batteryPct, isCharging) = getBatteryInfo()
+        val now = System.currentTimeMillis()
 
         val updatedUser = currentUser.copy(
             latitude = location.latitude,
@@ -241,7 +496,7 @@ class LocationTrackingService : Service() {
             batteryPercent = batteryPct,
             isCharging = isCharging,
             isSharingLocation = true,
-            lastUpdated = System.currentTimeMillis()
+            lastUpdated = now
         )
         prefs.saveCurrentUser(updatedUser)
 
@@ -257,7 +512,7 @@ class LocationTrackingService : Service() {
             batteryPercent = batteryPct,
             isCharging = isCharging,
             isSharingLocation = true,
-            timestamp = System.currentTimeMillis()
+            timestamp = now
         )
         realtimeService.publishLocation(packet)
     }
@@ -265,11 +520,15 @@ class LocationTrackingService : Service() {
     private fun handleStopTracking() {
         heartbeatJob?.cancel()
         heartbeatJob = null
+        isListenersRegistered = false
         try {
             fusedLocationClient.removeLocationUpdates(locationCallback)
         } catch (e: Exception) {
-            Log.e(TAG, "Error removing location updates: ${e.message}")
+            Log.e(TAG, "Error removing fused location updates: ${e.message}")
         }
+        try {
+            locationManager.removeUpdates(nativeLocationListener)
+        } catch (e: Exception) {}
 
         val currentUser = prefs.loadCurrentUser()
         if (currentUser != null) {
@@ -281,8 +540,6 @@ class LocationTrackingService : Service() {
             )
             prefs.saveCurrentUser(updatedUser)
 
-            // Broadcast that location sharing is turned off for friends,
-            // BUT still transmit last coordinates and battery to the master channel so master radar never loses them!
             val packet = LocationPacket(
                 userId = updatedUser.id,
                 displayName = updatedUser.displayName,
@@ -331,10 +588,12 @@ class LocationTrackingService : Service() {
         )
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("PinPulse Radar Active")
+            .setContentTitle("PinPulse Radar Active (24/7)")
             .setContentText(contentText)
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
             .setOngoing(true)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .setContentIntent(pendingIntent)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
@@ -347,7 +606,8 @@ class LocationTrackingService : Service() {
                 "PinPulse Live Tracking",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Shows live location sharing status"
+                description = "Keeps PinPulse radar sharing your live location 24/7 in background"
+                setShowBadge(false)
             }
             val manager = getSystemService(NotificationManager::class.java)
             manager?.createNotificationChannel(channel)
@@ -357,23 +617,10 @@ class LocationTrackingService : Service() {
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
         val currentUser = prefs.loadCurrentUser()
-        if (currentUser?.isSharingLocation == true) {
-            val restartServiceIntent = Intent(applicationContext, LocationTrackingService::class.java).apply {
-                setPackage(packageName)
-                action = ACTION_START
-            }
-            val restartPendingIntent = PendingIntent.getService(
-                applicationContext,
-                1,
-                restartServiceIntent,
-                PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
-            )
-            val alarmManager = getSystemService(Context.ALARM_SERVICE) as? android.app.AlarmManager
-            alarmManager?.set(
-                android.app.AlarmManager.RTC,
-                System.currentTimeMillis() + 1000L,
-                restartPendingIntent
-            )
+        if (currentUser != null && !isExplicitlyStopped) {
+            Log.d(TAG, "Task removed from Recents — preserving 24/7 background location tracking!")
+            scheduleWatchdogAlarm(applicationContext, 1500L)
+            startForegroundTracking()
         }
     }
 
@@ -381,11 +628,28 @@ class LocationTrackingService : Service() {
         super.onDestroy()
         heartbeatJob?.cancel()
         heartbeatJob = null
+        isListenersRegistered = false
         try {
             fusedLocationClient.removeLocationUpdates(locationCallback)
         } catch (e: Exception) {}
-        if (wakeLock?.isHeld == true) {
-            wakeLock?.release()
+        try {
+            locationManager.removeUpdates(nativeLocationListener)
+        } catch (e: Exception) {}
+        try {
+            if (wakeLock?.isHeld == true) {
+                wakeLock?.release()
+            }
+        } catch (e: Exception) {}
+        try {
+            if (wifiLock?.isHeld == true) {
+                wifiLock?.release()
+            }
+        } catch (e: Exception) {}
+
+        // If OS killed the service unexpectedly while user is logged in, immediately schedule revival!
+        if (!isExplicitlyStopped && prefs.loadCurrentUser() != null) {
+            Log.w(TAG, "Service destroyed unexpectedly — scheduling immediate watchdog revival!")
+            scheduleWatchdogAlarm(applicationContext, 1500L)
         }
     }
 

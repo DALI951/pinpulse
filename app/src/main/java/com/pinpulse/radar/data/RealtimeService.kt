@@ -1,6 +1,10 @@
 package com.pinpulse.radar.data
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.util.Log
 import com.google.gson.Gson
 import com.pinpulse.radar.model.AlertMessage
@@ -10,6 +14,7 @@ import com.pinpulse.radar.model.LocationPacket
 import com.pinpulse.radar.model.User
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -17,6 +22,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.eclipse.paho.client.mqttv3.IMqttDeliveryToken
 import org.eclipse.paho.client.mqttv3.MqttCallbackExtended
 import org.eclipse.paho.client.mqttv3.MqttClient
@@ -43,9 +50,14 @@ class RealtimeService private constructor(private val context: Context) {
     }
 
     private val gson = Gson()
-    private val scope = CoroutineScope(Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val connectMutex = Mutex()
+
+    @Volatile
     private var client: MqttClient? = null
     private val subscribedTopics = mutableSetOf<String>()
+
+    @Volatile
     private var currentUser: User? = null
 
     private val _locationUpdates = MutableSharedFlow<LocationPacket>(extraBufferCapacity = 64)
@@ -67,72 +79,140 @@ class RealtimeService private constructor(private val context: Context) {
     private val _rawMessages = MutableSharedFlow<Pair<String, String>>(extraBufferCapacity = 64)
     val rawMessages: SharedFlow<Pair<String, String>> = _rawMessages.asSharedFlow()
 
+    init {
+        registerNetworkMonitor()
+    }
+
+    private fun registerNetworkMonitor() {
+        try {
+            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
+            val req = NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .build()
+            cm.registerNetworkCallback(req, object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) {
+                    val user = currentUser ?: AppPreferences(context).loadCurrentUser()
+                    if (user != null) {
+                        Log.d(TAG, "Network available — ensuring MQTT connection is active")
+                        ensureConnected(user)
+                    }
+                }
+            })
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to register network callback: ${e.message}")
+        }
+    }
+
     fun connect(user: User) {
         currentUser = user
         scope.launch {
+            connectInternal(user, forceResubscribe = true)
+        }
+    }
+
+    fun ensureConnected(user: User? = currentUser) {
+        val targetUser = user ?: currentUser ?: AppPreferences(context).loadCurrentUser() ?: return
+        currentUser = targetUser
+        if (client?.isConnected == true) return
+        if (connectMutex.isLocked) return
+        scope.launch {
+            connectInternal(targetUser, forceResubscribe = false)
+        }
+    }
+
+    private suspend fun connectInternal(user: User, forceResubscribe: Boolean) {
+        connectMutex.withLock {
+            currentUser = user
             try {
                 if (client?.isConnected == true) {
-                    resubscribeUserChannels(user)
-                    return@launch
-                }
-
-                val clientId = "pinpulse_" + user.id + "_" + System.currentTimeMillis().toString().takeLast(5)
-                client = MqttClient(BROKER_URL, clientId, MemoryPersistence())
-
-                val lwtPayload = """{"userId":"${user.id}","senderId":"${user.id}","name":"${user.displayName}","senderName":"${user.displayName}","status":"OFFLINE","type":"PHONE_OFFLINE","timestamp":${System.currentTimeMillis()},"message":"⚠️ ${user.displayName}'s phone lost connection / went offline."}"""
-                val options = MqttConnectOptions().apply {
-                    isAutomaticReconnect = true
-                    isCleanSession = true
-                    connectionTimeout = 10
-                    keepAliveInterval = 30
-                    setWill("pinpulse/v1/user/${user.id}/status", lwtPayload.toByteArray(StandardCharsets.UTF_8), 1, true)
-                }
-
-                client?.setCallback(object : MqttCallbackExtended {
-                    override fun connectComplete(reconnect: Boolean, serverURI: String?) {
-                        Log.d(TAG, "MQTT Connected to $serverURI (reconnect=$reconnect)")
+                    if (forceResubscribe) {
                         resubscribeUserChannels(user)
                     }
+                    return@withLock
+                }
 
-                    override fun connectionLost(cause: Throwable?) {
-                        Log.w(TAG, "MQTT Connection lost: ${cause?.message}")
-                    }
+                // Cleanly close any stale/disconnected client before creating a new one
+                closeStaleClient()
 
-                    override fun messageArrived(topic: String?, message: MqttMessage?) {
-                        if (topic == null || message == null) return
-                        val payload = String(message.payload, StandardCharsets.UTF_8)
-                        handleIncomingMessage(topic, payload)
-                    }
+                val clientId = "pinpulse_" + user.id + "_" + System.currentTimeMillis().toString().takeLast(5)
+                val newClient = MqttClient(BROKER_URL, clientId, MemoryPersistence())
+                newClient.setCallback(createMqttCallback(user))
 
-                    override fun deliveryComplete(token: IMqttDeliveryToken?) {}
-                })
-
-                client?.connect(options)
-                Log.d(TAG, "MQTT Synchronously Connected to $BROKER_URL")
+                val options = buildConnectOptions(user)
+                newClient.connect(options)
+                client = newClient
+                Log.d(TAG, "MQTT Connected to primary broker: $BROKER_URL")
                 resubscribeUserChannels(user)
             } catch (e: Exception) {
-                Log.e(TAG, "Connect primary broker failed: ${e.message}, trying backup...")
-                connectBackup(user)
+                Log.e(TAG, "Primary broker connect failed (${e.message}), trying backup broker...")
+                connectBackupInternal(user)
             }
         }
     }
 
-    private fun connectBackup(user: User) {
+    private fun connectBackupInternal(user: User) {
         try {
+            closeStaleClient()
             val clientId = "pinpulse_bk_" + user.id + "_" + System.currentTimeMillis().toString().takeLast(5)
-            client = MqttClient(BACKUP_BROKER_URL, clientId, MemoryPersistence())
-            val lwtPayload = """{"userId":"${user.id}","senderId":"${user.id}","name":"${user.displayName}","senderName":"${user.displayName}","status":"OFFLINE","type":"PHONE_OFFLINE","timestamp":${System.currentTimeMillis()},"message":"⚠️ ${user.displayName}'s phone lost connection / went offline."}"""
-            val options = MqttConnectOptions().apply {
-                isAutomaticReconnect = true
-                isCleanSession = true
-                connectionTimeout = 10
-                keepAliveInterval = 30
-                setWill("pinpulse/v1/user/${user.id}/status", lwtPayload.toByteArray(StandardCharsets.UTF_8), 1, true)
-            }
-            client?.connect(options)
+            val backupClient = MqttClient(BACKUP_BROKER_URL, clientId, MemoryPersistence())
+            backupClient.setCallback(createMqttCallback(user))
+
+            val options = buildConnectOptions(user)
+            backupClient.connect(options)
+            client = backupClient
+            Log.d(TAG, "MQTT Connected to backup broker: $BACKUP_BROKER_URL")
             resubscribeUserChannels(user)
         } catch (e: Exception) {
             Log.e(TAG, "Backup broker connect failed: ${e.message}")
+        }
+    }
+
+    private fun closeStaleClient() {
+        val old = client
+        client = null
+        if (old != null) {
+            try {
+                old.setCallback(null)
+                if (old.isConnected) {
+                    old.disconnectForcibly(100, 100)
+                }
+                old.close(true)
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun buildConnectOptions(user: User): MqttConnectOptions {
+        val lwtPayload = """{"userId":"${user.id}","senderId":"${user.id}","name":"${user.displayName}","senderName":"${user.displayName}","status":"OFFLINE","type":"PHONE_OFFLINE","timestamp":${System.currentTimeMillis()},"message":"⚠️ ${user.displayName}'s phone lost connection / went offline."}"""
+        return MqttConnectOptions().apply {
+            isAutomaticReconnect = true
+            isCleanSession = true
+            connectionTimeout = 10
+            keepAliveInterval = 25
+            maxInflight = 100
+            // LWT is non-retained so brief cellular handoffs never leave a permanent OFFLINE flag
+            setWill("pinpulse/v1/user/${user.id}/status", lwtPayload.toByteArray(StandardCharsets.UTF_8), 1, false)
+        }
+    }
+
+    private fun createMqttCallback(user: User): MqttCallbackExtended {
+        return object : MqttCallbackExtended {
+            override fun connectComplete(reconnect: Boolean, serverURI: String?) {
+                Log.d(TAG, "MQTT connectComplete to $serverURI (reconnect=$reconnect)")
+                val activeUser = currentUser ?: user
+                resubscribeUserChannels(activeUser)
+            }
+
+            override fun connectionLost(cause: Throwable?) {
+                Log.w(TAG, "MQTT Connection lost: ${cause?.message}")
+            }
+
+            override fun messageArrived(topic: String?, message: MqttMessage?) {
+                if (topic == null || message == null) return
+                val payload = String(message.payload, StandardCharsets.UTF_8)
+                handleIncomingMessage(topic, payload)
+            }
+
+            override fun deliveryComplete(token: IMqttDeliveryToken?) {}
         }
     }
 
@@ -145,7 +225,9 @@ class RealtimeService private constructor(private val context: Context) {
             "pinpulse/v1/user/${user.id}/status",
             "pinpulse/v1/direct/${user.id}",
             "pinpulse/v1/alerts/${user.id}",
+            "pinpulse/v1/alerts/broadcast",
             "pinpulse/v1/ring/${user.id}",
+            "pinpulse/v1/ring/broadcast",
             "pinpulse/v1/invites/${user.id}",
             "pinpulse/v1/invites/broadcast",
             "pinpulse/v1/network/live"
@@ -173,9 +255,16 @@ class RealtimeService private constructor(private val context: Context) {
         }
 
         subscribeBatch(coreTopics.distinct(), qos = 1)
+        publishUserRegistry(user)
+    }
 
-        // Register own profile as retained message for code lookups & publish online status
+    fun publishUserRegistry(user: User) {
+        currentUser = user
+        registerKnownUser(user)
+        val emailTag = if (user.email.isNotBlank()) cleanEmail(user.email) else ""
+        val codeUpper = user.friendCode.trim().uppercase()
         val registryPayload = gson.toJson(user)
+
         if (codeUpper.isNotBlank()) {
             publishRetained("pinpulse/v1/registry/code/$codeUpper", registryPayload, qosLevel = 1)
             publishRetained("pinpulse/v1/registry/code/${codeUpper.replace("-", "")}", registryPayload, qosLevel = 1)
@@ -216,6 +305,9 @@ class RealtimeService private constructor(private val context: Context) {
                 if (client?.isConnected == true) {
                     client?.subscribe(topic, 1)
                     Log.d(TAG, "Subscribed to $topic")
+                } else {
+                    val u = currentUser ?: AppPreferences(context).loadCurrentUser()
+                    if (u != null) connectInternal(u, forceResubscribe = false)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Subscribe failed for $topic: ${e.message}")
@@ -241,6 +333,12 @@ class RealtimeService private constructor(private val context: Context) {
     fun publish(topic: String, payload: String, retained: Boolean = false, qosLevel: Int = 0) {
         scope.launch {
             try {
+                if (client?.isConnected != true) {
+                    val u = currentUser ?: AppPreferences(context).loadCurrentUser()
+                    if (u != null) {
+                        connectInternal(u, forceResubscribe = false)
+                    }
+                }
                 val message = MqttMessage(payload.toByteArray(StandardCharsets.UTF_8)).apply {
                     qos = qosLevel
                     isRetained = retained
@@ -260,7 +358,7 @@ class RealtimeService private constructor(private val context: Context) {
 
     fun publishLocation(packet: LocationPacket) {
         val payload = gson.toJson(packet)
-        // Publish retained location on user channel with QoS 0 for instant, zero-handshake caching
+        // Publish retained location on user channel with QoS 0 for instant caching
         publishRetained("pinpulse/v1/user/${packet.userId}/loc", payload, qosLevel = 0)
         // Broadcast location on live network with QoS 0 for immediate zero-delay streaming
         publish("pinpulse/v1/network/live", payload, qosLevel = 0)
@@ -291,15 +389,25 @@ class RealtimeService private constructor(private val context: Context) {
 
     fun registerKnownUser(user: User) {
         if (user.id.isBlank()) return
-        registeredUsersMap[user.id] = user
-        if (user.friendCode.isNotBlank()) {
-            val codeUpper = user.friendCode.trim().uppercase()
-            registeredUsersMap[codeUpper] = user
-            registeredUsersMap[codeUpper.replace("-", "")] = user
+        val existing = registeredUsersMap[user.id]
+        val merged = if (existing != null) {
+            user.copy(
+                friendCode = user.friendCode.ifBlank { existing.friendCode },
+                email = user.email.ifBlank { existing.email },
+                avatarBase64 = user.avatarBase64 ?: existing.avatarBase64
+            )
+        } else {
+            user
         }
-        if (user.email.isNotBlank()) {
-            registeredUsersMap[user.email.trim().lowercase()] = user
-            registeredUsersMap[cleanEmail(user.email)] = user
+        registeredUsersMap[merged.id] = merged
+        if (merged.friendCode.isNotBlank()) {
+            val codeUpper = merged.friendCode.trim().uppercase()
+            registeredUsersMap[codeUpper] = merged
+            registeredUsersMap[codeUpper.replace("-", "")] = merged
+        }
+        if (merged.email.isNotBlank()) {
+            registeredUsersMap[merged.email.trim().lowercase()] = merged
+            registeredUsersMap[cleanEmail(merged.email)] = merged
         }
         _registeredUsers.value = registeredUsersMap.toMap()
     }
@@ -412,7 +520,7 @@ class RealtimeService private constructor(private val context: Context) {
                                     )
                                 )
                                 // Direct persistent storage so timing never drops the invite
-                                val me = currentUser
+                                val me = currentUser ?: AppPreferences(context).loadCurrentUser()
                                 val appPrefs = AppPreferences(context)
                                 val currentFriends = appPrefs.loadFriends()
                                 val isAlreadyFriend = currentFriends.any {
@@ -457,8 +565,12 @@ class RealtimeService private constructor(private val context: Context) {
                         }
                     }
                     topic.contains("/groups/") && topic.endsWith("/info") -> {
-                        val group = gson.fromJson(payload, Group::class.java)
-                        _groupUpdates.emit(group)
+                        if (payload.isNotBlank() && payload != "{}") {
+                            val group = gson.fromJson(payload, Group::class.java)
+                            if (group != null && group.id.isNotBlank()) {
+                                _groupUpdates.emit(group)
+                            }
+                        }
                     }
                     topic.contains("/alerts/") -> {
                         try {

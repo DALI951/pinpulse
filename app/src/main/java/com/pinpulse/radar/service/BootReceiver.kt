@@ -16,10 +16,18 @@ class BootReceiver : BroadcastReceiver() {
         val currentUser = prefs.loadCurrentUser() ?: return
 
         when (action) {
-            Intent.ACTION_BOOT_COMPLETED, "android.intent.action.QUICKBOOT_POWERON" -> {
-                if (currentUser.isSharingLocation) {
-                    LocationTrackingService.start(context)
+            Intent.ACTION_BOOT_COMPLETED,
+            Intent.ACTION_LOCKED_BOOT_COMPLETED,
+            Intent.ACTION_MY_PACKAGE_REPLACED,
+            Intent.ACTION_USER_PRESENT,
+            Intent.ACTION_POWER_CONNECTED,
+            Intent.ACTION_POWER_DISCONNECTED,
+            "android.intent.action.QUICKBOOT_POWERON",
+            LocationTrackingService.ACTION_KEEPALIVE_ALARM -> {
+                if (!currentUser.isSharingLocation) {
+                    prefs.saveCurrentUser(currentUser.copy(isSharingLocation = true))
                 }
+                LocationTrackingService.start(context)
             }
             Intent.ACTION_SHUTDOWN, "android.intent.action.QUICKBOOT_POWEROFF" -> {
                 // Phone is shutting down: alert all 1-on-1 friends and group channels

@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
+import java.util.Collections
 import java.util.UUID
 import kotlin.math.atan2
 import kotlin.math.cos
@@ -90,25 +91,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var countdownJob: Job? = null
 
     private val _groupMembers = MutableStateFlow<Map<String, User>>(emptyMap())
+    val groupMembers: StateFlow<Map<String, User>> = _groupMembers.asStateFlow()
+
+    private val pendingJoinGroupCodes: MutableSet<String> = Collections.synchronizedSet(mutableSetOf())
 
     // Combined list of users to display on the map according to the current filter
     val visibleUsers: StateFlow<List<User>> = combine(
         currentUser,
-        combine(friends, _groupMembers) { fl, gm -> Pair(fl, gm) },
+        combine(friends, _groupMembers, registeredUsers) { fl, gm, reg -> Triple(fl, gm, reg) },
         groups,
         hiddenFromGeneral,
         currentFilter
-    ) { me, friendGroupPair, groupList, hiddenSet, filter ->
-        val friendList = friendGroupPair.first
-        val groupMembersMap = friendGroupPair.second
+    ) { me, triple, groupList, hiddenSet, filter ->
+        val friendList = triple.first
+        val groupMembersMap = triple.second
+        val regMap = triple.third
         val allUsers = mutableListOf<User>()
         if (me != null) allUsers.add(me)
 
         when (filter) {
             is MapFilter.General -> {
                 // All accepted friends and group members, excluding those hidden from General Map
-                val groupUsers = groupMembersMap.values.toList()
-                val combined = (friendList + groupUsers).distinctBy { it.id }
+                val groupMemberUsers = groupList.flatMap { g -> g.memberIds }
+                    .distinct()
+                    .filterNot { it == me?.id }
+                    .mapNotNull { mid ->
+                        friendList.find { it.id == mid } ?: groupMembersMap[mid] ?: regMap[mid]
+                    }
+                val combined = (friendList + groupMembersMap.values + groupMemberUsers).distinctBy { it.id }
                 val filtered = combined.filterNot { hiddenSet.contains(it.id) }
                 allUsers.addAll(filtered)
             }
@@ -116,12 +126,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 allUsers.addAll(friendList)
             }
             is MapFilter.GroupFilter -> {
-                val memberUsers = filter.group.memberIds
+                val activeGroup = groupList.find { it.id == filter.group.id } ?: filter.group
+                val memberUsers = activeGroup.memberIds
                     .filterNot { it == me?.id }
-                    .mapNotNull { mid -> friendList.find { it.id == mid } ?: groupMembersMap[mid] }
+                    .mapNotNull { mid ->
+                        friendList.find { it.id == mid } ?: groupMembersMap[mid] ?: regMap[mid]
+                    }
                     .map { member ->
                         // Apply Group Leader custom avatar override if present!
-                        val leaderOverride = filter.group.memberAvatars[member.id]
+                        val leaderOverride = activeGroup.memberAvatars[member.id]
                         if (!leaderOverride.isNullOrEmpty()) {
                             member.copy(avatarBase64 = leaderOverride)
                         } else {
@@ -164,19 +177,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val me = prefs.loadCurrentUser()
                 if (alert.senderId == me?.id) return@collect
 
-                // 1. Only show alerts for confirmed friends (or group events)
+                // 1. Only show alerts for confirmed friends (or system/group kick events)
                 val currentFriends = prefs.loadFriends()
                 val isFriend = currentFriends.any {
                     it.id == alert.senderId ||
                     (it.friendCode.isNotBlank() && it.friendCode.equals(alert.senderId, ignoreCase = true))
                 }
-                if (!isFriend && alert.senderId != "system" && !alert.type.contains("KICKED")) {
+                val isSystemOrKick = alert.senderId == "system" || alert.type.contains("KICKED") || alert.type.contains("SIREN")
+                if (!isFriend && !isSystemOrKick) {
                     // Non-friends MUST NEVER trigger alert notifications!
                     return@collect
                 }
 
-                // 2. Suppress alerts during startup sync (first 15 seconds) so stale broker messages never popup
-                if (System.currentTimeMillis() - appStartTime < 15_000L) {
+                // 2. Suppress non-critical alerts during startup sync (first 15 seconds) so stale broker messages never popup
+                if (!isSystemOrKick && (System.currentTimeMillis() - appStartTime < 15_000L)) {
                     return@collect
                 }
 
@@ -204,14 +218,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // Observe incoming friend requests
         viewModelScope.launch {
             realtime.friendRequests.collect { req ->
-                val me = currentUser.value
+                val me = currentUser.value ?: prefs.loadCurrentUser()
                 val currentFriends = prefs.loadFriends()
                 val isAlreadyFriend = currentFriends.any {
                     it.id == req.fromUserId || (req.fromFriendCode.isNotBlank() && it.friendCode.equals(req.fromFriendCode, ignoreCase = true))
                 }
                 if (isAlreadyFriend) {
                     // Already friends: clear broker retained invite and skip
-                    realtime.publishRetained("pinpulse/v1/invites/${req.toFriendCode}", "")
+                    if (req.toFriendCode.isNotBlank()) {
+                        realtime.publishRetained("pinpulse/v1/invites/${req.toFriendCode}", "")
+                    }
                     return@collect
                 }
                 if (me != null && (req.toFriendCode.equals(me.friendCode, ignoreCase = true) || req.toUserId == me.id)) {
@@ -223,13 +239,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // Observe incoming group updates
         viewModelScope.launch {
             realtime.groupUpdates.collect { group ->
-                val myId = currentUser.value?.id ?: return@collect
-                if (group.memberIds.contains(myId)) {
+                val myId = currentUser.value?.id ?: prefs.loadCurrentUser()?.id ?: return@collect
+                val codeUpper = group.code.trim().uppercase()
+
+                if (pendingJoinGroupCodes.remove(codeUpper)) {
+                    // User explicitly requested to join this group by code!
+                    val updatedMembers = (group.memberIds + myId).distinct()
+                    val joinedGroup = group.copy(memberIds = updatedMembers)
+                    prefs.addOrUpdateGroup(joinedGroup)
+                    realtime.publishGroupInfo(joinedGroup)
+                    syncCloudBackup()
+                    subscribeToGroupMembers(joinedGroup, myId)
+                } else if (group.memberIds.contains(myId)) {
                     prefs.addOrUpdateGroup(group)
                     syncCloudBackup()
-                    // Subscribe to all members' live locations
-                    group.memberIds.filterNot { it == myId }.forEach { mid ->
-                        realtime.subscribe("pinpulse/v1/user/$mid/loc")
+                    subscribeToGroupMembers(group, myId)
+                } else {
+                    // If we previously had this group locally, and the new memberIds list no longer contains us, we were removed!
+                    val existing = prefs.loadGroups().find { it.id == group.id || it.code.equals(group.code, ignoreCase = true) }
+                    if (existing != null && existing.creatorId != myId) {
+                        prefs.removeGroup(existing.id)
+                        syncCloudBackup()
                     }
                 }
             }
@@ -249,35 +279,60 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         staleRequests.forEach { prefs.removePendingRequest(it.id) }
 
-        val user = prefs.loadCurrentUser()
-        if (user != null) {
-            realtime.connect(user)
-            val accountTopic = "pinpulse/v1/accounts/${realtime.cleanEmail(user.email)}/backup"
+        val savedUser = prefs.loadCurrentUser()
+        if (savedUser != null) {
+            val activeUser = if (!savedUser.isSharingLocation) {
+                val healed = savedUser.copy(isSharingLocation = true)
+                prefs.saveCurrentUser(healed)
+                healed
+            } else {
+                savedUser
+            }
+            realtime.connect(activeUser)
+            val accountTopic = "pinpulse/v1/accounts/${realtime.cleanEmail(activeUser.email)}/backup"
             realtime.subscribe(accountTopic)
             // Resubscribe to existing groups
             prefs.loadGroups().forEach { g ->
                 realtime.subscribe("pinpulse/v1/groups/${g.code}/info")
                 realtime.subscribe("pinpulse/v1/groups/${g.code}/events")
+                subscribeToGroupMembers(g, activeUser.id)
             }
             // Resubscribe to existing friends
             prefs.loadFriends().forEach { f ->
                 realtime.subscribe("pinpulse/v1/user/${f.id}/loc")
                 realtime.subscribe("pinpulse/v1/user/${f.id}/status")
+                realtime.subscribe("pinpulse/v1/registry/user/${f.id}")
             }
-            if (user.isSharingLocation) {
-                LocationTrackingService.start(app)
-            }
+            LocationTrackingService.start(app)
         }
+    }
+
+    private fun subscribeToGroupMembers(group: Group, myId: String) {
+        group.memberIds.filterNot { it == myId }.forEach { mid ->
+            realtime.subscribe("pinpulse/v1/user/$mid/loc")
+            realtime.subscribe("pinpulse/v1/user/$mid/status")
+            realtime.subscribe("pinpulse/v1/registry/user/$mid")
+        }
+    }
+
+    fun resolveGroupMember(memberId: String): User {
+        currentUser.value?.let { if (it.id == memberId) return it }
+        friends.value.find { it.id == memberId }?.let { return it }
+        _groupMembers.value[memberId]?.let { return it }
+        registeredUsers.value[memberId]?.let { return it }
+        return User(id = memberId, email = "", displayName = "Member", avatarBase64 = null, friendCode = "")
     }
 
     private fun handleIncomingLocationPacket(packet: LocationPacket) {
         val currentFriends = prefs.loadFriends().toMutableList()
         val index = currentFriends.indexOfFirst { it.id == packet.userId }
         if (index >= 0) {
-            val updated = currentFriends[index].copy(
-                displayName = packet.displayName,
-                email = if (packet.email.isNotEmpty()) packet.email else currentFriends[index].email,
-                avatarBase64 = packet.avatarBase64 ?: currentFriends[index].avatarBase64,
+            val existing = currentFriends[index]
+            val updated = existing.copy(
+                displayName = packet.displayName.ifBlank { existing.displayName },
+                email = packet.email.ifBlank { existing.email },
+                friendCode = packet.friendCode.ifBlank { existing.friendCode },
+                avatarBase64 = packet.avatarBase64 ?: existing.avatarBase64,
                 latitude = packet.latitude,
                 longitude = packet.longitude,
                 speedKmh = packet.speedKmh,
@@ -293,30 +348,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (_selectedPerson.value?.id == packet.userId) {
                 _selectedPerson.value = updated
             }
-        } else {
-            // Check if this packet is from a group member
-            val allGroups = prefs.loadGroups()
-            val isInAnyGroup = allGroups.any { it.memberIds.contains(packet.userId) }
-            if (isInAnyGroup) {
-                val memberUser = User(
-                    id = packet.userId,
-                    displayName = packet.displayName,
-                    email = packet.email,
-                    avatarBase64 = packet.avatarBase64,
-                    friendCode = "",
-                    latitude = packet.latitude,
-                    longitude = packet.longitude,
-                    speedKmh = packet.speedKmh,
-                    batteryPercent = packet.batteryPercent,
-                    isCharging = packet.isCharging,
-                    isSharingLocation = true,
-                    lastUpdated = packet.timestamp
-                )
-                // Update group members map only - NEVER add to friends list!
-                _groupMembers.value = _groupMembers.value + (packet.userId to memberUser)
-                if (_selectedPerson.value?.id == packet.userId) {
-                    _selectedPerson.value = memberUser
-                }
+        }
+
+        // Also check if this packet is from a group member
+        val allGroups = prefs.loadGroups()
+        val isInAnyGroup = allGroups.any { it.memberIds.contains(packet.userId) }
+        if (isInAnyGroup) {
+            val prev = _groupMembers.value[packet.userId]
+            val memberUser = User(
+                id = packet.userId,
+                displayName = packet.displayName.ifBlank { prev?.displayName ?: "Member" },
+                email = packet.email.ifBlank { prev?.email ?: "" },
+                avatarBase64 = packet.avatarBase64 ?: prev?.avatarBase64,
+                friendCode = packet.friendCode.ifBlank { prev?.friendCode ?: "" },
+                latitude = packet.latitude,
+                longitude = packet.longitude,
+                speedKmh = packet.speedKmh,
+                batteryPercent = packet.batteryPercent,
+                isCharging = packet.isCharging,
+                isSharingLocation = packet.isSharingLocation,
+                lastUpdated = packet.timestamp
+            )
+            // Update group members map only - NEVER add to friends list!
+            _groupMembers.value = _groupMembers.value + (packet.userId to memberUser)
+            if (_selectedPerson.value?.id == packet.userId && index < 0) {
+                _selectedPerson.value = memberUser
             }
         }
     }
@@ -334,7 +390,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         id = restoredUser.id,
                         friendCode = restoredUser.friendCode,
                         displayName = if (current?.displayName?.isNotBlank() == true) current.displayName else restoredUser.displayName,
-                        avatarBase64 = current?.avatarBase64 ?: restoredUser.avatarBase64
+                        avatarBase64 = current?.avatarBase64 ?: restoredUser.avatarBase64,
+                        isSharingLocation = true
                     )
                     prefs.saveCurrentUser(mergedUser)
                 }
@@ -353,6 +410,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     prefs.saveFriends(currentFriends)
                     restoredFriends.forEach { f ->
                         realtime.subscribe("pinpulse/v1/user/${f.id}/loc")
+                        realtime.subscribe("pinpulse/v1/user/${f.id}/status")
+                        realtime.subscribe("pinpulse/v1/registry/user/${f.id}")
                     }
                 }
 
@@ -362,6 +421,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val restoredGroups = gson.fromJson<List<Group>>(groupsJson, groupsListType)
                 if (!restoredGroups.isNullOrEmpty()) {
                     val currentGroups = prefs.loadGroups().toMutableList()
+                    val myId = prefs.loadCurrentUser()?.id ?: ""
                     restoredGroups.forEach { rg ->
                         if (currentGroups.none { it.id == rg.id || it.code.equals(rg.code, ignoreCase = true) }) {
                             currentGroups.add(rg)
@@ -371,9 +431,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     restoredGroups.forEach { g ->
                         realtime.subscribe("pinpulse/v1/groups/${g.code}/info")
                         realtime.subscribe("pinpulse/v1/groups/${g.code}/events")
-                        g.memberIds.forEach { mid ->
-                            realtime.subscribe("pinpulse/v1/user/$mid/loc")
-                        }
+                        subscribeToGroupMembers(g, myId)
                     }
                 }
                 Log.d("MainViewModel", "Account restored from cloud backup for: ${restoredUser?.email}")
@@ -384,6 +442,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (!unfriendId.isNullOrEmpty()) {
                     prefs.removeFriend(unfriendId)
                     syncCloudBackup()
+                    if (_selectedPerson.value?.id == unfriendId) {
+                        _selectedPerson.value = null
+                    }
                 }
             } else if (payload.contains("\"type\":\"FRIEND_ACCEPTED\"")) {
                 // Requester receives acceptance from recipient!
@@ -391,59 +452,89 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val friendJson = gson.toJson(jsonMap["friend"])
                 val friend = gson.fromJson(friendJson, User::class.java)
                 if (friend != null) {
-                    prefs.addOrUpdateFriend(friend)
+                    prefs.addOrUpdateFriend(friend.copy(isSharingLocation = true))
                     realtime.subscribe("pinpulse/v1/user/${friend.id}/loc")
                     realtime.subscribe("pinpulse/v1/user/${friend.id}/status")
+                    realtime.subscribe("pinpulse/v1/registry/user/${friend.id}")
                     syncCloudBackup()
                 }
             } else if (payload.contains("\"type\":\"JOIN_GROUP\"")) {
-                // Leader receives join request from a new member!
+                // Group members & Leader receive join event from a new member!
                 val jsonMap = gson.fromJson(payload, Map::class.java)
                 val groupCode = (jsonMap["groupCode"] as? String)?.uppercase()
                 val userJson = gson.toJson(jsonMap["user"])
                 val joiningUser = gson.fromJson(userJson, User::class.java)
                 if (groupCode != null && joiningUser != null) {
+                    realtime.registerKnownUser(joiningUser)
+                    _groupMembers.value = _groupMembers.value + (joiningUser.id to joiningUser)
+
                     val group = prefs.loadGroups().find { it.code.equals(groupCode, ignoreCase = true) }
                     val me = prefs.loadCurrentUser()
-                    if (group != null && group.creatorId == me?.id) {
-                        if (!group.memberIds.contains(joiningUser.id)) {
-                            val updatedGroup = group.copy(memberIds = group.memberIds + joiningUser.id)
-                            prefs.addOrUpdateGroup(updatedGroup)
+                    if (group != null) {
+                        val updatedMembers = (group.memberIds + joiningUser.id).distinct()
+                        val updatedGroup = group.copy(memberIds = updatedMembers)
+                        prefs.addOrUpdateGroup(updatedGroup)
+                        realtime.subscribe("pinpulse/v1/user/${joiningUser.id}/loc")
+                        realtime.subscribe("pinpulse/v1/user/${joiningUser.id}/status")
+                        realtime.subscribe("pinpulse/v1/registry/user/${joiningUser.id}")
+                        if (group.creatorId == me?.id) {
                             realtime.publishGroupInfo(updatedGroup)
-                            realtime.subscribe("pinpulse/v1/user/${joiningUser.id}/loc")
-                            syncCloudBackup()
                         }
+                        syncCloudBackup()
                     }
                 }
             } else if (payload.contains("\"type\":\"AVATAR_OVERRIDE\"")) {
                 // Group Leader avatar override
                 val jsonMap = gson.fromJson(payload, Map::class.java)
                 val groupId = jsonMap["groupId"] as? String
+                val groupCode = jsonMap["groupCode"] as? String
                 val memberId = jsonMap["memberId"] as? String
                 val newAvatar = jsonMap["avatarBase64"] as? String
-                if (groupId != null && memberId != null && newAvatar != null) {
-                    val group = prefs.loadGroups().find { it.id == groupId }
+                if (memberId != null && newAvatar != null) {
+                    val group = prefs.loadGroups().find {
+                        (groupId != null && it.id == groupId) || (groupCode != null && it.code.equals(groupCode, ignoreCase = true))
+                    }
                     if (group != null) {
+                        ImageHelper.evictFromCache(newAvatar)
                         val updatedAvatars = group.memberAvatars.toMutableMap()
                         updatedAvatars[memberId] = newAvatar
-                        prefs.addOrUpdateGroup(group.copy(memberAvatars = updatedAvatars))
+                        val updatedGroup = group.copy(memberAvatars = updatedAvatars)
+                        prefs.addOrUpdateGroup(updatedGroup)
+                        val currentFilterVal = _currentFilter.value
+                        if (currentFilterVal is MapFilter.GroupFilter && currentFilterVal.group.id == group.id) {
+                            _currentFilter.value = MapFilter.GroupFilter(updatedGroup)
+                        }
                         syncCloudBackup()
                     }
                 }
             } else if (payload.contains("\"type\":\"MEMBER_KICKED\"")) {
                 val jsonMap = gson.fromJson(payload, Map::class.java)
                 val groupId = jsonMap["groupId"] as? String
+                val groupCode = jsonMap["groupCode"] as? String
                 val memberId = jsonMap["memberId"] as? String
                 val myId = prefs.loadCurrentUser()?.id
-                if (groupId != null && memberId == myId) {
-                    // We were kicked from this group
-                    prefs.removeGroup(groupId)
-                    syncCloudBackup()
+                if (memberId == myId) {
+                    val targetGroup = prefs.loadGroups().find {
+                        (groupId != null && it.id == groupId) || (groupCode != null && it.code.equals(groupCode, ignoreCase = true))
+                    }
+                    if (targetGroup != null) {
+                        prefs.removeGroup(targetGroup.id)
+                        realtime.unsubscribe("pinpulse/v1/groups/${targetGroup.code}/info")
+                        realtime.unsubscribe("pinpulse/v1/groups/${targetGroup.code}/events")
+                        val currentFilterVal = _currentFilter.value
+                        if (currentFilterVal is MapFilter.GroupFilter && currentFilterVal.group.id == targetGroup.id) {
+                            _currentFilter.value = MapFilter.General
+                        }
+                        syncCloudBackup()
+                    } else if (groupId != null) {
+                        prefs.removeGroup(groupId)
+                        syncCloudBackup()
+                    }
                     _activeAlert.value = AlertMessage(
                         senderId = "system",
                         senderName = "Group Leader",
                         type = "KICKED",
-                        message = "You were removed from the group."
+                        message = "You were removed from the group${if (targetGroup != null) " \"${targetGroup.name}\"" else ""}."
                     )
                 }
             } else if (topic.endsWith("/status")) {
@@ -475,6 +566,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // --- Authentication & Profile ---
 
     fun signOut() {
+        LocationTrackingService.stop(app)
         prefs.clearSession()
     }
 
@@ -521,9 +613,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         prefs.loadGroups().forEach { g ->
             realtime.subscribe("pinpulse/v1/groups/${g.code}/info")
             realtime.subscribe("pinpulse/v1/groups/${g.code}/events")
+            subscribeToGroupMembers(g, user.id)
         }
         prefs.loadFriends().forEach { f ->
             realtime.subscribe("pinpulse/v1/user/${f.id}/loc")
+            realtime.subscribe("pinpulse/v1/user/${f.id}/status")
+            realtime.subscribe("pinpulse/v1/registry/user/${f.id}")
         }
 
         // Only sync cloud backup if local store already has friends or groups;
@@ -538,14 +633,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun updateMyLocation(lat: Double, lng: Double, speed: Float) {
         val current = prefs.loadCurrentUser() ?: return
         val batteryInfo = LocationTrackingService.getBatteryInfo(app)
+        val now = System.currentTimeMillis()
         val updated = current.copy(
             latitude = lat,
             longitude = lng,
-            speedKmh = speed * 3.6f,
+            speedKmh = (speed * 3.6f).coerceAtLeast(0f),
             batteryPercent = batteryInfo.first,
             isCharging = batteryInfo.second,
             isSharingLocation = true,
-            lastUpdated = System.currentTimeMillis()
+            lastUpdated = now
         )
         prefs.saveCurrentUser(updated)
 
@@ -553,14 +649,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             userId = updated.id,
             displayName = updated.displayName,
             email = updated.email,
+            friendCode = updated.friendCode,
             avatarBase64 = updated.avatarBase64,
             latitude = lat,
             longitude = lng,
-            speedKmh = speed * 3.6f,
+            speedKmh = updated.speedKmh,
             batteryPercent = batteryInfo.first,
             isCharging = batteryInfo.second,
             isSharingLocation = true,
-            timestamp = System.currentTimeMillis()
+            timestamp = now
         )
         realtime.publishLocation(packet)
     }
@@ -570,11 +667,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val current = prefs.loadCurrentUser() ?: return
         ImageHelper.evictFromCache(current.avatarBase64)
         ImageHelper.evictFromCache(base64)
-        val updated = current.copy(avatarBase64 = base64)
+        val updated = current.copy(avatarBase64 = base64, lastUpdated = System.currentTimeMillis())
         prefs.saveCurrentUser(updated)
+        realtime.publishUserRegistry(updated)
         syncCloudBackup()
 
-        // Broadcast new avatar
+        // Broadcast new avatar immediately
         LocationTrackingService.start(app)
     }
 
@@ -586,8 +684,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val updatedGroup = group.copy(memberAvatars = updatedMap)
         prefs.addOrUpdateGroup(updatedGroup)
 
-        // Broadcast retained group info to all members
+        // Update current filter if viewing this group
+        val currentFilterVal = _currentFilter.value
+        if (currentFilterVal is MapFilter.GroupFilter && currentFilterVal.group.id == group.id) {
+            _currentFilter.value = MapFilter.GroupFilter(updatedGroup)
+            if (_selectedPerson.value?.id == memberId) {
+                _selectedPerson.value = _selectedPerson.value?.copy(avatarBase64 = base64)
+            }
+        }
+
+        // Broadcast retained group info and immediate event to all members
         realtime.publishGroupInfo(updatedGroup)
+        val overrideEvent = mapOf(
+            "type" to "AVATAR_OVERRIDE",
+            "groupId" to group.id,
+            "groupCode" to group.code,
+            "memberId" to memberId,
+            "avatarBase64" to base64
+        )
+        realtime.publish("pinpulse/v1/groups/${group.code}/events", gson.toJson(overrideEvent), qosLevel = 1)
+        syncCloudBackup()
     }
 
     // --- Location Sharing Toggle ---
@@ -611,6 +727,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun selectPersonForSheet(userId: String) {
         val user = visibleUsers.value.find { it.id == userId }
             ?: friends.value.find { it.id == userId }
+            ?: _groupMembers.value[userId]
+            ?: registeredUsers.value[userId]
             ?: (if (currentUser.value?.id == userId) currentUser.value else null)
         _selectedPerson.value = user
     }
@@ -667,7 +785,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val randomCode = "$cleanName-" + (100..999).random()
         val group = Group(
             id = "grp_" + randomCode.replace("-", ""),
-            name = name,
+            name = name.trim(),
             code = randomCode,
             creatorId = me.id,
             memberIds = listOf(me.id)
@@ -683,17 +801,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun joinGroupByCode(code: String) {
         val me = prefs.loadCurrentUser() ?: return
         val cleanCode = code.trim().uppercase()
+        if (cleanCode.isBlank()) return
+
+        pendingJoinGroupCodes.add(cleanCode)
+
         // 1. Subscribe to group's retained info topic to receive real group details
         realtime.subscribe("pinpulse/v1/groups/$cleanCode/info")
         realtime.subscribe("pinpulse/v1/groups/$cleanCode/events")
 
-        // 2. Publish JOIN event to the group
+        // 2. Publish JOIN event to the group with QoS 1
         val payload = mapOf(
             "type" to "JOIN_GROUP",
             "groupCode" to cleanCode,
             "user" to me
         )
-        realtime.publish("pinpulse/v1/groups/$cleanCode/events", gson.toJson(payload))
+        realtime.publish("pinpulse/v1/groups/$cleanCode/events", gson.toJson(payload), qosLevel = 1)
+    }
+
+    fun leaveGroup(group: Group) {
+        val me = prefs.loadCurrentUser() ?: return
+        val updatedMembers = group.memberIds.filterNot { it == me.id }
+        val updatedGroup = group.copy(memberIds = updatedMembers)
+
+        prefs.removeGroup(group.id)
+        realtime.unsubscribe("pinpulse/v1/groups/${group.code}/info")
+        realtime.unsubscribe("pinpulse/v1/groups/${group.code}/events")
+        realtime.publishGroupInfo(updatedGroup)
+
+        val currentFilterVal = _currentFilter.value
+        if (currentFilterVal is MapFilter.GroupFilter && currentFilterVal.group.id == group.id) {
+            _currentFilter.value = MapFilter.General
+        }
+        syncCloudBackup()
     }
 
     // 2-Step Kick Confirmation with 5-Second Delay
@@ -729,15 +868,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // Publish updated group info as retained
         realtime.publishGroupInfo(updatedGroup)
 
-        // Alert the kicked member directly
+        // Alert the kicked member directly with both groupId and groupCode
         val payload = mapOf(
             "type" to "MEMBER_KICKED",
+            "groupId" to state.group.id,
             "groupCode" to state.group.code,
+            "groupName" to state.group.name,
             "memberId" to state.member.id
         )
         val json = gson.toJson(payload)
-        realtime.publish("pinpulse/v1/groups/${state.group.code}/events", json)
-        realtime.publish("pinpulse/v1/code/${state.member.friendCode}", json)
+        realtime.publish("pinpulse/v1/groups/${state.group.code}/events", json, qosLevel = 1)
+        realtime.publish("pinpulse/v1/direct/${state.member.id}", json, qosLevel = 1)
+        if (state.member.friendCode.isNotBlank()) {
+            realtime.publish("pinpulse/v1/code/${state.member.friendCode}", json, qosLevel = 1)
+        }
 
         cancelKickFlow()
     }
@@ -843,15 +987,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun acceptFriendRequest(request: FriendRequest) {
         val me = prefs.loadCurrentUser() ?: return
+        val known = registeredUsers.value[request.fromUserId]
         val newFriend = User(
             id = request.fromUserId,
-            email = request.fromUserEmail,
-            displayName = request.fromUserName,
-            avatarBase64 = request.fromUserAvatar,
-            friendCode = request.fromFriendCode.ifEmpty { request.fromUserId },
+            email = request.fromUserEmail.ifBlank { known?.email ?: "" },
+            displayName = request.fromUserName.ifBlank { known?.displayName ?: "Friend" },
+            avatarBase64 = request.fromUserAvatar ?: known?.avatarBase64,
+            friendCode = request.fromFriendCode.ifEmpty { known?.friendCode ?: request.fromUserId },
             isSharingLocation = true,
-            latitude = 0.0,
-            longitude = 0.0
+            latitude = known?.latitude ?: 0.0,
+            longitude = known?.longitude ?: 0.0
         )
         prefs.addOrUpdateFriend(newFriend)
         prefs.removePendingRequest(request.id)
@@ -872,6 +1017,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         realtime.subscribe("pinpulse/v1/user/${newFriend.id}/loc")
         realtime.subscribe("pinpulse/v1/user/${newFriend.id}/status")
+        realtime.subscribe("pinpulse/v1/registry/user/${newFriend.id}")
         syncCloudBackup()
 
         // Broadcast acceptance packet back to requester with QoS 1 so they add us too!
@@ -880,7 +1026,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             "friend" to me
         )
         val json = gson.toJson(payload)
-        realtime.publish("pinpulse/v1/code/${request.fromFriendCode.uppercase()}", json, qosLevel = 1)
+        if (request.fromFriendCode.isNotBlank()) {
+            realtime.publish("pinpulse/v1/code/${request.fromFriendCode.uppercase()}", json, qosLevel = 1)
+        }
         realtime.publish("pinpulse/v1/direct/${request.fromUserId}", json, qosLevel = 1)
         realtime.publishRetained("pinpulse/v1/direct/${request.fromUserId}", json, qosLevel = 1)
     }
@@ -914,9 +1062,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
         val json = gson.toJson(payload)
         if (friend != null && friend.friendCode.isNotBlank()) {
-            realtime.publish("pinpulse/v1/code/${friend.friendCode}", json)
+            realtime.publish("pinpulse/v1/code/${friend.friendCode}", json, qosLevel = 1)
         }
-        realtime.publish("pinpulse/v1/direct/$friendId", json)
+        realtime.publish("pinpulse/v1/direct/$friendId", json, qosLevel = 1)
 
         if (_selectedPerson.value?.id == friendId) {
             _selectedPerson.value = null

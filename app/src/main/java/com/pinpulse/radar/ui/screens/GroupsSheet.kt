@@ -43,6 +43,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -80,6 +81,8 @@ fun GroupsSheet(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val groupMembers by viewModel.groupMembers.collectAsState()
+    val registeredUsers by viewModel.registeredUsers.collectAsState()
     var showCreateDialog by remember { mutableStateOf(false) }
     var showJoinDialog by remember { mutableStateOf(false) }
     var groupNameInput by remember { mutableStateOf("") }
@@ -258,13 +261,26 @@ fun GroupsSheet(
                                     Text("Invite Code: ${group.code}", fontSize = 12.sp, color = TextSecondary)
                                 }
 
-                                Row {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
                                     IconButton(onClick = {
                                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                         clipboard.setPrimaryClip(ClipData.newPlainText("Group Code", group.code))
                                         Toast.makeText(context, "Group code copied!", Toast.LENGTH_SHORT).show()
                                     }) {
                                         Icon(Icons.Default.ContentCopy, contentDescription = "Copy Code", tint = RadarBlue)
+                                    }
+
+                                    OutlinedButton(
+                                        onClick = {
+                                            viewModel.leaveGroup(group)
+                                            Toast.makeText(context, "Left group \"${group.name}\"", Toast.LENGTH_SHORT).show()
+                                        },
+                                        shape = RoundedCornerShape(8.dp),
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, DangerRed.copy(alpha = 0.5f)),
+                                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                        modifier = Modifier.height(30.dp)
+                                    ) {
+                                        Text("Leave", fontSize = 11.sp, color = DangerRed, fontWeight = FontWeight.SemiBold)
                                     }
                                 }
                             }
@@ -282,8 +298,10 @@ fun GroupsSheet(
                             Spacer(modifier = Modifier.height(6.dp))
 
                             group.memberIds.forEach { memberId ->
-                                val memberUser = friends.find { it.id == memberId }
-                                    ?: (if (currentUser?.id == memberId) currentUser else null)
+                                val memberUser = (if (currentUser?.id == memberId) currentUser else null)
+                                    ?: friends.find { it.id == memberId }
+                                    ?: groupMembers[memberId]
+                                    ?: registeredUsers[memberId]
                                     ?: User(memberId, "", "Member", null, memberId)
 
                                 val effectiveAvatar = group.memberAvatars[memberId] ?: memberUser.avatarBase64

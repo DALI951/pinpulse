@@ -325,11 +325,12 @@ fun FriendsSheet(
                                         .background(Color(0xFF1B4D2E)),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Text(
-                                        foundUser.displayName.take(1).uppercase(),
-                                        fontWeight = FontWeight.Bold,
-                                        color = PulseGreen,
-                                        fontSize = 14.sp
+                                    UserAvatar(
+                                        avatarSource = foundUser.avatarBase64,
+                                        displayName = foundUser.displayName,
+                                        modifier = Modifier.fillMaxSize(),
+                                        fallbackTextSize = 14.sp,
+                                        fallbackColor = PulseGreen
                                     )
                                 }
                                 Spacer(modifier = Modifier.width(10.dp))
@@ -383,9 +384,25 @@ fun FriendsSheet(
                             .padding(12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        Box(
+                            modifier = Modifier
+                                .size(38.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF252836))
+                                .border(1.dp, Color(0xFFF59E0B), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            UserAvatar(
+                                avatarSource = req.fromUserAvatar,
+                                displayName = req.fromUserName,
+                                modifier = Modifier.fillMaxSize(),
+                                fallbackTextSize = 15.sp
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(10.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(req.fromUserName, fontWeight = FontWeight.Bold, color = TextPrimary)
-                            Text(req.fromUserEmail, fontSize = 12.sp, color = TextMuted)
+                            Text(req.fromUserEmail.ifBlank { req.fromFriendCode }, fontSize = 12.sp, color = TextMuted)
                         }
                         IconButton(onClick = { viewModel.acceptFriendRequest(req) }) {
                             Icon(Icons.Default.Check, contentDescription = "Accept", tint = PulseGreen)
