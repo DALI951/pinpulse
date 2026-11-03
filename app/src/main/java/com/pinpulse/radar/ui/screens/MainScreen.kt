@@ -555,6 +555,7 @@ fun MainScreen(
         if (activeTab == "friends") {
             ModalBottomSheet(
                 onDismissRequest = { activeTab = "map" },
+                sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
                 containerColor = RadarCardBg
             ) {
                 FriendsSheet(
@@ -574,6 +575,7 @@ fun MainScreen(
         if (activeTab == "groups") {
             ModalBottomSheet(
                 onDismissRequest = { activeTab = "map" },
+                sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
                 containerColor = RadarCardBg
             ) {
                 GroupsSheet(
