@@ -295,4 +295,16 @@ class AppPreferences(context: Context) {
     fun clearLastDownloadedUpdateVersion() {
         prefs.edit().remove("last_downloaded_update_version").apply()
     }
+
+    fun getMinRequiredVersion(): String {
+        return prefs.getString("min_required_version", "") ?: ""
+    }
+
+    fun setMinRequiredVersion(version: String) {
+        prefs.edit().putString("min_required_version", version.trim().removePrefix("v")).apply()
+    }
+
+    var isMandatoryUpdateEnforced: Boolean
+        get() = prefs.getBoolean("is_mandatory_update_enforced", false)
+        set(value) = prefs.edit().putBoolean("is_mandatory_update_enforced", value).apply()
 }

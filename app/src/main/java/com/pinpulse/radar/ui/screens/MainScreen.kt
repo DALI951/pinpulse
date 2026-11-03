@@ -73,6 +73,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.pinpulse.radar.BuildConfig
+import com.pinpulse.radar.data.AppPreferences
 import com.pinpulse.radar.model.Group
 import com.pinpulse.radar.model.User
 import com.pinpulse.radar.ui.theme.DangerRed
@@ -86,6 +88,7 @@ import com.pinpulse.radar.ui.theme.TextPrimary
 import com.pinpulse.radar.ui.theme.TextSecondary
 import com.pinpulse.radar.ui.viewmodel.MainViewModel
 import com.pinpulse.radar.ui.viewmodel.MapFilter
+import com.pinpulse.radar.util.UpdateManager
 import com.pinpulse.radar.util.UserAvatar
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -158,6 +161,30 @@ fun MainScreen(
         AccountLockScreen(
             user = meUser,
             onSignOut = { viewModel.signOut() }
+        )
+        return
+    }
+
+    // Enforce Mandatory Update Screen (blocks entire app if a critical update is required)
+    val updateState by viewModel.updateState.collectAsState()
+    val isMandatoryEnforced = remember(updateState) {
+        val appPrefs = AppPreferences(context)
+        val minVer = appPrefs.getMinRequiredVersion()
+        val isMinVerOutdated = minVer.isNotBlank() && UpdateManager.compareVersions(minVer, BuildConfig.VERSION_NAME)
+        updateState.updateAvailable && (updateState.isMandatory || appPrefs.isMandatoryUpdateEnforced || isMinVerOutdated)
+    }
+
+    if (isMandatoryEnforced) {
+        MandatoryUpdateScreen(
+            updateState = updateState,
+            onUpdateClick = {
+                val apkFile = UpdateManager.getDownloadedUpdateApk(context, updateState.latestVersion)
+                if (apkFile != null) {
+                    UpdateManager.installApk(context, apkFile)
+                } else {
+                    viewModel.downloadAndInstallUpdate(context)
+                }
+            }
         )
         return
     }

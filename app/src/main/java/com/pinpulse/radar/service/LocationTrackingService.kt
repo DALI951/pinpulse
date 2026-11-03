@@ -69,6 +69,15 @@ class LocationTrackingService : Service() {
         @Volatile
         private var activeInstance: LocationTrackingService? = null
 
+        @Volatile
+        var lastWatchTimestamp: Long = 0L
+            private set
+
+        fun onViewerWatching() {
+            lastWatchTimestamp = System.currentTimeMillis()
+            activeInstance?.checkAndApplyTrackingMode()
+        }
+
         fun hasLocationPermission(context: Context): Boolean {
             val hasFine = ContextCompat.checkSelfPermission(
                 context, android.Manifest.permission.ACCESS_FINE_LOCATION
@@ -601,11 +610,11 @@ class LocationTrackingService : Service() {
                                 continue
                             }
 
-                            val currentRateSec = user.rateLimitSec.coerceIn(1, 300)
-                            if (currentRateSec != lastRegisteredRateLimitSec && hasLocationPermission(this@LocationTrackingService)) {
-                                requestLocationUpdates()
+                            if (tickCount % 5 == 0 && hasLocationPermission(this@LocationTrackingService)) {
+                                checkAndApplyTrackingMode()
                             }
 
+                            val currentRateSec = user.rateLimitSec.coerceIn(1, 300)
                             val nowElapsed = SystemClock.elapsedRealtime()
                             if (tickCount % 12 == 0 && (nowElapsed - lastLocationElapsedRealtime > 10_000L)) {
                                 pollBestAvailableLocation()
@@ -613,12 +622,15 @@ class LocationTrackingService : Service() {
 
                             if (tickCount % 45 == 0) {
                                 scheduleWatchdogAlarm(this@LocationTrackingService, 60_000L)
-                                if (hasLocationPermission(this@LocationTrackingService)) {
-                                    requestLocationUpdates()
-                                }
                             }
 
-                            if ((nowElapsed - lastHeartbeatBroadcastRealtime) >= (currentRateSec * 1000L)) {
+                            val broadcastIntervalMs = if (currentTrackingMode == TrackingMode.LIVE_ACTIVE) {
+                                (currentRateSec * 1000L)
+                            } else {
+                                300_000L // 5 minutes in low-power standby mode
+                            }
+
+                            if ((nowElapsed - lastHeartbeatBroadcastRealtime) >= broadcastIntervalMs) {
                                 lastHeartbeatBroadcastRealtime = nowElapsed
                                 if (user.latitude != 0.0 || user.longitude != 0.0) {
                                     val (batteryPct, isCharging) = getBatteryInfo(this@LocationTrackingService)
@@ -868,20 +880,55 @@ class LocationTrackingService : Service() {
     @Volatile
     private var lastRegisteredRateLimitSec: Int = 0
 
+    enum class TrackingMode {
+        LIVE_ACTIVE,      // 3-5s interval, high accuracy, 0m distance threshold (streaming live motion)
+        STANDBY_PASSIVE   // 5min interval, balanced power, 100m distance threshold (saving 95%+ battery & data)
+    }
+
+    @Volatile
+    private var currentTrackingMode: TrackingMode = TrackingMode.STANDBY_PASSIVE
+
+    fun checkAndApplyTrackingMode() {
+        val now = System.currentTimeMillis()
+        val isWatched = (now - lastWatchTimestamp) < 60_000L
+        val user = prefs.loadCurrentUser()
+        val isSos = user?.statusMessage?.contains("SOS", ignoreCase = true) == true
+        val targetMode = if (isWatched || isSos) TrackingMode.LIVE_ACTIVE else TrackingMode.STANDBY_PASSIVE
+
+        val rateSec = (user?.rateLimitSec ?: 3).coerceIn(1, 300)
+        val rateChanged = (rateSec != lastRegisteredRateLimitSec)
+
+        if (targetMode != currentTrackingMode || !isListenersRegistered || rateChanged) {
+            currentTrackingMode = targetMode
+            applyTrackingMode(targetMode)
+        }
+    }
+
     @SuppressLint("MissingPermission")
-    private fun requestLocationUpdates() {
+    private fun applyTrackingMode(mode: TrackingMode) {
         if (!hasLocationPermission(this)) return
 
         val rateSec = (prefs.loadCurrentUser()?.rateLimitSec ?: 3).coerceIn(1, 300)
         lastRegisteredRateLimitSec = rateSec
-        val intervalMs = (rateSec * 1000L).coerceAtLeast(1000L)
-        val minIntervalMs = (intervalMs / 2).coerceAtLeast(800L)
+
+        val intervalMs = when (mode) {
+            TrackingMode.LIVE_ACTIVE -> (rateSec * 1000L).coerceAtLeast(1000L)
+            TrackingMode.STANDBY_PASSIVE -> 300_000L // 5 minutes standby
+        }
+        val priority = when (mode) {
+            TrackingMode.LIVE_ACTIVE -> Priority.PRIORITY_HIGH_ACCURACY
+            TrackingMode.STANDBY_PASSIVE -> Priority.PRIORITY_BALANCED_POWER_ACCURACY
+        }
+        val minDistanceMeters = when (mode) {
+            TrackingMode.LIVE_ACTIVE -> 0f
+            TrackingMode.STANDBY_PASSIVE -> 100f // Only report when moved > 100 meters
+        }
 
         try {
-            val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, intervalMs)
-                .setMinUpdateIntervalMillis(minIntervalMs)
-                .setMaxUpdateDelayMillis(intervalMs + 1000L)
-                .setMinUpdateDistanceMeters(0f)
+            val locationRequest = LocationRequest.Builder(priority, intervalMs)
+                .setMinUpdateIntervalMillis(if (mode == TrackingMode.LIVE_ACTIVE) (intervalMs / 2).coerceAtLeast(800L) else 60_000L)
+                .setMaxUpdateDelayMillis(intervalMs + 2000L)
+                .setMinUpdateDistanceMeters(minDistanceMeters)
                 .setWaitForAccurateLocation(false)
                 .build()
 
@@ -892,43 +939,52 @@ class LocationTrackingService : Service() {
                 Looper.getMainLooper()
             )
             isListenersRegistered = true
-            Log.d(TAG, "FusedLocation updates registered (${rateSec}s rate limit)")
+            Log.d(TAG, "Applied tracking mode: $mode (interval=${intervalMs}ms, minDistance=${minDistanceMeters}m)")
         } catch (e: Exception) {
-            Log.e(TAG, "Error requesting fused location: ${e.message}")
+            Log.e(TAG, "Error requesting fused location ($mode): ${e.message}")
         }
 
         try {
             locationManager.removeUpdates(nativeLocationListener)
-            if (locationManager.allProviders.contains(LocationManager.GPS_PROVIDER)) {
-                locationManager.requestLocationUpdates(
-                    LocationManager.GPS_PROVIDER,
-                    intervalMs,
-                    0f,
-                    nativeLocationListener,
-                    Looper.getMainLooper()
-                )
-            }
-            if (locationManager.allProviders.contains(LocationManager.NETWORK_PROVIDER)) {
-                locationManager.requestLocationUpdates(
-                    LocationManager.NETWORK_PROVIDER,
-                    intervalMs,
-                    0f,
-                    nativeLocationListener,
-                    Looper.getMainLooper()
-                )
-            }
-            if (locationManager.allProviders.contains(LocationManager.PASSIVE_PROVIDER)) {
-                locationManager.requestLocationUpdates(
-                    LocationManager.PASSIVE_PROVIDER,
-                    intervalMs,
-                    0f,
-                    nativeLocationListener,
-                    Looper.getMainLooper()
-                )
+            if (mode == TrackingMode.LIVE_ACTIVE) {
+                if (locationManager.allProviders.contains(LocationManager.GPS_PROVIDER)) {
+                    locationManager.requestLocationUpdates(
+                        LocationManager.GPS_PROVIDER,
+                        intervalMs,
+                        0f,
+                        nativeLocationListener,
+                        Looper.getMainLooper()
+                    )
+                }
+                if (locationManager.allProviders.contains(LocationManager.NETWORK_PROVIDER)) {
+                    locationManager.requestLocationUpdates(
+                        LocationManager.NETWORK_PROVIDER,
+                        intervalMs,
+                        0f,
+                        nativeLocationListener,
+                        Looper.getMainLooper()
+                    )
+                }
+            } else {
+                // In standby: register PASSIVE_PROVIDER only to eliminate GPS satellite hardware battery drain
+                if (locationManager.allProviders.contains(LocationManager.PASSIVE_PROVIDER)) {
+                    locationManager.requestLocationUpdates(
+                        LocationManager.PASSIVE_PROVIDER,
+                        intervalMs,
+                        100f,
+                        nativeLocationListener,
+                        Looper.getMainLooper()
+                    )
+                }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Native LocationManager registration warning: ${e.message}")
+            Log.w(TAG, "Native LocationManager registration warning ($mode): ${e.message}")
         }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun requestLocationUpdates() {
+        checkAndApplyTrackingMode()
     }
 
     private fun getBatteryInfo(): Pair<Int, Boolean> = getBatteryInfo(this)

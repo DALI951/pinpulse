@@ -208,6 +208,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // Auto-prune old installed APKs from previous updates (keeps pending update APKs safe!)
         UpdateManager.cleanupOldInstalledApks(app)
 
+        // Check for updates on startup (triggers silent background pre-download if update found)
+        checkForUpdates()
+
+        // Smart Hybrid Watchdog: Ping friends while app is active on screen so their phones stream live GPS
+        viewModelScope.launch {
+            while (true) {
+                delay(20_000L)
+                if (isForegroundActive) {
+                    sendWatchPings()
+                }
+            }
+        }
+
         // Auto-heal any friends corrupted by legacy offline alerts and strictly enforce plan quotas (e.g. Demo = 1 friend max)
         val savedFriends = prefs.loadFriends()
         if (savedFriends.any { !it.isSharingLocation }) {
@@ -1809,6 +1822,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _isSirenPinDialogOpen.value = false
         }
         return success
+    }
+
+    @Volatile
+    private var isForegroundActive: Boolean = true
+
+    fun setForegroundActive(active: Boolean) {
+        isForegroundActive = active
+        if (active) {
+            sendWatchPings()
+        }
+    }
+
+    fun sendWatchPings() {
+        val me = _currentUser.value ?: prefs.loadCurrentUser() ?: return
+        if (me.isAccountCutOff) return
+        val currentFriends = _friends.value
+        currentFriends.forEach { f ->
+            if (f.id.isNotBlank()) {
+                realtime.publishWatchPing(f.id)
+            }
+        }
     }
 
     fun checkForUpdates() {

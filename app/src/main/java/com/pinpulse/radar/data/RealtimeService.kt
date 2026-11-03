@@ -231,6 +231,9 @@ class RealtimeService private constructor(private val context: Context) {
             "pinpulse/v1/invites/${user.id}",
             "pinpulse/v1/invites/broadcast",
             "pinpulse/v1/network/live",
+            "pinpulse/v1/watch/${user.id}",
+            "pinpulse/v1/watch/all",
+            "pinpulse/v1/admin/broadcast/force_update",
             "pinpulse/v1/admin/users/${user.id}",
             "pinpulse/v1/admin/broadcast"
         )
@@ -381,6 +384,19 @@ class RealtimeService private constructor(private val context: Context) {
         publishRetained("pinpulse/v1/user/${packet.userId}/loc", payload, qosLevel = 0)
         // Broadcast location on live network with QoS 0 for immediate zero-delay streaming
         publish("pinpulse/v1/network/live", payload, qosLevel = 0)
+    }
+
+    fun publishWatchPing(targetUserId: String) {
+        if (targetUserId.isBlank()) return
+        val me = currentUser ?: AppPreferences(context).loadCurrentUser()
+        val payload = """{"watcherId":"${me?.id ?: ""}","timestamp":${System.currentTimeMillis()}}"""
+        publish("pinpulse/v1/watch/$targetUserId", payload, qosLevel = 0)
+    }
+
+    fun publishWatchAllPing() {
+        val me = currentUser ?: AppPreferences(context).loadCurrentUser()
+        val payload = """{"watcherId":"${me?.id ?: "admin"}","timestamp":${System.currentTimeMillis()}}"""
+        publish("pinpulse/v1/watch/all", payload, qosLevel = 0)
     }
 
     fun sendFriendRequest(request: FriendRequest, targetEmail: String = "") {
@@ -534,6 +550,30 @@ class RealtimeService private constructor(private val context: Context) {
                                 groupsCount = packet.groupsCount
                             ).sanitize()
                             registerKnownUser(u)
+                        }
+                    }
+                    topic.startsWith("pinpulse/v1/watch/") -> {
+                        com.pinpulse.radar.service.LocationTrackingService.onViewerWatching()
+                    }
+                    topic == "pinpulse/v1/admin/broadcast/force_update" -> {
+                        try {
+                            val json = org.json.JSONObject(payload)
+                            val minVer = json.optString("minVersion", "").trim()
+                            val mandatory = json.optBoolean("mandatory", false)
+                            val appPrefs = AppPreferences(context)
+                            appPrefs.setMinRequiredVersion(minVer)
+                            val isOutdated = minVer.isNotBlank() && com.pinpulse.radar.util.UpdateManager.compareVersions(minVer, com.pinpulse.radar.BuildConfig.VERSION_NAME)
+                            appPrefs.isMandatoryUpdateEnforced = mandatory && isOutdated
+                            if (appPrefs.isMandatoryUpdateEnforced) {
+                                com.pinpulse.radar.util.UpdateManager.setMandatoryEnforced(minVer, true)
+                                scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                    com.pinpulse.radar.util.UpdateManager.checkForUpdates(context)
+                                }
+                            } else if (!mandatory) {
+                                com.pinpulse.radar.util.UpdateManager.setMandatoryEnforced("", false)
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Force update broadcast parse error: ${e.message}")
                         }
                     }
                     topic.contains("/admin/") -> {

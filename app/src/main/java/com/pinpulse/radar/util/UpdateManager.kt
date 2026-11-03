@@ -13,6 +13,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
@@ -26,6 +27,8 @@ data class UpdateState(
     val downloadProgress: Float = 0f,
     val updateAvailable: Boolean = false,
     val isDownloaded: Boolean = false, // True if a valid update APK is ready on device
+    val isMandatory: Boolean = false,
+    val minRequiredVersion: String = "",
     val latestVersion: String = "",
     val currentVersion: String = BuildConfig.VERSION_NAME,
     val apkUrl: String = "",
@@ -204,21 +207,41 @@ object UpdateManager {
                     isDownloadedApkReady(ctx, cleanLatest)
                 } ?: false
 
+                val prefs = context?.let { AppPreferences(it) }
+                val minVer = prefs?.getMinRequiredVersion() ?: ""
+                val isMandatoryByAdmin = prefs?.isMandatoryUpdateEnforced == true ||
+                    (minVer.isNotBlank() && compareVersions(minVer, currentVer))
+                val isMandatoryByRelease = body.contains("[MANDATORY]", ignoreCase = true) ||
+                    body.contains("mandatory: true", ignoreCase = true) ||
+                    body.contains("force_update", ignoreCase = true) ||
+                    body.contains("min_version:", ignoreCase = true)
+                val isMandatory = isNewer && (isMandatoryByAdmin || isMandatoryByRelease)
+
                 val newState = _updateState.value.copy(
                     isChecking = false,
                     updateAvailable = isNewer && apkUrl.isNotBlank(),
                     isDownloaded = isAlreadyDownloaded,
+                    isMandatory = isMandatory,
+                    minRequiredVersion = if (isMandatory) (minVer.ifBlank { cleanLatest }) else "",
                     latestVersion = cleanLatest,
                     currentVersion = currentVer,
                     apkUrl = apkUrl,
                     releaseNotes = body,
                     statusMessage = when {
                         isAlreadyDownloaded -> "Latest update v$cleanLatest is downloaded! Ready to install."
-                        isNewer && apkUrl.isNotBlank() -> "Latest update available: v$cleanLatest (skips older versions)"
+                        isNewer && apkUrl.isNotBlank() -> "Latest update available: v$cleanLatest"
                         else -> "You have the latest version ($currentVer)"
                     }
                 )
                 _updateState.value = newState
+
+                // Silent pre-download: Quietly cache APK in background so user has 0 waiting time!
+                if (context != null && isNewer && apkUrl.isNotBlank() && !isAlreadyDownloaded && !_updateState.value.isDownloading) {
+                    kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
+                        downloadSilently(context)
+                    }
+                }
+
                 newState
             } else {
                 val newState = _updateState.value.copy(
@@ -281,6 +304,102 @@ object UpdateManager {
             isDownloaded = isReady,
             statusMessage = if (isReady) "Latest update v${targetVer.ifBlank { "new" }} is downloaded! Ready to install." else _updateState.value.statusMessage
         )
+    }
+
+    fun setMandatoryEnforced(minVersion: String, mandatory: Boolean = true) {
+        _updateState.value = _updateState.value.copy(
+            isMandatory = mandatory,
+            minRequiredVersion = minVersion
+        )
+    }
+
+    suspend fun downloadSilently(context: Context) = withContext(Dispatchers.IO) {
+        if (_updateState.value.isDownloading || !isDownloadInProgress.compareAndSet(false, true)) {
+            Log.d(TAG, "Download already running, skipping duplicate silent request")
+            return@withContext
+        }
+        try {
+            val state = _updateState.value
+            val targetVer = state.latestVersion
+            if (targetVer.isBlank()) return@withContext
+
+            if (isDownloadedApkReady(context, targetVer)) {
+                _updateState.value = state.copy(isDownloaded = true, downloadProgress = 1f)
+                return@withContext
+            }
+
+            val apkUrl = state.apkUrl
+            if (apkUrl.isBlank()) return@withContext
+
+            _updateState.value = state.copy(
+                isDownloading = true,
+                isDownloaded = false,
+                downloadProgress = 0f
+            )
+
+            var currentUrl = apkUrl
+            val token = decodeGhToken()
+            var conn: HttpURLConnection
+            var redirects = 0
+            while (true) {
+                val isGitHubApiAsset = currentUrl.contains("api.github.com/")
+                conn = (URL(currentUrl).openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 15000
+                    readTimeout = 15000
+                    instanceFollowRedirects = !isGitHubApiAsset
+                    setRequestProperty("User-Agent", "PinPulse-Android")
+                    if (isGitHubApiAsset) {
+                        setRequestProperty("Accept", "application/octet-stream")
+                        if (token.isNotBlank()) {
+                            setRequestProperty("Authorization", "Bearer $token")
+                        }
+                    }
+                }
+                val code = conn.responseCode
+                if (code in 300..399) {
+                    currentUrl = conn.getHeaderField("Location") ?: break
+                    redirects++
+                    if (redirects > 5) break
+                } else {
+                    break
+                }
+            }
+
+            val contentLength = conn.contentLength.toLong()
+            val destinationFile = File(context.cacheDir, "pinpulse_update.apk")
+            if (destinationFile.exists()) destinationFile.delete()
+
+            conn.inputStream.use { input ->
+                FileOutputStream(destinationFile).use { output ->
+                    val buffer = ByteArray(8192)
+                    var bytesRead: Int
+                    var totalRead: Long = 0
+
+                    while (input.read(buffer).also { bytesRead = it } != -1) {
+                        output.write(buffer, 0, bytesRead)
+                        totalRead += bytesRead
+                        if (contentLength > 0) {
+                            val progress = (totalRead.toFloat() / contentLength).coerceIn(0f, 1f)
+                            _updateState.value = _updateState.value.copy(downloadProgress = progress)
+                        }
+                    }
+                }
+            }
+
+            AppPreferences(context).setLastDownloadedUpdateVersion(targetVer)
+            _updateState.value = _updateState.value.copy(
+                isDownloading = false,
+                isDownloaded = true,
+                downloadProgress = 1f,
+                statusMessage = "Update v$targetVer ready to install"
+            )
+            Log.d(TAG, "Silent pre-download completed successfully for v$targetVer")
+        } catch (e: Exception) {
+            Log.w(TAG, "Silent pre-download error: ${e.message}")
+            _updateState.value = _updateState.value.copy(isDownloading = false)
+        } finally {
+            isDownloadInProgress.set(false)
+        }
     }
 
     fun compareVersions(latestTag: String, currentVer: String): Boolean {

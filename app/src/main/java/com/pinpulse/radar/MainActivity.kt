@@ -76,9 +76,15 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        viewModel.setForegroundActive(true)
         // Check if an update was already downloaded so the UI is ready without re-downloading
         viewModel.refreshUpdateStatus()
         fetchImmediateLocation()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        viewModel.setForegroundActive(false)
     }
 
     fun fetchImmediateLocation() {

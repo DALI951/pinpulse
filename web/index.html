@@ -1477,6 +1477,14 @@
         🧪 Test Limits Simulator
       </a>
 
+      <button class="btn-admin" id="btn-toggle-live-watch" onclick="toggleAdminLiveFleetWatch()" style="border-color: #10b981; color: #10b981;" title="Ping all devices every 20s so they stream high-accuracy live GPS (Smart Hybrid Engine)">
+        📡 Watch: <span id="lbl-live-watch-state">ACTIVE</span>
+      </button>
+
+      <button class="btn-admin" onclick="openForceUpdateModal()" style="border-color: #f59e0b; color: #f59e0b; font-weight:700;" title="Enforce mandatory client app update across the fleet">
+        🚀 Force Update
+      </button>
+
       <button class="btn-admin danger-btn" id="btn-fleet-silence" onclick="silenceAllFleetSirens()" title="Stop all ringing sirens remotely (Alt+M)" aria-label="Stop all sirens remotely">
         🛑 Silence All Sirens
       </button>
@@ -1908,6 +1916,34 @@
         <div style="display:flex; gap:8px;">
           <button class="btn-admin" onclick="closeCustomPlanModal()">Cancel</button>
           <button class="btn-admin accent-btn" style="background:var(--primary); color:#000; font-weight:800;" onclick="saveCustomPlanModal()">💾 Save & Push to Device</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== FORCE UPDATE CLIENT FLEET MODAL ==================== -->
+  <div id="force-update-modal" role="dialog" aria-modal="true" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.85); z-index:3000; align-items:center; justify-content:center; padding:16px;">
+    <div style="background:var(--panel); border:1px solid #f59e0b; border-radius:18px; width:100%; max-width:480px; padding:24px; box-shadow:0 24px 60px rgba(0,0,0,0.9);">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+        <h3 style="font-size:1.15rem; font-weight:800; color:#f59e0b; display:flex; align-items:center; gap:8px;">🚀 Enforce Mandatory Fleet Update</h3>
+        <button class="modal-close-btn" onclick="closeForceUpdateModal()">✕</button>
+      </div>
+      <p style="font-size:0.8rem; color:var(--text-muted); line-height:1.5; margin-bottom:16px;">
+        Lock all connected PinPulse Android devices to the <strong>Mandatory Update Screen</strong> until they install the specified version. Devices will pre-download the APK silently in the background.
+      </p>
+      <div style="margin-bottom:16px;">
+        <label style="font-size:0.75rem; color:#cbd5e1; display:block; margin-bottom:6px; font-weight:700;">Required Minimum Version</label>
+        <input type="text" id="fu-min-version" class="search-input" placeholder="e.g. 3.2" style="font-size:1rem; padding:10px 14px; font-weight:bold; color:var(--primary);" />
+      </div>
+      <div style="margin-bottom:20px;">
+        <label style="font-size:0.75rem; color:#cbd5e1; display:block; margin-bottom:6px; font-weight:700;">Update Reason / Advisory Note</label>
+        <input type="text" id="fu-reason" class="search-input" placeholder="e.g. Critical security & real-time radar upgrade" style="font-size:0.85rem; padding:8px 12px;" />
+      </div>
+      <div style="display:flex; gap:10px; justify-content:space-between; align-items:center; flex-wrap:wrap;">
+        <button class="crm-btn danger" onclick="broadcastClearForceUpdate()" style="padding:9px 14px; font-weight:700;">❌ Clear Lock</button>
+        <div style="display:flex; gap:8px;">
+          <button class="btn-admin" onclick="closeForceUpdateModal()">Cancel</button>
+          <button class="btn-admin accent-btn" style="background:#f59e0b; color:#000; font-weight:900;" onclick="broadcastMandatoryUpdate()">🚀 Enforce Update Now</button>
         </div>
       </div>
     </div>
@@ -2534,6 +2570,8 @@
         playTone(600, 'sine', 150);
 
         // Wildcard subscriptions to monitor all global fleet nodes + retained user registry + admin policies
+        client.subscribe('pinpulse/v1/admin/broadcast/force_update', { qos: 1 });
+        toggleAdminLiveFleetWatch(true);
         client.subscribe('pinpulse/v1/user/+/loc', { qos: 0 });
         client.subscribe('pinpulse/v1/network/live', { qos: 0 });
         client.subscribe('pinpulse/v1/user/+/status', { qos: 0 });
@@ -3405,6 +3443,102 @@
       }, '✏️ Saved Master Account edits for ' + newName + ' [' + newCode + ']: Plan=' + plan + ', Status=' + newStatus + ', ' + maxFriends + 'F/' + maxGroups + 'G');
 
       closeCustomPlanModal();
+    }
+
+    let adminLiveWatchInterval = null;
+    let isAdminLiveWatchActive = true;
+
+    function toggleAdminLiveFleetWatch(forceState) {
+      if (forceState !== undefined) {
+        isAdminLiveWatchActive = forceState;
+      } else {
+        isAdminLiveWatchActive = !isAdminLiveWatchActive;
+      }
+      const lbl = document.getElementById("lbl-live-watch-state");
+      const btn = document.getElementById("btn-toggle-live-watch");
+      if (lbl) lbl.textContent = isAdminLiveWatchActive ? "ACTIVE" : "PAUSED";
+      if (btn) {
+        btn.style.borderColor = isAdminLiveWatchActive ? "#10b981" : "#64748b";
+        btn.style.color = isAdminLiveWatchActive ? "#10b981" : "#94a3b8";
+      }
+      if (adminLiveWatchInterval) {
+        clearInterval(adminLiveWatchInterval);
+        adminLiveWatchInterval = null;
+      }
+      if (isAdminLiveWatchActive) {
+        pingLiveWatchAll();
+        adminLiveWatchInterval = setInterval(pingLiveWatchAll, 20000);
+      }
+    }
+
+    function pingLiveWatchAll() {
+      if (!mqttClient || !mqttClient.connected) return;
+      const payload = JSON.stringify({ source: "admin_dashboard", timestamp: Date.now() });
+      mqttClient.publish("pinpulse/v1/watch/all", payload, { qos: 0, retain: false });
+    }
+
+    function pingLiveWatchUser(userId) {
+      if (!mqttClient || !mqttClient.connected || !userId) return;
+      const payload = JSON.stringify({ source: "admin_dashboard", target: userId, timestamp: Date.now() });
+      mqttClient.publish("pinpulse/v1/watch/" + userId, payload, { qos: 0, retain: false });
+    }
+
+    function openForceUpdateModal() {
+      document.getElementById("force-update-modal").style.display = "flex";
+      if (!document.getElementById("fu-min-version").value) {
+        document.getElementById("fu-min-version").value = "3.2";
+      }
+    }
+
+    function closeForceUpdateModal() {
+      document.getElementById("force-update-modal").style.display = "none";
+    }
+
+    function broadcastMandatoryUpdate() {
+      const minVer = (document.getElementById("fu-min-version").value || "").trim();
+      const reason = (document.getElementById("fu-reason").value || "Critical protocol & radar upgrade").trim();
+      if (!minVer) {
+        alert("Please specify the minimum required version (e.g. 3.2).");
+        return;
+      }
+      if (!mqttClient || !mqttClient.connected) {
+        alert("MQTT broker is not connected.");
+        return;
+      }
+      const payload = JSON.stringify({
+        minVersion: minVer,
+        mandatory: true,
+        reason: reason,
+        timestamp: Date.now()
+      });
+      mqttClient.publish("pinpulse/v1/admin/broadcast/force_update", payload, { qos: 1, retain: true }, function(err) {
+        if (err) {
+          alert("Error broadcasting update: " + err.message);
+        } else {
+          alert("🚀 Mandatory Update v" + minVer + " broadcasted to entire fleet! Devices will pre-download and lock.");
+          closeForceUpdateModal();
+        }
+      });
+    }
+
+    function broadcastClearForceUpdate() {
+      if (!mqttClient || !mqttClient.connected) {
+        alert("MQTT broker is not connected.");
+        return;
+      }
+      const payload = JSON.stringify({
+        minVersion: "",
+        mandatory: false,
+        timestamp: Date.now()
+      });
+      mqttClient.publish("pinpulse/v1/admin/broadcast/force_update", payload, { qos: 1, retain: true }, function(err) {
+        if (err) {
+          alert("Error clearing update: " + err.message);
+        } else {
+          alert("✅ Mandatory update lock cleared across fleet.");
+          closeForceUpdateModal();
+        }
+      });
     }
 
     function adminPruneAccount(userId) {
