@@ -1835,9 +1835,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun sendWatchPings() {
-        val me = _currentUser.value ?: prefs.loadCurrentUser() ?: return
+        val me = currentUser.value ?: prefs.loadCurrentUser() ?: return
         if (me.isAccountCutOff) return
-        val currentFriends = _friends.value
+        val currentFriends = friends.value
         currentFriends.forEach { f ->
             if (f.id.isNotBlank()) {
                 realtime.publishWatchPing(f.id)

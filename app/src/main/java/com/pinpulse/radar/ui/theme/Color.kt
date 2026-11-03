@@ -9,9 +9,11 @@ val RadarCardBorder = Color(0xFF334155)
 val PulseGreen = Color(0xFF10B981)
 val PulseGreenLight = Color(0xFF34D399)
 val PulseGreenBg = Color(0x2210B981)
+val RadarGreen = PulseGreen
 
 val RadarBlue = Color(0xFF3B82F6)
 val RadarBlueLight = Color(0xFF60A5FA)
+val RadarCyan = Color(0xFF00E5FF)
 
 val AccentAmber = Color(0xFFF59E0B)
 val DangerRed = Color(0xFFEF4444)
