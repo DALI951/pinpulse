@@ -8,6 +8,7 @@ data class LocationPacket(
     @SerializedName("email") val email: String = "",
     @SerializedName("friendCode") val friendCode: String = "",
     @SerializedName("avatarBase64") val avatarBase64: String? = null,
+    @SerializedName("statusMessage") val statusMessage: String? = null,
     @SerializedName("latitude") val latitude: Double,
     @SerializedName("longitude") val longitude: Double,
     @SerializedName("speedKmh") val speedKmh: Float = 0f,

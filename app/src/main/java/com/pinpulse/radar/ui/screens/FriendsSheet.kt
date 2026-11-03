@@ -473,8 +473,14 @@ fun FriendsSheet(
 
                         Column(modifier = Modifier.weight(1f)) {
                             Text(friend.displayName, fontWeight = FontWeight.Bold, color = TextPrimary)
+                            val baseStatus = if (friend.isLive) "● Live now" else "○ ${friend.lastSeenText}"
+                            val fullStatus = if (!friend.statusMessage.isNullOrBlank()) {
+                                "$baseStatus  •  ${friend.statusMessage}"
+                            } else {
+                                baseStatus
+                            }
                             Text(
-                                if (friend.isLive) "● Live now" else "○ ${friend.lastSeenText}",
+                                fullStatus,
                                 fontSize = 12.sp,
                                 color = if (friend.isLive) PulseGreen else TextMuted
                             )

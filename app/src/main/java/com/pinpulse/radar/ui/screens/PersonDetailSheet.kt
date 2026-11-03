@@ -1,10 +1,13 @@
 package com.pinpulse.radar.ui.screens
 
 import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,35 +29,30 @@ import androidx.compose.material.icons.filled.BatteryChargingFull
 import androidx.compose.material.icons.filled.BatteryFull
 import androidx.compose.material.icons.filled.Directions
 import androidx.compose.material.icons.filled.Image
-import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.PersonRemove
 import androidx.compose.material.icons.filled.Speed
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
-import com.pinpulse.radar.util.UserAvatar
 import com.pinpulse.radar.model.Group
 import com.pinpulse.radar.model.User
 import com.pinpulse.radar.ui.theme.DangerRed
@@ -66,6 +64,7 @@ import com.pinpulse.radar.ui.theme.TextMuted
 import com.pinpulse.radar.ui.theme.TextPrimary
 import com.pinpulse.radar.ui.theme.TextSecondary
 import com.pinpulse.radar.ui.viewmodel.MainViewModel
+import com.pinpulse.radar.util.UserAvatar
 
 @Composable
 fun PersonDetailSheet(
@@ -80,6 +79,7 @@ fun PersonDetailSheet(
     val context = LocalContext.current
     val isSelf = targetUser.id == currentUser?.id
     val isLeaderOfCurrentGroup = currentGroup?.creatorId == currentUser?.id && !isSelf
+    val userTrails by viewModel.userTrails.collectAsState()
 
     // Distance calculation
     val distanceText = if (currentUser != null && !isSelf && targetUser.latitude != 0.0) {
@@ -91,6 +91,16 @@ fun PersonDetailSheet(
     } else {
         null
     }
+
+    // 15-Minute Trail Distance Summary
+    val now = System.currentTimeMillis()
+    val trailPoints = (userTrails[targetUser.id] ?: emptyList())
+        .filter { it.timestamp >= now - (15 * 60 * 1000L) }
+    val trailDistanceMeters = if (trailPoints.size >= 2) {
+        trailPoints.zipWithNext().sumOf { (a, b) ->
+            viewModel.calculateDistanceMeters(a.latitude, a.longitude, b.latitude, b.longitude)
+        }
+    } else 0.0
 
     // Avatar picker for Group Leader to override member's avatar
     val leaderAvatarPicker = rememberLauncherForActivityResult(
@@ -166,7 +176,25 @@ fun PersonDetailSheet(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(2.dp))
+                    if (!targetUser.statusMessage.isNullOrBlank()) {
+                        Spacer(modifier = Modifier.height(3.dp))
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color(0xFF1E293B))
+                                .border(1.dp, PulseGreen.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                                .padding(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = targetUser.statusMessage,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFFFDE68A)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(3.dp))
 
                     Text(
                         text = if (targetUser.isLive) "● Live now" else "○ ${targetUser.lastSeenText}",
@@ -186,7 +214,7 @@ fun PersonDetailSheet(
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
             // Speed and Battery Badge Row
             Row(
@@ -244,7 +272,100 @@ fun PersonDetailSheet(
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            // 15-Minute Breadcrumb Movement Trail Status
+            if (trailPoints.size >= 2 || targetUser.speedKmh > 5f) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color(0xFF0D2818))
+                        .border(1.dp, PulseGreen.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "🧭 Live 15m Trail Shown on Map",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = PulseGreen
+                    )
+                    if (trailDistanceMeters >= 10.0) {
+                        Text(
+                            text = if (trailDistanceMeters < 1000) "${trailDistanceMeters.toInt()}m moved"
+                            else String.format(java.util.Locale.US, "%.1f km moved", trailDistanceMeters / 1000.0),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    }
+                }
+            }
+
+            // If viewing self: Quick 1-Tap Status Bubble Selector
+            if (isSelf) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "💬 Quick Status Bubble",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = TextSecondary
+                    )
+                    if (!targetUser.statusMessage.isNullOrBlank()) {
+                        Text(
+                            text = "Clear Status",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = DangerRed,
+                            modifier = Modifier.clickable {
+                                viewModel.updateMyStatusMessage("")
+                                Toast.makeText(context, "Status cleared", Toast.LENGTH_SHORT).show()
+                            }
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    QUICK_STATUS_PRESETS.forEach { preset ->
+                        val isSelected = targetUser.statusMessage == preset
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(if (isSelected) PulseGreen else Color(0xFF131D2E))
+                                .border(
+                                    1.dp,
+                                    if (isSelected) PulseGreen else RadarCardBorder,
+                                    RoundedCornerShape(16.dp)
+                                )
+                                .clickable {
+                                    val next = if (isSelected) "" else preset
+                                    viewModel.updateMyStatusMessage(next)
+                                }
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Text(
+                                text = preset,
+                                fontSize = 11.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                color = if (isSelected) Color.Black else Color.White
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
 
             // PRIMARY BUTTON: Go To (Open in Google Maps)
             if (!isSelf && targetUser.latitude != 0.0) {
@@ -252,7 +373,7 @@ fun PersonDetailSheet(
                     onClick = { viewModel.openInGoogleMaps(context, targetUser) },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(52.dp),
+                        .height(50.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = RadarBlue),
                     shape = RoundedCornerShape(14.dp)
                 ) {

@@ -106,6 +106,7 @@ fun MainScreen(
     val selfMarkerMode by viewModel.selfMarkerMode.collectAsState()
     val currentFilter by viewModel.currentFilter.collectAsState()
     val selectedPerson by viewModel.selectedPerson.collectAsState()
+    val userTrails by viewModel.userTrails.collectAsState()
     val activeAlert by viewModel.activeAlert.collectAsState()
     val kickState by viewModel.kickState.collectAsState()
     val isSirenActive by com.pinpulse.radar.util.SirenHelper.isSirenActive.collectAsState()
@@ -207,6 +208,8 @@ fun MainScreen(
             currentUserId = currentUser?.id,
             mapStyle = mapStyle,
             selfMarkerMode = selfMarkerMode,
+            userTrails = userTrails,
+            selectedPersonId = selectedPerson?.id,
             onAvatarClick = { userId ->
                 viewModel.selectPersonForSheet(userId)
             },

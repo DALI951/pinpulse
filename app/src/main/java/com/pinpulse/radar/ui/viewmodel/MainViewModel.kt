@@ -17,6 +17,7 @@ import com.pinpulse.radar.model.AlertMessage
 import com.pinpulse.radar.model.FriendRequest
 import com.pinpulse.radar.model.Group
 import com.pinpulse.radar.model.LocationPacket
+import com.pinpulse.radar.model.TrailPoint
 import com.pinpulse.radar.model.User
 import com.pinpulse.radar.service.LocationTrackingService
 import com.pinpulse.radar.util.ImageHelper
@@ -93,6 +94,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _groupMembers = MutableStateFlow<Map<String, User>>(emptyMap())
     val groupMembers: StateFlow<Map<String, User>> = _groupMembers.asStateFlow()
 
+    // Live 15-Minute Movement Breadcrumb Trails per userId
+    private val _userTrails = MutableStateFlow<Map<String, List<TrailPoint>>>(emptyMap())
+    val userTrails: StateFlow<Map<String, List<TrailPoint>>> = _userTrails.asStateFlow()
+
     private val pendingJoinGroupCodes: MutableSet<String> = Collections.synchronizedSet(mutableSetOf())
 
     // Combined list of users to display on the map according to the current filter
@@ -167,6 +172,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             realtime.locationUpdates.collect { packet ->
                 handleIncomingLocationPacket(packet)
+            }
+        }
+
+        // Record our own 15-minute movement breadcrumb trail as currentUser coordinates update
+        viewModelScope.launch {
+            currentUser.collect { me ->
+                if (me != null && (me.latitude != 0.0 || me.longitude != 0.0)) {
+                    recordTrailPoint(me.id, me.latitude, me.longitude, me.speedKmh, me.lastUpdated)
+                }
             }
         }
 
@@ -323,7 +337,45 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return User(id = memberId, email = "", displayName = "Member", avatarBase64 = null, friendCode = "")
     }
 
+    private fun recordTrailPoint(
+        userId: String,
+        lat: Double,
+        lng: Double,
+        speedKmh: Float,
+        timestamp: Long = System.currentTimeMillis()
+    ) {
+        if (userId.isBlank() || (lat == 0.0 && lng == 0.0)) return
+        val now = System.currentTimeMillis()
+        val cutoff = now - (15 * 60 * 1000L) // Last 15 minutes window
+        val effectiveTime = if (timestamp in cutoff..(now + 60_000L)) timestamp else now
+
+        val currentMap = _userTrails.value
+        val existingList = (currentMap[userId] ?: emptyList()).filter { it.timestamp >= cutoff }
+
+        val updatedList = if (existingList.isEmpty()) {
+            listOf(TrailPoint(lat, lng, speedKmh, effectiveTime))
+        } else {
+            val last = existingList.last()
+            val distMeters = calculateDistanceMeters(last.latitude, last.longitude, lat, lng)
+            when {
+                distMeters > 50_000.0 -> {
+                    // Reset trail if coordinates jumped >50km (e.g., initial GPS lock from default city)
+                    listOf(TrailPoint(lat, lng, speedKmh, effectiveTime))
+                }
+                distMeters >= 6.0 -> {
+                    (existingList + TrailPoint(lat, lng, speedKmh, effectiveTime)).takeLast(120)
+                }
+                else -> {
+                    existingList
+                }
+            }
+        }
+        _userTrails.value = currentMap + (userId to updatedList)
+    }
+
     private fun handleIncomingLocationPacket(packet: LocationPacket) {
+        recordTrailPoint(packet.userId, packet.latitude, packet.longitude, packet.speedKmh, packet.timestamp)
+
         val currentFriends = prefs.loadFriends().toMutableList()
         val index = currentFriends.indexOfFirst { it.id == packet.userId }
         if (index >= 0) {
@@ -333,6 +385,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 email = packet.email.ifBlank { existing.email },
                 friendCode = packet.friendCode.ifBlank { existing.friendCode },
                 avatarBase64 = packet.avatarBase64 ?: existing.avatarBase64,
+                statusMessage = packet.statusMessage ?: existing.statusMessage,
                 latitude = packet.latitude,
                 longitude = packet.longitude,
                 speedKmh = packet.speedKmh,
@@ -361,6 +414,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 email = packet.email.ifBlank { prev?.email ?: "" },
                 avatarBase64 = packet.avatarBase64 ?: prev?.avatarBase64,
                 friendCode = packet.friendCode.ifBlank { prev?.friendCode ?: "" },
+                statusMessage = packet.statusMessage ?: prev?.statusMessage,
                 latitude = packet.latitude,
                 longitude = packet.longitude,
                 speedKmh = packet.speedKmh,
@@ -596,6 +650,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             displayName = displayName,
             avatarBase64 = avatarBase64 ?: existing?.avatarBase64,
             friendCode = friendCode,
+            statusMessage = existing?.statusMessage,
             isSharingLocation = true,
             latitude = existing?.latitude ?: 36.8065,
             longitude = existing?.longitude ?: 10.1815,
@@ -651,8 +706,45 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             email = updated.email,
             friendCode = updated.friendCode,
             avatarBase64 = updated.avatarBase64,
+            statusMessage = updated.statusMessage,
             latitude = lat,
             longitude = lng,
+            speedKmh = updated.speedKmh,
+            batteryPercent = batteryInfo.first,
+            isCharging = batteryInfo.second,
+            isSharingLocation = true,
+            timestamp = now
+        )
+        realtime.publishLocation(packet)
+    }
+
+    fun updateMyStatusMessage(status: String) {
+        val current = prefs.loadCurrentUser() ?: return
+        val cleanStatus = status.trim().take(28)
+        val now = System.currentTimeMillis()
+        val batteryInfo = LocationTrackingService.getBatteryInfo(app)
+        val updated = current.copy(
+            statusMessage = cleanStatus,
+            batteryPercent = batteryInfo.first,
+            isCharging = batteryInfo.second,
+            lastUpdated = now
+        )
+        prefs.saveCurrentUser(updated)
+        if (_selectedPerson.value?.id == updated.id) {
+            _selectedPerson.value = updated
+        }
+        realtime.publishUserRegistry(updated)
+        syncCloudBackup()
+
+        val packet = LocationPacket(
+            userId = updated.id,
+            displayName = updated.displayName,
+            email = updated.email,
+            friendCode = updated.friendCode,
+            avatarBase64 = updated.avatarBase64,
+            statusMessage = cleanStatus,
+            latitude = updated.latitude,
+            longitude = updated.longitude,
             speedKmh = updated.speedKmh,
             batteryPercent = batteryInfo.first,
             isCharging = batteryInfo.second,

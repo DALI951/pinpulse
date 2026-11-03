@@ -394,7 +394,8 @@ class RealtimeService private constructor(private val context: Context) {
             user.copy(
                 friendCode = user.friendCode.ifBlank { existing.friendCode },
                 email = user.email.ifBlank { existing.email },
-                avatarBase64 = user.avatarBase64 ?: existing.avatarBase64
+                avatarBase64 = user.avatarBase64 ?: existing.avatarBase64,
+                statusMessage = user.statusMessage ?: existing.statusMessage
             )
         } else {
             user
@@ -494,6 +495,7 @@ class RealtimeService private constructor(private val context: Context) {
                                 email = packet.email,
                                 friendCode = packet.friendCode,
                                 avatarBase64 = packet.avatarBase64,
+                                statusMessage = packet.statusMessage,
                                 latitude = packet.latitude,
                                 longitude = packet.longitude,
                                 speedKmh = packet.speedKmh,
