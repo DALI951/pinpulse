@@ -99,6 +99,7 @@ fun SettingsDialog(
     val selfMarkerMode by viewModel.selfMarkerMode.collectAsState()
     val updateState by viewModel.updateState.collectAsState()
     val hasSecurityPin by viewModel.hasSecurityPin.collectAsState()
+    val friends by viewModel.friends.collectAsState()
 
     var isEditingPin by remember { mutableStateOf(false) }
     var oldPinInput by remember { mutableStateOf("") }
@@ -309,7 +310,8 @@ fun SettingsDialog(
             Spacer(modifier = Modifier.height(14.dp))
 
             // SECTION 1.5: SUBSCRIPTION & PLAN MEMBERSHIP
-            if (currentUser != null) {
+            val user = currentUser
+            if (user != null) {
                 Card(
                     colors = CardDefaults.cardColors(containerColor = RadarCardBg),
                     border = androidx.compose.foundation.BorderStroke(1.dp, RadarCardBorder),
@@ -336,9 +338,9 @@ fun SettingsDialog(
                                 Column {
                                     Text("Subscription Plan", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 15.sp)
                                     Text(
-                                        text = "${currentUser.planDisplayName} • ${if (currentUser.isLifetime) "Never Expires" else "${currentUser.remainingDaysCount} days left"}",
+                                        text = "${user.planDisplayName} • ${if (user.isLifetime) "Never Expires" else "${user.remainingDaysCount} days left"}",
                                         fontSize = 11.sp,
-                                        color = if (currentUser.isAccountCutOff) DangerRed else PulseGreen,
+                                        color = if (user.isAccountCutOff) DangerRed else PulseGreen,
                                         fontWeight = FontWeight.SemiBold
                                     )
                                 }
@@ -347,14 +349,14 @@ fun SettingsDialog(
                             Box(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(6.dp))
-                                    .background(if (currentUser.isAccountCutOff) DangerRed.copy(alpha = 0.2f) else PulseGreen.copy(alpha = 0.2f))
+                                    .background(if (user.isAccountCutOff) DangerRed.copy(alpha = 0.2f) else PulseGreen.copy(alpha = 0.2f))
                                     .padding(horizontal = 8.dp, vertical = 3.dp)
                             ) {
                                 Text(
-                                    text = currentUser.accountStatus,
+                                    text = user.accountStatus,
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.ExtraBold,
-                                    color = if (currentUser.isAccountCutOff) DangerRed else PulseGreen
+                                    color = if (user.isAccountCutOff) DangerRed else PulseGreen
                                 )
                             }
                         }
@@ -373,15 +375,15 @@ fun SettingsDialog(
                         ) {
                             Column {
                                 Text("Friend Quota", fontSize = 10.sp, color = TextMuted)
-                                Text("${friends.size} / ${currentUser.maxFriends} Friends", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                Text("${friends.size} / ${user.maxFriends} Friends", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
                             }
                             Column {
                                 Text("Circle Quota", fontSize = 10.sp, color = TextMuted)
-                                Text("${viewModel.groups.value.size} / ${currentUser.maxGroups} Circles", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                Text("${viewModel.groups.value.size} / ${user.maxGroups} Circles", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
                             }
                             Column {
                                 Text("Rate Limit", fontSize = 10.sp, color = TextMuted)
-                                Text("${currentUser.rateLimitSec}s Updates", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = PulseGreen)
+                                Text("${user.rateLimitSec}s Updates", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = PulseGreen)
                             }
                         }
 
