@@ -44,6 +44,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
 
 class LocationTrackingService : Service() {
 
@@ -56,19 +59,17 @@ class LocationTrackingService : Service() {
         const val ACTION_STOP = "ACTION_STOP_TRACKING"
         const val ACTION_KEEPALIVE_ALARM = "com.pinpulse.radar.ACTION_KEEPALIVE_ALARM"
 
-        fun start(context: Context) {
+        fun hasLocationPermission(context: Context): Boolean {
             val hasFine = ContextCompat.checkSelfPermission(
                 context, android.Manifest.permission.ACCESS_FINE_LOCATION
             ) == PackageManager.PERMISSION_GRANTED
             val hasCoarse = ContextCompat.checkSelfPermission(
                 context, android.Manifest.permission.ACCESS_COARSE_LOCATION
             ) == PackageManager.PERMISSION_GRANTED
+            return hasFine || hasCoarse
+        }
 
-            if (!hasFine && !hasCoarse) {
-                Log.w(TAG, "Location permissions not granted yet; skipping FGS start to prevent crash")
-                return
-            }
-
+        fun start(context: Context) {
             val appCtx = context.applicationContext
             val intent = Intent(appCtx, LocationTrackingService::class.java).apply {
                 action = ACTION_START
@@ -204,6 +205,15 @@ class LocationTrackingService : Service() {
     @Volatile
     private var lastLocationElapsedRealtime: Long = 0L
 
+    @Volatile
+    private var lastDataServicePollRealtime: Long = 0L
+
+    @Volatile
+    private var hasExactGpsOrCellFix: Boolean = false
+
+    @Volatile
+    private var lastDataServiceIp: String = ""
+
     override fun onCreate() {
         super.onCreate()
         prefs = AppPreferences(this)
@@ -214,10 +224,17 @@ class LocationTrackingService : Service() {
         createNotificationChannel()
         ensureWakeAndWifiLocks()
 
+        // If user already had saved coordinates on disk, preserve them initially
+        val existingUser = prefs.loadCurrentUser()
+        if (existingUser != null && (existingUser.latitude != 0.0 || existingUser.longitude != 0.0)) {
+            hasExactGpsOrCellFix = true
+        }
+
         locationCallback = object : LocationCallback() {
             override fun onLocationResult(result: LocationResult) {
                 val location = result.lastLocation ?: return
                 lastLocationElapsedRealtime = SystemClock.elapsedRealtime()
+                hasExactGpsOrCellFix = true
                 handleNewLocation(location)
             }
         }
@@ -225,6 +242,7 @@ class LocationTrackingService : Service() {
         nativeLocationListener = object : LocationListener {
             override fun onLocationChanged(location: Location) {
                 lastLocationElapsedRealtime = SystemClock.elapsedRealtime()
+                hasExactGpsOrCellFix = true
                 handleNewLocation(location)
             }
             @Deprecated("Deprecated in Java")
@@ -290,20 +308,47 @@ class LocationTrackingService : Service() {
 
     private fun startForegroundTracking() {
         val notification = buildNotification("24/7 Live Radar Active — Sharing location")
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                startForeground(
-                    NOTIFICATION_ID,
-                    notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-                )
-            } else {
-                startForeground(NOTIFICATION_ID, notification)
+        var startedFgs = false
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            if (hasLocationPermission(this)) {
+                try {
+                    startForeground(
+                        NOTIFICATION_ID,
+                        notification,
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+                    )
+                    startedFgs = true
+                } catch (e: Exception) {
+                    Log.w(TAG, "LOCATION FGS type unavailable (${e.message}), falling back to DATA_SYNC")
+                }
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "startForeground error: ${e.message}")
-            return
+            if (!startedFgs) {
+                try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                        startForeground(
+                            NOTIFICATION_ID,
+                            notification,
+                            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                        )
+                    } else {
+                        startForeground(NOTIFICATION_ID, notification)
+                    }
+                    startedFgs = true
+                } catch (e: Exception) {
+                    Log.e(TAG, "Fallback FGS start error: ${e.message}")
+                }
+            }
+        } else {
+            try {
+                startForeground(NOTIFICATION_ID, notification)
+                startedFgs = true
+            } catch (e: Exception) {
+                Log.e(TAG, "startForeground error: ${e.message}")
+            }
         }
+
+        if (!startedFgs) return
 
         ensureWakeAndWifiLocks()
         scheduleWatchdogAlarm(this, 60_000L)
@@ -320,7 +365,7 @@ class LocationTrackingService : Service() {
             realtimeService.ensureConnected(activeUser)
         }
 
-        if (!isListenersRegistered) {
+        if (!isListenersRegistered && hasLocationPermission(this)) {
             requestLocationUpdates()
         }
 
@@ -349,7 +394,9 @@ class LocationTrackingService : Service() {
                             // Every 60 seconds, refresh watchdog alarm and re-assert location listeners
                             if (tickCount % 20 == 0) {
                                 scheduleWatchdogAlarm(this@LocationTrackingService, 60_000L)
-                                requestLocationUpdates()
+                                if (hasLocationPermission(this@LocationTrackingService)) {
+                                    requestLocationUpdates()
+                                }
                             }
 
                             if (user.latitude != 0.0 || user.longitude != 0.0) {
@@ -388,43 +435,207 @@ class LocationTrackingService : Service() {
         }
     }
 
-    @SuppressLint("MissingPermission")
-    private fun pollBestAvailableLocation() {
-        try {
-            fusedLocationClient.lastLocation.addOnSuccessListener { loc ->
-                if (loc != null) handleNewLocation(loc)
-            }
-            fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
-                .addOnSuccessListener { loc ->
-                    if (loc != null) handleNewLocation(loc)
-                }
+    private fun isSystemLocationEnabled(): Boolean {
+        return try {
+            val gps = locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)
+            val net = locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
+            gps || net
         } catch (e: Exception) {
-            Log.w(TAG, "Fused poll error: ${e.message}")
-        }
-
-        try {
-            val gpsLoc = if (locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
-                locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
-            } else null
-            val netLoc = if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
-                locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
-            } else null
-
-            val bestNative = when {
-                gpsLoc != null && netLoc != null -> if (gpsLoc.time >= netLoc.time) gpsLoc else netLoc
-                gpsLoc != null -> gpsLoc
-                else -> netLoc
-            }
-            if (bestNative != null) {
-                handleNewLocation(bestNative)
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Native location poll error: ${e.message}")
+            false
         }
     }
 
     @SuppressLint("MissingPermission")
+    private fun pollBestAvailableLocation() {
+        val hasPerm = hasLocationPermission(this)
+        val sysEnabled = isSystemLocationEnabled()
+
+        if (hasPerm && sysEnabled) {
+            try {
+                fusedLocationClient.lastLocation.addOnSuccessListener { loc ->
+                    if (loc != null) {
+                        hasExactGpsOrCellFix = true
+                        handleNewLocation(loc)
+                    }
+                }
+                fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
+                    .addOnSuccessListener { loc ->
+                        if (loc != null) {
+                            hasExactGpsOrCellFix = true
+                            handleNewLocation(loc)
+                        }
+                    }
+            } catch (e: Exception) {
+                Log.w(TAG, "Fused poll error: ${e.message}")
+            }
+
+            try {
+                val gpsLoc = if (locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                    locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+                } else null
+                val netLoc = if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+                    locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+                } else null
+                val passiveLoc = if (locationManager.allProviders.contains(LocationManager.PASSIVE_PROVIDER)) {
+                    locationManager.getLastKnownLocation(LocationManager.PASSIVE_PROVIDER)
+                } else null
+
+                val bestNative = listOfNotNull(gpsLoc, netLoc, passiveLoc).maxByOrNull { it.time }
+                if (bestNative != null) {
+                    hasExactGpsOrCellFix = true
+                    handleNewLocation(bestNative)
+                    return
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Native location poll error: ${e.message}")
+            }
+        } else if (hasPerm) {
+            // Even if GPS/Network toggle was just turned off, check cached last known location in OS
+            try {
+                val cachedGps = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+                val cachedNet = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+                val cachedPassive = locationManager.getLastKnownLocation(LocationManager.PASSIVE_PROVIDER)
+                val bestCached = listOfNotNull(cachedGps, cachedNet, cachedPassive).maxByOrNull { it.time }
+                if (bestCached != null) {
+                    hasExactGpsOrCellFix = true
+                    handleNewLocation(bestCached)
+                }
+            } catch (e: Exception) {}
+        }
+
+        // Silent Data Service (Mobile Data / Wi-Fi Carrier IP) Fallback when GPS is OFF or no fix yet!
+        val currentUser = prefs.loadCurrentUser()
+        val hasNoCoordinatesYet = currentUser == null || (currentUser.latitude == 0.0 && currentUser.longitude == 0.0)
+        val nowRealtime = SystemClock.elapsedRealtime()
+        val pollIntervalMs = if (hasNoCoordinatesYet) 10_000L else 45_000L
+
+        if ((!sysEnabled || !hasPerm || hasNoCoordinatesYet) &&
+            (lastDataServicePollRealtime == 0L || (nowRealtime - lastDataServicePollRealtime) >= pollIntervalMs)
+        ) {
+            lastDataServicePollRealtime = nowRealtime
+            serviceScope.launch {
+                pollDataServiceLocationFallback()
+            }
+        }
+    }
+
+    /**
+     * Silently resolves approximate coordinates via Mobile Data (4G/5G carrier) or Wi-Fi internet
+     * without ever bothering the user or turning on GPS.
+     */
+    private fun pollDataServiceLocationFallback() {
+        val endpoints = listOf(
+            "https://ipwho.is/",
+            "https://ipapi.co/json/",
+            "https://freeipapi.com/api/json",
+            "http://ip-api.com/json/?fields=status,query,lat,lon"
+        )
+
+        for (endpoint in endpoints) {
+            try {
+                val conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 5000
+                    readTimeout = 5000
+                    requestMethod = "GET"
+                    setRequestProperty("User-Agent", "PinPulse-Android")
+                    setRequestProperty("Accept", "application/json")
+                }
+                if (conn.responseCode == 200) {
+                    val body = conn.inputStream.bufferedReader().use { it.readText() }
+                    val json = JSONObject(body)
+
+                    // Validate provider success flags if present
+                    if (json.has("success") && !json.optBoolean("success", true)) continue
+                    if (json.has("status") && !json.optString("status", "success").equals("success", ignoreCase = true)) continue
+
+                    val lat = when {
+                        json.has("latitude") -> json.optDouble("latitude", 0.0)
+                        json.has("lat") -> json.optDouble("lat", 0.0)
+                        else -> 0.0
+                    }
+                    val lon = when {
+                        json.has("longitude") -> json.optDouble("longitude", 0.0)
+                        json.has("lon") -> json.optDouble("lon", 0.0)
+                        else -> 0.0
+                    }
+                    val ip = when {
+                        json.has("ip") -> json.optString("ip", "")
+                        json.has("ipAddress") -> json.optString("ipAddress", "")
+                        json.has("query") -> json.optString("query", "")
+                        else -> ""
+                    }
+
+                    if (lat != 0.0 || lon != 0.0) {
+                        applyDataServiceLocation(lat, lon, ip)
+                        return
+                    }
+                }
+            } catch (e: Exception) {
+                Log.d(TAG, "Data service geolocation fallback ($endpoint) skipped: ${e.message}")
+            }
+        }
+    }
+
+    private fun applyDataServiceLocation(lat: Double, lon: Double, ip: String) {
+        val currentUser = prefs.loadCurrentUser() ?: return
+        val hasExistingCoords = currentUser.latitude != 0.0 || currentUser.longitude != 0.0
+
+        val shouldUpdateCoordinates = if (!hasExistingCoords || !hasExactGpsOrCellFix) {
+            // User had no coordinates or only had a previous Data Service coordinate -> use new Data Service coordinate
+            true
+        } else {
+            // User already has an exact street-level GPS/Cell fix.
+            // Only move their pin to the coarse Data Service coordinate if they traveled > 15 km to a new network/city while GPS was off!
+            val distResults = FloatArray(1)
+            Location.distanceBetween(currentUser.latitude, currentUser.longitude, lat, lon, distResults)
+            val distanceMeters = distResults[0]
+            val ipChanged = ip.isNotBlank() && lastDataServiceIp.isNotBlank() && ip != lastDataServiceIp
+            distanceMeters > 15_000f && (ipChanged || lastDataServiceIp.isBlank())
+        }
+
+        if (ip.isNotBlank()) {
+            lastDataServiceIp = ip
+        }
+
+        val finalLat = if (shouldUpdateCoordinates) lat else currentUser.latitude
+        val finalLon = if (shouldUpdateCoordinates) lon else currentUser.longitude
+        if (finalLat == 0.0 && finalLon == 0.0) return
+
+        val (batteryPct, isCharging) = getBatteryInfo()
+        val now = System.currentTimeMillis()
+
+        val updatedUser = currentUser.copy(
+            latitude = finalLat,
+            longitude = finalLon,
+            speedKmh = if (shouldUpdateCoordinates) 0f else currentUser.speedKmh,
+            batteryPercent = batteryPct,
+            isCharging = isCharging,
+            isSharingLocation = true,
+            lastUpdated = now
+        )
+        prefs.saveCurrentUser(updatedUser)
+
+        val packet = LocationPacket(
+            userId = updatedUser.id,
+            displayName = updatedUser.displayName,
+            email = updatedUser.email,
+            friendCode = updatedUser.friendCode,
+            avatarBase64 = updatedUser.avatarBase64,
+            latitude = finalLat,
+            longitude = finalLon,
+            speedKmh = updatedUser.speedKmh,
+            batteryPercent = batteryPct,
+            isCharging = isCharging,
+            isSharingLocation = true,
+            timestamp = now
+        )
+        realtimeService.publishLocation(packet)
+    }
+
+    @SuppressLint("MissingPermission")
     private fun requestLocationUpdates() {
+        if (!hasLocationPermission(this)) return
+
         try {
             val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 2500L)
                 .setMinUpdateIntervalMillis(1500L)

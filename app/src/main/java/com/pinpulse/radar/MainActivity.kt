@@ -98,8 +98,9 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             } catch (e: Exception) {}
-            com.pinpulse.radar.service.LocationTrackingService.start(this)
         }
+        // Always start LocationTrackingService (uses GPS/Cell when enabled, and silent Data Service fallback when GPS is off)
+        com.pinpulse.radar.service.LocationTrackingService.start(this)
     }
 
     override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
