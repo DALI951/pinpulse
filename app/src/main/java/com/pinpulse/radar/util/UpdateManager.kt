@@ -39,6 +39,8 @@ object UpdateManager {
     private const val PRIVATE_GITHUB_REPO = "DALI951/pinpulse"
     private const val PUBLIC_MIRROR_REPO = "DALI951/pinpulse-releases"
 
+    private val isDownloadInProgress = java.util.concurrent.atomic.AtomicBoolean(false)
+
     private val _updateState = MutableStateFlow(UpdateState())
     val updateState: StateFlow<UpdateState> = _updateState.asStateFlow()
 
@@ -345,56 +347,60 @@ object UpdateManager {
     }
 
     suspend fun downloadAndInstall(context: Context, onInstalled: () -> Unit = {}) = withContext(Dispatchers.IO) {
-        // Re-verify the absolute highest release on GitHub right before installing/downloading
-        // so we never install an older version if a newer release is available.
-        try {
-            val freshHighest = fetchHighestRelease()
-            if (freshHighest != null) {
-                val freshClean = freshHighest.tagName.removePrefix("v").trim()
-                if (freshClean.isNotBlank() && compareVersions(freshClean, BuildConfig.VERSION_NAME)) {
-                    purgeOutdatedCachedApkIfSuperseded(context, freshClean)
-                    _updateState.value = _updateState.value.copy(
-                        latestVersion = freshClean,
-                        apkUrl = freshHighest.apkUrl,
-                        releaseNotes = freshHighest.body
-                    )
-                }
-            }
-        } catch (_: Exception) {}
-
-        val latestVer = _updateState.value.latestVersion
-
-        // 1. If the exact latest APK is ALREADY downloaded and valid, launch installer immediately!
-        val existingFile = getDownloadedUpdateApk(context, latestVer)
-        if (existingFile != null) {
-            Log.d(TAG, "Update APK already downloaded: ${existingFile.absolutePath} (${existingFile.length() / 1024} KB) -> Reusing file without downloading!")
-            _updateState.value = _updateState.value.copy(
-                isDownloading = false,
-                isDownloaded = true,
-                downloadProgress = 1f,
-                statusMessage = "Launching installer for v$latestVer..."
-            )
-            withContext(Dispatchers.Main) {
-                installApk(context, existingFile)
-                onInstalled()
-            }
+        if (_updateState.value.isDownloading || !isDownloadInProgress.compareAndSet(false, true)) {
+            Log.d(TAG, "Update download is already actively running. Rejecting duplicate click.")
             return@withContext
         }
-
-        val apkUrl = _updateState.value.apkUrl
-        if (apkUrl.isBlank()) return@withContext
-
-        // Pre-clean older/incomplete files before starting fresh download
-        cleanupDownloadedApks(context)
-
-        _updateState.value = _updateState.value.copy(
-            isDownloading = true,
-            isDownloaded = false,
-            downloadProgress = 0f,
-            statusMessage = "Downloading update..."
-        )
-
         try {
+            // Re-verify the absolute highest release on GitHub right before installing/downloading
+            // so we never install an older version if a newer release is available.
+            try {
+                val freshHighest = fetchHighestRelease()
+                if (freshHighest != null) {
+                    val freshClean = freshHighest.tagName.removePrefix("v").trim()
+                    if (freshClean.isNotBlank() && compareVersions(freshClean, BuildConfig.VERSION_NAME)) {
+                        purgeOutdatedCachedApkIfSuperseded(context, freshClean)
+                        _updateState.value = _updateState.value.copy(
+                            latestVersion = freshClean,
+                            apkUrl = freshHighest.apkUrl,
+                            releaseNotes = freshHighest.body
+                        )
+                    }
+                }
+            } catch (_: Exception) {}
+
+            val latestVer = _updateState.value.latestVersion
+
+            // 1. If the exact latest APK is ALREADY downloaded and valid, launch installer immediately!
+            val existingFile = getDownloadedUpdateApk(context, latestVer)
+            if (existingFile != null) {
+                Log.d(TAG, "Update APK already downloaded: ${existingFile.absolutePath} (${existingFile.length() / 1024} KB) -> Reusing file without downloading!")
+                _updateState.value = _updateState.value.copy(
+                    isDownloading = false,
+                    isDownloaded = true,
+                    downloadProgress = 1f,
+                    statusMessage = "Launching installer for v$latestVer..."
+                )
+                withContext(Dispatchers.Main) {
+                    installApk(context, existingFile)
+                    onInstalled()
+                }
+                return@withContext
+            }
+
+            val apkUrl = _updateState.value.apkUrl
+            if (apkUrl.isBlank()) return@withContext
+
+            // Pre-clean older/incomplete files before starting fresh download
+            cleanupDownloadedApks(context)
+
+            _updateState.value = _updateState.value.copy(
+                isDownloading = true,
+                isDownloaded = false,
+                downloadProgress = 0f,
+                statusMessage = "Downloading update..."
+            )
+
             var currentUrl = apkUrl
             val token = decodeGhToken()
             var conn: HttpURLConnection
@@ -464,6 +470,8 @@ object UpdateManager {
                 isDownloading = false,
                 errorMessage = "Download failed: ${e.message}"
             )
+        } finally {
+            isDownloadInProgress.set(false)
         }
     }
 

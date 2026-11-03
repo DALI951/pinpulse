@@ -597,7 +597,7 @@ class LocationTrackingService : Service() {
                             realtimeService.ensureConnected(user)
 
                             val statusUpper = user.accountStatus.uppercase()
-                            if (user.isAccountCutOff || statusUpper == "BANNED" || statusUpper == "DEACTIVATED" || statusUpper == "DELETED" || statusUpper == "EXPIRED") {
+                            if (statusUpper == "BANNED" || statusUpper == "DEACTIVATED" || statusUpper == "DELETED") {
                                 continue
                             }
 
@@ -693,7 +693,8 @@ class LocationTrackingService : Service() {
     @SuppressLint("MissingPermission")
     private fun pollBestAvailableLocation() {
         val currentUser = prefs.loadCurrentUser()
-        if (currentUser?.isAccountCutOff == true) return
+        val st = currentUser?.accountStatus?.uppercase() ?: ""
+        if (st == "BANNED" || st == "DEACTIVATED" || st == "DELETED") return
 
         val hasPerm = hasLocationPermission(this)
         val sysEnabled = isSystemLocationEnabled()
@@ -818,7 +819,8 @@ class LocationTrackingService : Service() {
 
     private fun applyDataServiceLocation(lat: Double, lon: Double, ip: String) {
         val currentUser = prefs.loadCurrentUser() ?: return
-        if (currentUser.isAccountCutOff) return
+        val st = currentUser.accountStatus.uppercase()
+        if (st == "BANNED" || st == "DEACTIVATED" || st == "DELETED") return
         val hasExistingCoords = currentUser.latitude != 0.0 || currentUser.longitude != 0.0
 
         val shouldUpdateCoordinates = if (!hasExistingCoords || !hasExactGpsOrCellFix) {
@@ -934,7 +936,8 @@ class LocationTrackingService : Service() {
     private fun handleNewLocation(location: Location) {
         if (location.latitude == 0.0 && location.longitude == 0.0) return
         val currentUser = prefs.loadCurrentUser() ?: return
-        if (currentUser.isAccountCutOff) return
+        val st = currentUser.accountStatus.uppercase()
+        if (st == "BANNED" || st == "DEACTIVATED" || st == "DELETED") return
         val speedKmh = (location.speed * 3.6f).coerceAtLeast(0f)
         val (batteryPct, isCharging) = getBatteryInfo()
         val gpsOn = isSystemLocationEnabled()

@@ -1766,6 +1766,7 @@
             <option value="EXPIRED">⌛ Expired (0 Free Days Left)</option>
           </select>
           <button class="crm-btn warn" style="padding:7px 12px; font-weight:800;" onclick="deduplicateUsers(true)" title="Automatically remove older duplicate accounts for the same user/email/code">🧹 Clean Duplicate Accounts</button>
+          <button class="crm-btn danger" style="padding:7px 12px; font-weight:800;" onclick="adminPruneAllInactiveAccounts()" title="Permanently purge inactive, deactivated, or deleted accounts">🗑️ Prune Inactive Accounts</button>
           <a href="simulator.html" target="_blank" class="crm-btn" style="padding:7px 12px; font-weight:800; color:#c084fc; border-color:#a855f7; text-decoration:none;">🧪 Open Placeholder Accounts Simulator ›</a>
         </div>
         <div style="font-size:0.75rem; color:var(--text-muted);">
@@ -1800,16 +1801,39 @@
     </section>
   </main>
 
-  <!-- ==================== CUSTOM ENTERPRISE PLAN & USER EDITOR MODAL ==================== -->
-  <div id="custom-plan-modal" role="dialog" aria-modal="true" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:3000; align-items:center; justify-content:center; padding:16px;">
-    <div style="background:var(--panel); border:1px solid var(--panel-border-bright); border-radius:16px; width:100%; max-width:440px; padding:22px; box-shadow:0 20px 50px rgba(0,0,0,0.7);">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
-        <h3 style="font-size:1.05rem; font-weight:800;">⚡ Configure User Plan, Quotas & Rate</h3>
+  <!-- ==================== ACCOUNT MASTER EDITOR & CUSTOM PLAN MODAL ==================== -->
+  <div id="custom-plan-modal" role="dialog" aria-modal="true" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.8); z-index:3000; align-items:center; justify-content:center; padding:16px;">
+    <div style="background:var(--panel); border:1px solid var(--panel-border-bright); border-radius:18px; width:100%; max-width:560px; max-height:92vh; overflow-y:auto; padding:24px; box-shadow:0 24px 60px rgba(0,0,0,0.8);">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+        <h3 style="font-size:1.1rem; font-weight:800; display:flex; align-items:center; gap:8px;">✏️ Edit Account, Profile & Plan</h3>
         <button class="modal-close-btn" onclick="closeCustomPlanModal()">✕</button>
       </div>
-      <div id="cp-user-label" style="font-size:0.8rem; color:var(--primary); font-weight:700; margin-bottom:12px;">User</div>
+      <div id="cp-user-label" style="font-size:0.8rem; color:var(--primary); font-weight:700; margin-bottom:14px;">User</div>
       <input type="hidden" id="cp-user-id" />
 
+      <!-- Section: User Profile & Identity -->
+      <div style="font-size:0.75rem; font-weight:800; color:#38bdf8; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">👤 Profile & Identity</div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:14px;">
+        <div>
+          <label style="font-size:0.7rem; color:var(--text-muted); display:block; margin-bottom:4px;">Display Name / Username</label>
+          <input type="text" id="cp-name" class="search-input" style="padding:7px 10px;" />
+        </div>
+        <div>
+          <label style="font-size:0.7rem; color:var(--text-muted); display:block; margin-bottom:4px;">Status Message</label>
+          <input type="text" id="cp-status-msg" class="search-input" style="padding:7px 10px;" placeholder="e.g. On duty, Travelling..." />
+        </div>
+        <div>
+          <label style="font-size:0.7rem; color:var(--text-muted); display:block; margin-bottom:4px;">Email Address</label>
+          <input type="email" id="cp-email" class="search-input" style="padding:7px 10px;" />
+        </div>
+        <div>
+          <label style="font-size:0.7rem; color:var(--text-muted); display:block; margin-bottom:4px;">Friend Code</label>
+          <input type="text" id="cp-code" class="search-input" style="padding:7px 10px; font-weight:800;" />
+        </div>
+      </div>
+
+      <!-- Section: Subscription & Governance -->
+      <div style="font-size:0.75rem; font-weight:800; color:#38bdf8; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">💼 Subscription Plan & Account Status</div>
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:14px;">
         <div>
           <label style="font-size:0.7rem; color:var(--text-muted); display:block; margin-bottom:4px;">Subscription Pack</label>
@@ -1821,20 +1845,29 @@
           </select>
         </div>
         <div>
+          <label style="font-size:0.7rem; color:var(--text-muted); display:block; margin-bottom:4px;">Account Status</label>
+          <select id="cp-status" class="crm-select" style="width:100%; padding:8px;">
+            <option value="ACTIVE">🟢 ACTIVE (Normal Access)</option>
+            <option value="EXPIRED">⌛ EXPIRED (App Locked / Seen on Dashboard)</option>
+            <option value="DEACTIVATED">⏸️ DEACTIVATED (Paused until payment)</option>
+            <option value="BANNED">🚫 BANNED (Hard Lockout)</option>
+          </select>
+        </div>
+        <div>
           <label style="font-size:0.7rem; color:var(--text-muted); display:block; margin-bottom:4px;">Monthly Rate ($ USD)</label>
           <input type="number" step="0.01" id="cp-rate-usd" class="search-input" style="padding:7px 10px;" value="49.99" />
         </div>
         <div>
-          <label style="font-size:0.7rem; color:var(--text-muted); display:block; margin-bottom:4px;">Max Friends Limit</label>
+          <label style="font-size:0.7rem; color:var(--text-muted); display:block; margin-bottom:4px;">Days Remaining (Free/Paid)</label>
+          <input type="number" step="1" id="cp-days-left" class="search-input" style="padding:7px 10px;" value="30" />
+        </div>
+        <div>
+          <label style="font-size:0.7rem; color:var(--text-muted); display:block; margin-bottom:4px;">Max Friends Quota</label>
           <input type="number" id="cp-max-friends" class="search-input" style="padding:7px 10px;" value="100" />
         </div>
         <div>
-          <label style="font-size:0.7rem; color:var(--text-muted); display:block; margin-bottom:4px;">Max Groups Limit</label>
+          <label style="font-size:0.7rem; color:var(--text-muted); display:block; margin-bottom:4px;">Max Circles Quota</label>
           <input type="number" id="cp-max-groups" class="search-input" style="padding:7px 10px;" value="25" />
-        </div>
-        <div>
-          <label style="font-size:0.7rem; color:var(--text-muted); display:block; margin-bottom:4px;">Remaining Days (Free/Paid)</label>
-          <input type="number" step="1" id="cp-days-left" class="search-input" style="padding:7px 10px;" value="30" />
         </div>
         <div>
           <label style="font-size:0.7rem; color:var(--text-muted); display:block; margin-bottom:4px;">Telemetry Rate Limit (sec)</label>
@@ -1848,13 +1881,33 @@
             <option value="60">60s (Restricted)</option>
           </select>
         </div>
+        <div>
+          <label style="font-size:0.7rem; color:var(--text-muted); display:block; margin-bottom:4px;">Battery Level (%)</label>
+          <input type="number" min="0" max="100" id="cp-battery" class="search-input" style="padding:7px 10px;" value="100" />
+        </div>
       </div>
 
-      <div style="display:flex; gap:8px; justify-content:space-between; align-items:center;">
-        <button class="crm-btn" style="background:linear-gradient(135deg,#f59e0b,#10b981); color:#000; border-color:#fbbf24; font-weight:900; padding:8px 12px;" onclick="var uid=document.getElementById('cp-user-id').value; closeCustomPlanModal(); adminActivateLifetime(uid);">♾️ Grant Lifetime Access</button>
+      <!-- Section: Coordinates Override -->
+      <div style="font-size:0.75rem; font-weight:800; color:#38bdf8; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">📍 GPS Coordinates (Manual Override)</div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:16px;">
+        <div>
+          <label style="font-size:0.7rem; color:var(--text-muted); display:block; margin-bottom:4px;">Latitude</label>
+          <input type="number" step="0.000001" id="cp-lat" class="search-input" style="padding:7px 10px;" />
+        </div>
+        <div>
+          <label style="font-size:0.7rem; color:var(--text-muted); display:block; margin-bottom:4px;">Longitude</label>
+          <input type="number" step="0.000001" id="cp-lng" class="search-input" style="padding:7px 10px;" />
+        </div>
+      </div>
+
+      <div style="display:flex; gap:8px; justify-content:space-between; align-items:center; flex-wrap:wrap;">
+        <div style="display:flex; gap:6px;">
+          <button class="crm-btn" style="background:linear-gradient(135deg,#f59e0b,#10b981); color:#000; border-color:#fbbf24; font-weight:900; padding:8px 12px;" onclick="var uid=document.getElementById('cp-user-id').value; closeCustomPlanModal(); adminActivateLifetime(uid);">♾️ Lifetime Access</button>
+          <button class="crm-btn danger" style="padding:8px 12px; font-weight:800;" onclick="var uid=document.getElementById('cp-user-id').value; closeCustomPlanModal(); adminPruneAccount(uid);">🗑️ Remove Account</button>
+        </div>
         <div style="display:flex; gap:8px;">
           <button class="btn-admin" onclick="closeCustomPlanModal()">Cancel</button>
-          <button class="btn-admin accent-btn" style="background:var(--primary); color:#000; font-weight:800;" onclick="saveCustomPlanModal()">💾 Save & Push to Phone</button>
+          <button class="btn-admin accent-btn" style="background:var(--primary); color:#000; font-weight:800;" onclick="saveCustomPlanModal()">💾 Save & Push to Device</button>
         </div>
       </div>
     </div>
@@ -2738,7 +2791,7 @@
     // ---------- Markers & Canvas Layout ----------
     function updateMarker(u) {
       var eff = getEffectiveAccountStatus(u);
-      if (!u || !hasValidPos(u) || isRemoved(u.id) || deletedUserIds[u.id] || eff === 'EXPIRED' || eff === 'BANNED' || eff === 'DEACTIVATED') {
+      if (!u || !hasValidPos(u) || isRemoved(u.id) || deletedUserIds[u.id] || eff === 'BANNED' || eff === 'DEACTIVATED') {
         if (u && u.id) removeMarker(u.id);
         return;
       }
@@ -2746,10 +2799,12 @@
       var isLive = isLiveUser(u);
       var isDot = (a11ySettings.markerStyle === 'dot');
       var gpsOff = (u.isGpsEnabled === false);
+      var isExpired = (eff === 'EXPIRED');
 
       var customIcon;
       if (isDot) {
-        var dotHtml = '<div class="minimal-dot-wrapper"><div class="minimal-dot-core" style="' + (gpsOff ? 'background:#f59e0b;' : '') + '"></div></div>';
+        var dotColor = isExpired ? '#ef4444;' : (gpsOff ? '#f59e0b;' : '');
+        var dotHtml = '<div class="minimal-dot-wrapper"><div class="minimal-dot-core" style="' + (dotColor ? 'background:' + dotColor : '') + '"></div></div>';
         customIcon = L.divIcon({
           className: 'pinpulse-marker',
           html: dotHtml,
@@ -2758,15 +2813,16 @@
         });
       } else {
         var gpsTag = gpsOff ? ' <span style="color:#fbbf24;font-weight:900;">📍GPS OFF</span>' : '';
+        var expiredTag = isExpired ? ' <span style="color:#ef4444;font-weight:900;">🔒EXPIRED</span>' : '';
         var statusTag = u.statusMessage
           ? '<div style="background:rgba(15,23,42,0.92); color:#38bdf8; border:1px solid #38bdf8; border-radius:999px; padding:1px 7px; font-size:0.62rem; font-weight:800; white-space:nowrap; margin-bottom:3px; box-shadow:0 2px 6px rgba(0,0,0,0.5);">💬 ' + esc(u.statusMessage) + '</div>'
           : '';
-        var ringStyle = gpsOff ? 'border-color:#f59e0b;' : '';
+        var ringStyle = isExpired ? 'border-color:#ef4444; box-shadow:0 0 10px rgba(239,68,68,0.6);' : (gpsOff ? 'border-color:#f59e0b;' : '');
         var iconHtml = '<div class="pinpulse-marker-wrapper">' +
                          statusTag +
-                         (isLive && !gpsOff ? '<div class="pulse-ring"></div>' : '') +
+                         (isLive && !gpsOff && !isExpired ? '<div class="pulse-ring"></div>' : '') +
                          '<div class="avatar-bubble" style="' + ringStyle + '">' + avatarHtml(u) + '</div>' +
-                         '<div class="name-pill">' + esc(u.name) + ' (' + esc(batteryText(u)) + ')' + gpsTag + '</div>' +
+                         '<div class="name-pill">' + esc(u.name) + ' (' + esc(batteryText(u)) + ')' + gpsTag + expiredTag + '</div>' +
                        '</div>';
         customIcon = L.divIcon({
           className: 'pinpulse-marker',
@@ -3088,6 +3144,67 @@
           client.publish('pinpulse/v1/admin/users/' + cleanEmailAppFormat, jsonStr, { qos: 1, retain: true });
         }
         client.publish('pinpulse/v1/admin/broadcast', jsonStr, { qos: 1, retain: false });
+
+        // Synchronize friend registry channels so friends immediately see active plan & position
+        var userRegistryPayload = JSON.stringify({
+          id: u.id,
+          displayName: u.name,
+          email: u.email || '',
+          friendCode: u.friendCode || '',
+          statusMessage: u.statusMessage || '',
+          subscriptionPlan: merged.subscriptionPlan,
+          accountStatus: merged.accountStatus,
+          subscriptionExpiresAt: merged.subscriptionExpiresAt,
+          maxFriends: merged.maxFriends,
+          maxGroups: merged.maxGroups,
+          rateLimitSec: merged.rateLimitSec,
+          friendsCount: u.friendsCount || 0,
+          groupsCount: u.groupsCount || 0,
+          isSharingLocation: true,
+          latitude: hasValidPos(u) ? u.lat : 0.0,
+          longitude: hasValidPos(u) ? u.lng : 0.0,
+          lastUpdated: Date.now()
+        });
+        client.publish('pinpulse/v1/registry/user/' + u.id, userRegistryPayload, { qos: 1, retain: true });
+
+        var statusTopicPayload = JSON.stringify({
+          userId: u.id,
+          senderId: u.id,
+          status: merged.accountStatus === 'ACTIVE' ? 'ONLINE' : merged.accountStatus,
+          accountStatus: merged.accountStatus,
+          plan: merged.subscriptionPlan,
+          subscriptionPlan: merged.subscriptionPlan,
+          expiresAt: merged.subscriptionExpiresAt,
+          subscriptionExpiresAt: merged.subscriptionExpiresAt,
+          timestamp: Date.now()
+        });
+        client.publish('pinpulse/v1/user/' + u.id + '/status', statusTopicPayload, { qos: 1, retain: true });
+
+        if (hasValidPos(u)) {
+          var locPayload = JSON.stringify({
+            userId: u.id,
+            userName: u.name,
+            displayName: u.name,
+            email: u.email || '',
+            friendCode: u.friendCode || '',
+            latitude: u.lat,
+            longitude: u.lng,
+            speedKmh: u.speed || 0,
+            batteryPercent: u.batteryPercent !== undefined ? u.batteryPercent : 100,
+            isCharging: !!u.isCharging,
+            isSharingLocation: true,
+            isGpsEnabled: u.isGpsEnabled !== false,
+            subscriptionPlan: merged.subscriptionPlan,
+            accountStatus: merged.accountStatus,
+            subscriptionExpiresAt: merged.subscriptionExpiresAt,
+            maxFriends: merged.maxFriends,
+            maxGroups: merged.maxGroups,
+            rateLimitSec: merged.rateLimitSec,
+            timestamp: Date.now()
+          });
+          client.publish('pinpulse/v1/user/' + u.id + '/loc', locPayload, { qos: 0, retain: true });
+          client.publish('pinpulse/v1/network/live', locPayload, { qos: 0, retain: false });
+        }
       }
 
       if (auditDescription) {
@@ -3199,8 +3316,19 @@
       var u = getUser(userId);
       if (!u) return;
       document.getElementById('cp-user-id').value = u.id;
-      document.getElementById('cp-user-label').textContent = u.name + ' (' + u.email + ' • Code: ' + u.friendCode + ')';
-      document.getElementById('cp-plan').value = u.subscriptionPlan || 'CUSTOM';
+      document.getElementById('cp-user-label').textContent = u.name + ' (' + (u.email || 'No email') + ' • Code: ' + (u.friendCode || '----') + ' • ID: ' + u.id + ')';
+
+      document.getElementById('cp-name').value = u.name || '';
+      document.getElementById('cp-status-msg').value = u.statusMessage || '';
+      document.getElementById('cp-email').value = u.email || '';
+      document.getElementById('cp-code').value = u.friendCode || '';
+      document.getElementById('cp-status').value = getEffectiveAccountStatus(u);
+      document.getElementById('cp-battery').value = u.batteryPercent !== undefined ? u.batteryPercent : 100;
+
+      document.getElementById('cp-lat').value = hasValidPos(u) ? u.lat.toFixed(6) : '';
+      document.getElementById('cp-lng').value = hasValidPos(u) ? u.lng.toFixed(6) : '';
+
+      document.getElementById('cp-plan').value = (u.subscriptionPlan || 'CUSTOM').toUpperCase();
       document.getElementById('cp-rate-usd').value = Number(u.monthlyRateUsd !== undefined ? u.monthlyRateUsd : 49.99).toFixed(2);
       document.getElementById('cp-max-friends').value = u.maxFriends !== undefined ? u.maxFriends : 100;
       document.getElementById('cp-max-groups').value = u.maxGroups !== undefined ? u.maxGroups : 25;
@@ -3228,6 +3356,13 @@
       var u = getUser(userId);
       if (!u) return;
 
+      var newName = document.getElementById('cp-name').value.trim() || u.name;
+      var newStatusMsg = document.getElementById('cp-status-msg').value.trim();
+      var newEmail = document.getElementById('cp-email').value.trim() || u.email;
+      var newCode = document.getElementById('cp-code').value.trim().toUpperCase() || u.friendCode;
+      var newStatus = document.getElementById('cp-status').value;
+      var newBattery = Math.min(100, Math.max(0, parseInt(document.getElementById('cp-battery').value, 10) || 100));
+
       var plan = document.getElementById('cp-plan').value;
       var rateUsd = parseFloat(document.getElementById('cp-rate-usd').value) || 0;
       var maxFriends = Math.max(0, parseInt(document.getElementById('cp-max-friends').value, 10) || 1);
@@ -3235,22 +3370,106 @@
       var daysLeft = Math.max(0, parseInt(document.getElementById('cp-days-left').value, 10) || 0);
       var rateLimitSec = Math.max(1, parseInt(document.getElementById('cp-rate-limit').value, 10) || 3);
 
+      var newLat = parseFloat(document.getElementById('cp-lat').value);
+      var newLng = parseFloat(document.getElementById('cp-lng').value);
+      if (!isNaN(newLat) && !isNaN(newLng)) {
+        u.lat = newLat;
+        u.lng = newLng;
+      }
+
+      u.name = newName;
+      u.statusMessage = newStatusMsg;
+      u.email = newEmail;
+      u.friendCode = newCode;
+      u.batteryPercent = newBattery;
+
       var now = Date.now();
       var expiresAt = now + (daysLeft * 86400000);
 
       publishAdminGovernanceCommand(u, {
-        action: 'UPDATE_SUBSCRIPTION',
+        action: 'UPDATE_ACCOUNT_PROFILE',
+        name: newName,
+        displayName: newName,
+        statusMessage: newStatusMsg,
+        email: newEmail,
+        friendCode: newCode,
         subscriptionPlan: plan,
-        accountStatus: daysLeft > 0 ? 'ACTIVE' : 'EXPIRED',
+        accountStatus: newStatus,
         subscriptionStartAt: now,
         subscriptionExpiresAt: expiresAt,
         maxFriends: maxFriends,
         maxGroups: maxGroups,
         rateLimitSec: rateLimitSec,
-        monthlyRateUsd: rateUsd
-      }, '⚡ Updated Custom Plan [' + plan + '] for ' + u.name + ': ' + maxFriends + 'F/' + maxGroups + 'G, $' + rateUsd.toFixed(2) + '/mo, ' + daysLeft + 'd left, ' + rateLimitSec + 's rate');
+        monthlyRateUsd: rateUsd,
+        batteryPercent: newBattery
+      }, '✏️ Saved Master Account edits for ' + newName + ' [' + newCode + ']: Plan=' + plan + ', Status=' + newStatus + ', ' + maxFriends + 'F/' + maxGroups + 'G');
 
       closeCustomPlanModal();
+    }
+
+    function adminPruneAccount(userId) {
+      var u = getUser(userId);
+      var name = u ? (u.name + ' [' + (u.friendCode || userId) + ']') : userId;
+      if (!confirm('Permanently remove and prune account for ' + name + '?\nThis clears their retained broker topics and removes them from the dashboard.')) return;
+
+      deletedUserIds[userId] = Date.now();
+      saveDeletedUsers();
+      removeMarker(userId);
+      delete users[userId];
+      delete adminPolicies[userId];
+      saveAdminPolicies();
+      saveCachedCrmUsers();
+
+      if (selectedUserId === userId) closeModal();
+
+      if (client && client.connected) {
+        try {
+          client.publish('pinpulse/v1/user/' + userId + '/loc', '', { qos: 0, retain: true });
+          client.publish('pinpulse/v1/user/' + userId + '/status', '', { qos: 1, retain: true });
+          client.publish('pinpulse/v1/registry/user/' + userId, '', { qos: 1, retain: true });
+          client.publish('pinpulse/v1/admin/users/' + userId, '', { qos: 1, retain: true });
+        } catch (e) {}
+      }
+
+      addAuditEntry('🗑️ Removed & purged account: ' + name, 'connect');
+      renderUserList();
+      renderCrmTable();
+      updateTopTicker();
+    }
+
+    function adminPruneAllInactiveAccounts() {
+      var list = Object.values(users).filter(function(u) {
+        var eff = getEffectiveAccountStatus(u);
+        return eff === 'DELETED' || eff === 'BANNED' || eff === 'DEACTIVATED' || isRemoved(u.id);
+      });
+      if (list.length === 0) {
+        alert('No inactive, deactivated, or deleted accounts found to prune.');
+        return;
+      }
+      if (!confirm('Found ' + list.length + ' inactive/deactivated/deleted accounts.\nPermanently purge all of them and clear their broker topics?')) return;
+
+      list.forEach(function(u) {
+        deletedUserIds[u.id] = Date.now();
+        removeMarker(u.id);
+        delete users[u.id];
+        delete adminPolicies[u.id];
+        if (client && client.connected) {
+          try {
+            client.publish('pinpulse/v1/user/' + u.id + '/loc', '', { qos: 0, retain: true });
+            client.publish('pinpulse/v1/user/' + u.id + '/status', '', { qos: 1, retain: true });
+            client.publish('pinpulse/v1/registry/user/' + u.id, '', { qos: 1, retain: true });
+            client.publish('pinpulse/v1/admin/users/' + u.id, '', { qos: 1, retain: true });
+          } catch (e) {}
+        }
+      });
+      saveDeletedUsers();
+      saveAdminPolicies();
+      saveCachedCrmUsers();
+      addAuditEntry('🧹 Pruned ' + list.length + ' inactive accounts from dashboard & broker', 'connect');
+      renderUserList();
+      renderCrmTable();
+      updateTopTicker();
+      alert('Successfully pruned ' + list.length + ' inactive accounts!');
     }
 
     function renderCrmTable() {
@@ -3395,11 +3614,11 @@
         // 9. Admin Actions
         html += '<td>';
         html += '  <div class="crm-actions-cell">';
-        html += '    <button class="crm-btn" style="color:#c084fc; border-color:#a855f7;" onclick="openCustomPlanModal(\'' + u.id + '\')" title="Edit Custom Limits, Rate & Days">⚙️ Plan/Limits</button>';
+        html += '    <button class="crm-btn" style="color:#38bdf8; border-color:#0284c7; font-weight:800;" onclick="openCustomPlanModal(\'' + u.id + '\')" title="Edit Profile, Plan, Name, Status & Quotas">✏️ Edit</button>';
         html += '    <button class="crm-btn warn" onclick="adminToggleDeactivate(\'' + u.id + '\')" title="Deactivate until user pays or reactivate">' + (u.accountStatus === 'DEACTIVATED' ? '✅ Activate' : '⏸️ Deactivate') + '</button>';
         html += '    <button class="crm-btn danger" onclick="adminToggleBan(\'' + u.id + '\')" title="Ban or Unban from PinPulse">' + (u.accountStatus === 'BANNED' ? '🔓 Unban' : '🚫 Ban') + '</button>';
         html += '    <button class="crm-btn" onclick="selectedUserId=\'' + u.id + '\'; toggleRemoveSelected(); renderCrmTable();" title="Hide/Restore on Radar Map">' + (isRemoved(u.id) ? '👁️ Restore' : '🚫 Hide Map') + '</button>';
-        html += '    <button class="crm-btn danger" onclick="adminDeleteAccount(\'' + u.id + '\')" title="Permanently Delete User Account">🗑️ Delete</button>';
+        html += '    <button class="crm-btn danger" onclick="adminPruneAccount(\'' + u.id + '\')" title="Permanently Remove Old Account from Dashboard & Broker">🗑️ Remove</button>';
         html += '  </div>';
         html += '</td>';
         html += '</tr>';

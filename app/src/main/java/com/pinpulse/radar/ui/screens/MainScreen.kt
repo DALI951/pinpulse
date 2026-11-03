@@ -112,6 +112,23 @@ fun MainScreen(
     val isSirenActive by com.pinpulse.radar.util.SirenHelper.isSirenActive.collectAsState()
     val isSirenPinDialogOpen by viewModel.isSirenPinDialogOpen.collectAsState()
     val showSubscriptionDialog by viewModel.showSubscriptionDialog.collectAsState()
+    val showUpgradePlanDialog by viewModel.showUpgradePlanDialog.collectAsState()
+    val showPrivacyPolicyDialog by viewModel.showPrivacyPolicyDialog.collectAsState()
+
+    val prefs = remember { com.pinpulse.radar.data.AppPreferences(context) }
+    var hasAcceptedPrivacy by remember { mutableStateOf(prefs.hasAcceptedPrivacyPolicy) }
+
+    if (!hasAcceptedPrivacy) {
+        PrivacyPolicyDialog(
+            isMandatoryAcceptance = true,
+            onAccept = {
+                prefs.hasAcceptedPrivacyPolicy = true
+                hasAcceptedPrivacy = true
+            },
+            onDismiss = {}
+        )
+        return
+    }
 
     var activeTab by remember { mutableStateOf("map") } // "map", "friends", "groups"
     var showProfileDialog by remember { mutableStateOf(false) }
@@ -320,16 +337,6 @@ fun MainScreen(
                 alert = activeAlert,
                 onDismiss = { viewModel.dismissAlert() }
             )
-
-            // Active Subscription Plan & Free Days Countdown Bar (visible to every user on app open)
-            if (meUser != null) {
-                SubscriptionStatusBanner(
-                    user = meUser,
-                    friendsCount = friends.size,
-                    groupsCount = groups.size,
-                    onClick = { viewModel.openSubscriptionDialog() }
-                )
-            }
 
             // 1-Tap Native Turn On Location (GPS) Banner when Phone GPS Switch is OFF
             if (!isGpsSwitchOn) {
@@ -755,6 +762,23 @@ fun MainScreen(
                 friendsCount = friends.size,
                 groupsCount = groups.size,
                 onDismiss = { viewModel.closeSubscriptionDialog() }
+            )
+        }
+
+        // Upgrade Plan & Payment Gateway Placeholder Dialog
+        if (showUpgradePlanDialog) {
+            UpgradePlanDialog(
+                currentUser = currentUser,
+                onDismiss = { viewModel.closeUpgradePlanDialog() }
+            )
+        }
+
+        // Privacy Policy & Tracking Consent Dialog (Viewable anytime from Settings)
+        if (showPrivacyPolicyDialog) {
+            PrivacyPolicyDialog(
+                isMandatoryAcceptance = false,
+                onAccept = { viewModel.closePrivacyPolicyDialog() },
+                onDismiss = { viewModel.closePrivacyPolicyDialog() }
             )
         }
 

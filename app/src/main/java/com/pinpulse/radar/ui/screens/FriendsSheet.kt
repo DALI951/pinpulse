@@ -138,15 +138,6 @@ fun FriendsSheet(
     ) {
         item {
             Column(modifier = Modifier.fillMaxWidth()) {
-                if (currentUser != null) {
-                    SubscriptionStatusBanner(
-                        user = currentUser,
-                        friendsCount = friends.size,
-                        groupsCount = viewModel.groups.value.size,
-                        onClick = { viewModel.openSubscriptionDialog() },
-                        modifier = Modifier.padding(bottom = 10.dp)
-                    )
-                }
                 // My Friend Code Card
                 Card(
                     colors = CardDefaults.cardColors(containerColor = Color(0xFF131D2E)),

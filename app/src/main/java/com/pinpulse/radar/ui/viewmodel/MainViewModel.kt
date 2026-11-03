@@ -80,6 +80,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _activeAlert = MutableStateFlow<AlertMessage?>(null)
     val activeAlert: StateFlow<AlertMessage?> = _activeAlert.asStateFlow()
+    private var alertDismissJob: Job? = null
+
+    fun postAlert(alert: AlertMessage, autoDismissMs: Long = 6000L) {
+        alertDismissJob?.cancel()
+        _activeAlert.value = alert
+        if (autoDismissMs > 0L) {
+            alertDismissJob = viewModelScope.launch {
+                delay(autoDismissMs)
+                if (_activeAlert.value?.id == alert.id) {
+                    _activeAlert.value = null
+                }
+            }
+        }
+    }
 
     private val _isSirenPinDialogOpen = MutableStateFlow(false)
     val isSirenPinDialogOpen: StateFlow<Boolean> = _isSirenPinDialogOpen.asStateFlow()
@@ -93,6 +107,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun closeSubscriptionDialog() {
         _showSubscriptionDialog.value = false
+    }
+
+    private val _showPrivacyPolicyDialog = MutableStateFlow(false)
+    val showPrivacyPolicyDialog: StateFlow<Boolean> = _showPrivacyPolicyDialog.asStateFlow()
+
+    fun openPrivacyPolicyDialog() {
+        _showPrivacyPolicyDialog.value = true
+    }
+
+    fun closePrivacyPolicyDialog() {
+        _showPrivacyPolicyDialog.value = false
+    }
+
+    private val _showUpgradePlanDialog = MutableStateFlow(false)
+    val showUpgradePlanDialog: StateFlow<Boolean> = _showUpgradePlanDialog.asStateFlow()
+
+    fun openUpgradePlanDialog() {
+        _showUpgradePlanDialog.value = true
+    }
+
+    fun closeUpgradePlanDialog() {
+        _showUpgradePlanDialog.value = false
     }
 
     val updateState: StateFlow<UpdateState> = UpdateManager.updateState
@@ -444,7 +480,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 isGpsEnabled = packet.isGpsEnabled,
                 lastUpdated = packet.timestamp,
                 subscriptionPlan = packet.subscriptionPlan.ifBlank { existing.subscriptionPlan },
-                accountStatus = packet.accountStatus.ifBlank { existing.accountStatus }
+                accountStatus = packet.accountStatus.ifBlank { existing.accountStatus },
+                subscriptionExpiresAt = if (packet.subscriptionExpiresAt > 0L) packet.subscriptionExpiresAt else existing.subscriptionExpiresAt,
+                maxFriends = if (packet.maxFriends > 0) packet.maxFriends else existing.maxFriends,
+                maxGroups = if (packet.maxGroups >= 0) packet.maxGroups else existing.maxGroups,
+                rateLimitSec = if (packet.rateLimitSec > 0) packet.rateLimitSec else existing.rateLimitSec
             )
             currentFriends[index] = updated
             prefs.saveFriends(currentFriends)
@@ -477,7 +517,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 isGpsEnabled = packet.isGpsEnabled,
                 lastUpdated = packet.timestamp,
                 subscriptionPlan = packet.subscriptionPlan.ifBlank { prev?.subscriptionPlan ?: "DEMO" },
-                accountStatus = packet.accountStatus.ifBlank { prev?.accountStatus ?: "ACTIVE" }
+                accountStatus = packet.accountStatus.ifBlank { prev?.accountStatus ?: "ACTIVE" },
+                subscriptionExpiresAt = if (packet.subscriptionExpiresAt > 0L) packet.subscriptionExpiresAt else (prev?.subscriptionExpiresAt ?: (System.currentTimeMillis() + 7L * 24L * 3600L * 1000L)),
+                maxFriends = if (packet.maxFriends > 0) packet.maxFriends else (prev?.maxFriends ?: 1),
+                maxGroups = if (packet.maxGroups >= 0) packet.maxGroups else (prev?.maxGroups ?: 0),
+                rateLimitSec = if (packet.rateLimitSec > 0) packet.rateLimitSec else (prev?.rateLimitSec ?: 3)
             )
             // Update group members map only - NEVER add to friends list!
             _groupMembers.value = _groupMembers.value + (packet.userId to memberUser)
@@ -658,18 +702,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         prefs.removeGroup(groupId)
                         syncCloudBackup()
                     }
-                    _activeAlert.value = AlertMessage(
+                    postAlert(AlertMessage(
                         senderId = "system",
                         senderName = "Group Leader",
                         type = "KICKED",
                         message = "You were removed from the group${if (targetGroup != null) " \"${targetGroup.name}\"" else ""}."
-                    )
+                    ), autoDismissMs = 6000L)
                 }
             } else if (topic.endsWith("/status")) {
                 try {
                     val jsonMap = gson.fromJson(payload, Map::class.java)
                     val uid = jsonMap["userId"]?.toString() ?: jsonMap["senderId"]?.toString() ?: ""
                     val status = jsonMap["status"]?.toString() ?: ""
+                    val newPlan = jsonMap["plan"]?.toString() ?: jsonMap["subscriptionPlan"]?.toString() ?: ""
+                    val newAccountStatus = jsonMap["accountStatus"]?.toString() ?: (if (status.uppercase() in listOf("ACTIVE", "EXPIRED", "DEACTIVATED", "BANNED")) status.uppercase() else "")
+                    val newExpiresAt = (jsonMap["expiresAt"] as? Number)?.toLong() ?: (jsonMap["subscriptionExpiresAt"] as? Number)?.toLong() ?: 0L
                     if (uid.isNotBlank()) {
                         val currentFriends = prefs.loadFriends().toMutableList()
                         val idx = currentFriends.indexOfFirst { it.id == uid }
@@ -678,13 +725,73 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             val isOnline = status.equals("ONLINE", ignoreCase = true)
                             val updated = f.copy(
                                 isSharingLocation = if (isOnline) true else f.isSharingLocation,
-                                lastUpdated = if (isOnline) System.currentTimeMillis() else f.lastUpdated
+                                lastUpdated = if (isOnline) System.currentTimeMillis() else f.lastUpdated,
+                                subscriptionPlan = if (newPlan.isNotBlank()) newPlan else f.subscriptionPlan,
+                                accountStatus = if (newAccountStatus.isNotBlank()) newAccountStatus else f.accountStatus,
+                                subscriptionExpiresAt = if (newExpiresAt > 0L) newExpiresAt else f.subscriptionExpiresAt
                             )
                             currentFriends[idx] = updated
                             prefs.saveFriends(currentFriends)
+                            if (_selectedPerson.value?.id == uid) {
+                                _selectedPerson.value = updated
+                            }
                         }
                     }
                 } catch (e: Exception) {}
+            } else if (topic.contains("/registry/user/")) {
+                try {
+                    val regUser = gson.fromJson(payload, User::class.java)?.sanitize()
+                    if (regUser != null && regUser.id.isNotBlank()) {
+                        realtime.registerKnownUser(regUser)
+                        val currentFriends = prefs.loadFriends().toMutableList()
+                        val idx = currentFriends.indexOfFirst { it.id == regUser.id }
+                        if (idx >= 0) {
+                            val f = currentFriends[idx]
+                            val updated = regUser.copy(
+                                latitude = if (regUser.latitude != 0.0) regUser.latitude else f.latitude,
+                                longitude = if (regUser.longitude != 0.0) regUser.longitude else f.longitude,
+                                lastUpdated = if (regUser.lastUpdated > 0) regUser.lastUpdated else System.currentTimeMillis()
+                            )
+                            currentFriends[idx] = updated
+                            prefs.saveFriends(currentFriends)
+                            if (_selectedPerson.value?.id == regUser.id) {
+                                _selectedPerson.value = updated
+                            }
+                        }
+                    }
+                } catch (_: Exception) {}
+            } else if (topic.contains("/admin/")) {
+                try {
+                    val obj = org.json.JSONObject(payload)
+                    val targetId = obj.optString("targetUserId", obj.optString("userId", "")).trim()
+                    val newPlan = obj.optString("subscriptionPlan", "").uppercase().trim()
+                    val newStatus = obj.optString("accountStatus", "").uppercase().trim()
+                    val newExpiresAt = when {
+                        obj.optBoolean("isLifetime", false) -> 4102444800000L
+                        obj.has("subscriptionExpiresAt") && obj.optLong("subscriptionExpiresAt", 0L) > 0L ->
+                            obj.optLong("subscriptionExpiresAt")
+                        obj.has("daysRemaining") ->
+                            System.currentTimeMillis() + (obj.optDouble("daysRemaining", 7.0) * 86_400_000.0).toLong()
+                        else -> 0L
+                    }
+                    if (targetId.isNotBlank()) {
+                        val currentFriends = prefs.loadFriends().toMutableList()
+                        val idx = currentFriends.indexOfFirst { it.id == targetId }
+                        if (idx >= 0) {
+                            val f = currentFriends[idx]
+                            val updated = f.copy(
+                                subscriptionPlan = if (newPlan.isNotBlank()) newPlan else f.subscriptionPlan,
+                                accountStatus = if (newStatus.isNotBlank()) newStatus else f.accountStatus,
+                                subscriptionExpiresAt = if (newExpiresAt > 0L) newExpiresAt else f.subscriptionExpiresAt
+                            )
+                            currentFriends[idx] = updated
+                            prefs.saveFriends(currentFriends)
+                            if (_selectedPerson.value?.id == targetId) {
+                                _selectedPerson.value = updated
+                            }
+                        }
+                    }
+                } catch (_: Exception) {}
             }
         } catch (e: Exception) {
             Log.e("MainViewModel", "Error parsing raw message: ${e.message}")
@@ -990,24 +1097,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         val callerName = me?.displayName ?: "Friend"
         realtime.sendRingCommand(targetUser.id, targetUser.friendCode, callerName)
-        _activeAlert.value = AlertMessage(
+        postAlert(AlertMessage(
             senderId = me?.id ?: "",
             senderName = callerName,
             type = "RING_SENT",
             message = "🔊 Siren alert sent to ${targetUser.displayName}'s phone!"
-        )
+        ), autoDismissMs = 6000L)
     }
 
     fun stopPersonPhone(targetUser: User) {
         val me = prefs.loadCurrentUser()
         val callerName = me?.displayName ?: "Friend"
         realtime.sendStopRingCommand(targetUser.id, targetUser.friendCode, callerName)
-        _activeAlert.value = AlertMessage(
+        postAlert(AlertMessage(
             senderId = me?.id ?: "",
             senderName = callerName,
             type = "STOP_RING_SENT",
             message = "🛑 Remote stop signal sent to ${targetUser.displayName}'s phone!"
-        )
+        ), autoDismissMs = 5000L)
     }
 
     /**
@@ -1069,12 +1176,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         realtime.publish("pinpulse/v1/alerts/broadcast", sosJson, qosLevel = 1)
 
         // 5. Show local confirmation banner
-        _activeAlert.value = AlertMessage(
+        postAlert(AlertMessage(
             senderId = "system",
             senderName = "SOS Dispatched",
             type = "SOS_SENT",
             message = "🆘 Emergency SOS Broadcast + Loud Siren sent to all friends & groups with your coordinates and Google Maps link!"
-        )
+        ), autoDismissMs = 12000L)
     }
 
     // --- Subscription Plan Quotas & Enforcement ---
@@ -1142,12 +1249,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             realtime.publishUserRegistry(updatedMe)
             if (trimmed) {
                 syncCloudBackup()
-                _activeAlert.value = AlertMessage(
+                postAlert(AlertMessage(
                     senderId = "system",
                     senderName = "Plan Quota Enforced",
                     type = "PLAN_LIMIT",
                     message = "🔒 Your ${me.planDisplayName} allows up to $maxF friend${if (maxF == 1) "" else "s"} and $maxG group${if (maxG == 1) "" else "s"}. Excess entries were removed. Upgrade to add more!"
-                )
+                ), autoDismissMs = 7000L)
             }
         }
     }
@@ -1159,22 +1266,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun cutOffExpiredOrLockedAccount() {
         val me = prefs.loadCurrentUser() ?: return
-        LocationTrackingService.stop(app)
-
-        realtime.publishRetained("pinpulse/v1/user/${me.id}/loc", "")
-        val offlinePayload = gson.toJson(mapOf(
-            "type" to "PHONE_OFFLINE",
-            "status" to "OFFLINE",
+        val isHardBlocked = me.accountStatus in listOf("BANNED", "DEACTIVATED", "DELETED")
+        if (isHardBlocked) {
+            LocationTrackingService.stop(app)
+            realtime.publishRetained("pinpulse/v1/user/${me.id}/loc", "")
+        }
+        val statusPayload = gson.toJson(mapOf(
+            "type" to "ACCOUNT_CUT_OFF",
+            "status" to "EXPIRED",
             "userId" to me.id,
             "accountStatus" to if (me.isSubscriptionExpired) "EXPIRED" else me.accountStatus,
-            "isGpsEnabled" to false,
-            "isSharingLocation" to false,
+            "isGpsEnabled" to me.isGpsEnabled,
+            "isSharingLocation" to true,
             "statusMessage" to "🔒 Plan Expired / Cut Off",
             "timestamp" to System.currentTimeMillis()
         ))
-        realtime.publishRetained("pinpulse/v1/user/${me.id}/status", offlinePayload, qosLevel = 1)
-        realtime.publish("pinpulse/v1/user/${me.id}/status", offlinePayload, qosLevel = 1)
-        realtime.publish("pinpulse/v1/network/live", offlinePayload, qosLevel = 0)
+        realtime.publishRetained("pinpulse/v1/user/${me.id}/status", statusPayload, qosLevel = 1)
+        realtime.publish("pinpulse/v1/user/${me.id}/status", statusPayload, qosLevel = 1)
+        realtime.publish("pinpulse/v1/network/live", statusPayload, qosLevel = 0)
     }
 
     fun canAddMoreFriends(): Pair<Boolean, String> {
@@ -1218,13 +1327,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun notifyPlanLimitBlocked(reason: String) {
-        _activeAlert.value = AlertMessage(
+        postAlert(AlertMessage(
             senderId = "system",
             senderName = "Plan Limit Reached",
             type = "PLAN_LIMIT",
             message = "🔒 $reason"
-        )
-        _showSubscriptionDialog.value = true
+        ), autoDismissMs = 7000L)
+        _showUpgradePlanDialog.value = true
     }
 
     fun setSelfMarkerMode(mode: String) {
@@ -1450,12 +1559,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } else {
                 "Requested friend (${found.displayName}) is out of limit (${found.friendsCount}/${found.maxFriends} friends on ${found.planDisplayName}). Tell them to upgrade their plan!"
             }
-            _activeAlert.value = AlertMessage(
+            postAlert(AlertMessage(
                 senderId = "system",
                 senderName = "Friend Request Blocked",
                 type = "FRIEND_LIMIT_REACHED",
                 message = "🔒 $reason"
-            )
+            ), autoDismissMs = 7000L)
             return
         }
 

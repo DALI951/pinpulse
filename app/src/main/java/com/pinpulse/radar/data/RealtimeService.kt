@@ -365,8 +365,7 @@ class RealtimeService private constructor(private val context: Context) {
 
     fun publishLocation(packet: LocationPacket, force: Boolean = false) {
         val statusUpper = packet.accountStatus.uppercase()
-        val isExpired = statusUpper == "EXPIRED" || (packet.subscriptionExpiresAt in 1 until System.currentTimeMillis() && packet.subscriptionExpiresAt < 3_000_000_000_000L)
-        if (!force && (statusUpper == "BANNED" || statusUpper == "DEACTIVATED" || statusUpper == "DELETED" || isExpired)) {
+        if (!force && (statusUpper == "BANNED" || statusUpper == "DEACTIVATED" || statusUpper == "DELETED")) {
             return
         }
         val rateSec = packet.rateLimitSec.coerceIn(1, 300)
@@ -688,7 +687,30 @@ class RealtimeService private constructor(private val context: Context) {
                     targetEmail.equals(me.email.trim().lowercase().replace(Regex("[^a-z0-9]"), "_"), ignoreCase = true)
                 ))
 
-            if (!matchesMe) return
+            if (!matchesMe) {
+                if (targetId.isNotBlank()) {
+                    val existing = registeredUsersMap[targetId]
+                    if (existing != null) {
+                        val newStatus = obj.optString("accountStatus", existing.accountStatus).uppercase().trim()
+                        val newPlan = obj.optString("subscriptionPlan", existing.subscriptionPlan).uppercase().trim().ifBlank { existing.subscriptionPlan }
+                        val newExpiresAt = when {
+                            obj.optBoolean("isLifetime", false) -> 4102444800000L
+                            obj.has("subscriptionExpiresAt") && obj.optLong("subscriptionExpiresAt", 0L) > 0L ->
+                                obj.optLong("subscriptionExpiresAt")
+                            obj.has("daysRemaining") ->
+                                System.currentTimeMillis() + (obj.optDouble("daysRemaining", 7.0) * 86_400_000.0).toLong()
+                            else -> existing.subscriptionExpiresAt
+                        }
+                        val updatedTarget = existing.copy(
+                            subscriptionPlan = newPlan,
+                            accountStatus = newStatus,
+                            subscriptionExpiresAt = newExpiresAt
+                        ).sanitize()
+                        registerKnownUser(updatedTarget)
+                    }
+                }
+                return
+            }
 
             val newStatus = obj.optString("accountStatus", me.accountStatus).uppercase().trim()
             if (newStatus == "DELETED") {

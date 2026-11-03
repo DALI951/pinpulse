@@ -118,15 +118,6 @@ fun GroupsSheet(
     ) {
         item {
             Column(modifier = Modifier.fillMaxWidth()) {
-                if (currentUser != null) {
-                    SubscriptionStatusBanner(
-                        user = currentUser,
-                        friendsCount = friends.size,
-                        groupsCount = groups.size,
-                        onClick = { viewModel.openSubscriptionDialog() },
-                        modifier = Modifier.padding(bottom = 10.dp)
-                    )
-                }
                 if (isGroupLimitReached) {
                     Card(
                         colors = CardDefaults.cardColors(containerColor = Color(0xFF2A1215)),

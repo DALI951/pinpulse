@@ -234,6 +234,10 @@ class AppPreferences(context: Context) {
         get() = prefs.getBoolean("has_prompted_battery_exemption", false)
         set(value) = prefs.edit().putBoolean("has_prompted_battery_exemption", value).apply()
 
+    var hasAcceptedPrivacyPolicy: Boolean
+        get() = prefs.getBoolean("has_accepted_privacy_policy", false)
+        set(value) = prefs.edit().putBoolean("has_accepted_privacy_policy", value).apply()
+
     fun getSecurityPin(): String? {
         val pin = prefs.getString("security_pin", null)
         return if (!pin.isNullOrBlank()) pin else null

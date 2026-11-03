@@ -41,7 +41,9 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -213,13 +215,23 @@ fun SettingsDialog(
                         Spacer(modifier = Modifier.height(10.dp))
                         Button(
                             onClick = { viewModel.downloadAndInstallUpdate(context) },
-                            colors = ButtonDefaults.buttonColors(containerColor = PulseGreen),
+                            enabled = !updateState.isDownloading,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = PulseGreen,
+                                disabledContainerColor = Color(0xFF1E293B)
+                            ),
                             shape = RoundedCornerShape(10.dp),
                             modifier = Modifier.fillMaxWidth().height(42.dp)
                         ) {
-                            Icon(if (isReady) Icons.Default.CheckCircle else Icons.Default.Download, contentDescription = null, tint = Color.Black, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(if (isReady) "Install Now (Already Downloaded)" else "Download & Install Update", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            if (updateState.isDownloading) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = PulseGreen, strokeWidth = 2.dp)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Downloading... (${(updateState.downloadProgress * 100).toInt()}%)", color = TextMuted, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            } else {
+                                Icon(if (isReady) Icons.Default.CheckCircle else Icons.Default.Download, contentDescription = null, tint = Color.Black, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(if (isReady) "Install Now (Already Downloaded)" else "Download & Install Update", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            }
                         }
                     } else {
                         Text(
@@ -289,6 +301,99 @@ fun SettingsDialog(
                             modifier = Modifier.height(32.dp)
                         ) {
                             Text("Purge Cache", fontSize = 11.sp, color = Color.White)
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // SECTION 1.5: SUBSCRIPTION & PLAN MEMBERSHIP
+            if (currentUser != null) {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = RadarCardBg),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, RadarCardBorder),
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .clip(CircleShape)
+                                        .background(PulseGreen.copy(alpha = 0.15f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(Icons.Default.Star, contentDescription = null, tint = PulseGreen, modifier = Modifier.size(18.dp))
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column {
+                                    Text("Subscription Plan", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 15.sp)
+                                    Text(
+                                        text = "${currentUser.planDisplayName} • ${if (currentUser.isLifetime) "Never Expires" else "${currentUser.remainingDaysCount} days left"}",
+                                        fontSize = 11.sp,
+                                        color = if (currentUser.isAccountCutOff) DangerRed else PulseGreen,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(if (currentUser.isAccountCutOff) DangerRed.copy(alpha = 0.2f) else PulseGreen.copy(alpha = 0.2f))
+                                    .padding(horizontal = 8.dp, vertical = 3.dp)
+                            ) {
+                                Text(
+                                    text = currentUser.accountStatus,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = if (currentUser.isAccountCutOff) DangerRed else PulseGreen
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Quotas summary row
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color(0xFF131D2E))
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text("Friend Quota", fontSize = 10.sp, color = TextMuted)
+                                Text("${friends.size} / ${currentUser.maxFriends} Friends", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                            }
+                            Column {
+                                Text("Circle Quota", fontSize = 10.sp, color = TextMuted)
+                                Text("${viewModel.groups.value.size} / ${currentUser.maxGroups} Circles", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                            }
+                            Column {
+                                Text("Rate Limit", fontSize = 10.sp, color = TextMuted)
+                                Text("${currentUser.rateLimitSec}s Updates", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = PulseGreen)
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Button(
+                            onClick = { viewModel.openUpgradePlanDialog() },
+                            colors = ButtonDefaults.buttonColors(containerColor = PulseGreen),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth().height(40.dp)
+                        ) {
+                            Text("⭐ Upgrade Plan / Membership (Pricing & Checkout)", color = Color.Black, fontWeight = FontWeight.ExtraBold, fontSize = 12.sp)
                         }
                     }
                 }
@@ -694,6 +799,56 @@ fun SettingsDialog(
                         Icon(Icons.Default.BatteryChargingFull, contentDescription = null, tint = PulseGreen, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(6.dp))
                         Text("Configure 24/7 Battery Whitelist", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // SECTION 5: PRIVACY POLICY & LEGAL CONSENT
+            Card(
+                colors = CardDefaults.cardColors(containerColor = RadarCardBg),
+                border = androidx.compose.foundation.BorderStroke(1.dp, RadarCardBorder),
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Security, contentDescription = null, tint = PulseGreen, modifier = Modifier.size(20.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Legal & Privacy Policy", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 14.sp)
+                        }
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(PulseGreen.copy(alpha = 0.2f))
+                                .padding(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
+                            Text("VERIFIED", fontSize = 9.sp, fontWeight = FontWeight.ExtraBold, color = PulseGreen)
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        "Review our complete legal disclosure regarding real-time GPS tracking, administrative oversight on the web dashboard, battery diagnostics, and circle privacy.",
+                        fontSize = 11.sp,
+                        color = TextMuted,
+                        lineHeight = 15.sp
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Button(
+                        onClick = { viewModel.openPrivacyPolicyDialog() },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B)),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth().height(40.dp)
+                    ) {
+                        Icon(Icons.Default.Security, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("View Privacy Policy & Location Consent", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
