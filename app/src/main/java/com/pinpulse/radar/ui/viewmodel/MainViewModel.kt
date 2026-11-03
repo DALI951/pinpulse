@@ -172,12 +172,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // Auto-prune old installed APKs from previous updates (keeps pending update APKs safe!)
         UpdateManager.cleanupOldInstalledApks(app)
 
-        // Auto-heal any friends corrupted by legacy offline alerts
+        // Auto-heal any friends corrupted by legacy offline alerts and strictly enforce plan quotas (e.g. Demo = 1 friend max)
         val savedFriends = prefs.loadFriends()
         if (savedFriends.any { !it.isSharingLocation }) {
             val repaired = savedFriends.map { it.copy(isSharingLocation = true) }
             prefs.saveFriends(repaired)
         }
+        enforcePlanQuotasAndTrimExcess()
 
         // Observe realtime location packets
         viewModelScope.launch {
@@ -190,12 +191,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        // Record our own 15-minute movement breadcrumb trail as currentUser coordinates update
+        // Record our own 15-minute movement breadcrumb trail & enforce plan quotas whenever currentUser updates
         viewModelScope.launch {
             currentUser.collect { me ->
                 try {
-                    if (me != null && (me.latitude != 0.0 || me.longitude != 0.0)) {
-                        recordTrailPoint(me.id, me.latitude, me.longitude, me.speedKmh, me.lastUpdated)
+                    if (me != null) {
+                        enforcePlanQuotasAndTrimExcess()
+                        if (me.latitude != 0.0 || me.longitude != 0.0) {
+                            recordTrailPoint(me.id, me.latitude, me.longitude, me.speedKmh, me.lastUpdated)
+                        }
                     }
                 } catch (t: Throwable) {
                     Log.e("MainViewModel", "Error recording self trail: ${t.message}")
@@ -220,7 +224,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     val isGroupMember = prefs.loadGroups().any { it.memberIds.contains(alert.senderId) }
                     val isSos = alert.type.contains("SOS", ignoreCase = true)
-                    val isSystemOrKick = alert.senderId == "system" || alert.type.contains("KICKED") || alert.type.contains("SIREN")
+                    val isSystemOrKick = alert.senderId == "system" || alert.type.contains("KICKED") || alert.type.contains("SIREN") || alert.type.contains("LIMIT")
                     if (!isFriend && !(isGroupMember && isSos) && !isSystemOrKick) {
                         // Non-friends MUST NEVER trigger alert notifications!
                         return@collect
@@ -502,44 +506,50 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     prefs.saveCurrentUser(mergedUser)
                 }
 
-                // Restore friends list
+                val maxF = (prefs.loadCurrentUser()?.maxFriends ?: 1).coerceAtLeast(0)
+                val maxG = (prefs.loadCurrentUser()?.maxGroups ?: 0).coerceAtLeast(0)
+
+                // Restore friends list (strictly capped to maxFriends!)
                 val friendsListType = object : com.google.gson.reflect.TypeToken<List<User>>() {}.type
                 val friendsJson = gson.toJson(jsonMap["friends"])
                 val restoredFriends = gson.fromJson<List<User>>(friendsJson, friendsListType)?.mapNotNull { it?.sanitize() }
                 if (!restoredFriends.isNullOrEmpty()) {
                     val currentFriends = prefs.loadFriends().toMutableList()
                     restoredFriends.forEach { rf ->
-                        if (rf.id.isNotBlank() && currentFriends.none { it.id == rf.id }) {
+                        if (rf.id.isNotBlank() && currentFriends.none { it.id == rf.id } && currentFriends.size < maxF) {
                             currentFriends.add(rf.copy(isSharingLocation = true))
                         }
                     }
-                    prefs.saveFriends(currentFriends)
-                    restoredFriends.forEach { f ->
+                    val cappedFriends = currentFriends.take(maxF)
+                    prefs.saveFriends(cappedFriends)
+                    cappedFriends.forEach { f ->
                         realtime.subscribe("pinpulse/v1/user/${f.id}/loc")
                         realtime.subscribe("pinpulse/v1/user/${f.id}/status")
                         realtime.subscribe("pinpulse/v1/registry/user/${f.id}")
                     }
                 }
 
-                // Restore groups list
+                // Restore groups list (strictly capped to maxGroups!)
                 val groupsListType = object : com.google.gson.reflect.TypeToken<List<Group>>() {}.type
                 val groupsJson = gson.toJson(jsonMap["groups"])
                 val restoredGroups = gson.fromJson<List<Group>>(groupsJson, groupsListType)?.mapNotNull { it?.sanitize() }
-                if (!restoredGroups.isNullOrEmpty()) {
+                if (!restoredGroups.isNullOrEmpty() && maxG > 0) {
                     val currentGroups = prefs.loadGroups().toMutableList()
                     val myId = prefs.loadCurrentUser()?.id ?: ""
                     restoredGroups.forEach { rg ->
-                        if (rg.id.isNotBlank() && currentGroups.none { it.id == rg.id || it.code.equals(rg.code, ignoreCase = true) }) {
+                        if (rg.id.isNotBlank() && currentGroups.none { it.id == rg.id || it.code.equals(rg.code, ignoreCase = true) } && currentGroups.size < maxG) {
                             currentGroups.add(rg)
                         }
                     }
-                    prefs.saveGroups(currentGroups)
-                    restoredGroups.forEach { g ->
+                    val cappedGroups = currentGroups.take(maxG)
+                    prefs.saveGroups(cappedGroups)
+                    cappedGroups.forEach { g ->
                         realtime.subscribe("pinpulse/v1/groups/${g.code}/info")
                         realtime.subscribe("pinpulse/v1/groups/${g.code}/events")
                         subscribeToGroupMembers(g, myId)
                     }
                 }
+                enforcePlanQuotasAndTrimExcess()
                 Log.d("MainViewModel", "Account restored from cloud backup for: ${restoredUser?.email}")
             } else if (payload.contains("\"type\":\"UNFRIEND\"")) {
                 // Mutual friend removal: remove this friend on our side too!
@@ -558,11 +568,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val friendJson = gson.toJson(jsonMap["friend"])
                 val friend = gson.fromJson(friendJson, User::class.java)?.sanitize()
                 if (friend != null && friend.id.isNotBlank()) {
-                    prefs.addOrUpdateFriend(friend.copy(isSharingLocation = true))
-                    realtime.subscribe("pinpulse/v1/user/${friend.id}/loc")
-                    realtime.subscribe("pinpulse/v1/user/${friend.id}/status")
-                    realtime.subscribe("pinpulse/v1/registry/user/${friend.id}")
-                    syncCloudBackup()
+                    val me = prefs.loadCurrentUser()
+                    val currentFriends = prefs.loadFriends()
+                    val maxAllowed = me?.maxFriends ?: 1
+                    val isAlready = currentFriends.any { it.id == friend.id }
+                    if (isAlready || currentFriends.size < maxAllowed) {
+                        prefs.addOrUpdateFriend(friend.copy(isSharingLocation = true))
+                        realtime.subscribe("pinpulse/v1/user/${friend.id}/loc")
+                        realtime.subscribe("pinpulse/v1/user/${friend.id}/status")
+                        realtime.subscribe("pinpulse/v1/registry/user/${friend.id}")
+                        syncCloudBackup()
+                    } else {
+                        // We already hit our limit before they accepted -> notify them and do not exceed limit
+                        if (me != null) {
+                            val unfriendJson = gson.toJson(mapOf("type" to "UNFRIEND", "fromUserId" to me.id))
+                            realtime.publish("pinpulse/v1/direct/${friend.id}", unfriendJson, qosLevel = 1)
+                        }
+                    }
                 }
             } else if (payload.contains("\"type\":\"JOIN_GROUP\"")) {
                 // Group members & Leader receive join event from a new member!
@@ -814,7 +836,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             friendsCount = friendsCount,
             groupsCount = groupsCount
         )
-        realtime.publishLocation(packet)
+        realtime.publishLocation(packet, force = true)
     }
 
     fun updateMyStatusMessage(status: String) {
@@ -866,7 +888,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             friendsCount = friendsCount,
             groupsCount = groupsCount
         )
-        realtime.publishLocation(packet)
+        realtime.publishLocation(packet, force = true)
+        val statusPayload = gson.toJson(mapOf(
+            "type" to "STATUS_MESSAGE_CHANGED",
+            "userId" to updated.id,
+            "statusMessage" to (cleanStatus ?: ""),
+            "isGpsEnabled" to gpsOn,
+            "timestamp" to now
+        ))
+        realtime.publishRetained("pinpulse/v1/user/${updated.id}/status", statusPayload, qosLevel = 1)
     }
 
     fun updatePersonalAvatar(uri: Uri, context: Context) {
@@ -1007,21 +1037,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // 1. Update our floating radar status bubble to SOS EMERGENCY
         updateMyStatusMessage("🆘 SOS EMERGENCY!")
 
-        // 2. Broadcast to all accepted friends
+        // 2. Broadcast to all accepted friends + trigger Emergency Siren, Vibration & System Notification!
         prefs.loadFriends().forEach { f ->
             if (f.id.isNotBlank()) {
                 realtime.publish("pinpulse/v1/alerts/${f.id}", sosJson, qosLevel = 1)
+                realtime.sendRingCommand(f.id, f.friendCode, "🆘 SOS EMERGENCY: ${me.displayName}")
             }
             if (f.friendCode.isNotBlank()) {
                 realtime.publish("pinpulse/v1/alerts/${f.friendCode.uppercase()}", sosJson, qosLevel = 1)
             }
         }
 
-        // 3. Broadcast to all group members & group channels
+        // 3. Broadcast to all group members & group channels + trigger Emergency Siren!
         val allGroupMemberIds = prefs.loadGroups().flatMap { it.memberIds }.distinct().filterNot { it == me.id }
         allGroupMemberIds.forEach { memberId ->
             if (memberId.isNotBlank()) {
                 realtime.publish("pinpulse/v1/alerts/$memberId", sosJson, qosLevel = 1)
+                realtime.sendRingCommand(memberId, "", "🆘 SOS EMERGENCY: ${me.displayName}")
             }
         }
 
@@ -1033,11 +1065,84 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             senderId = "system",
             senderName = "SOS Dispatched",
             type = "SOS_SENT",
-            message = "🆘 Emergency SOS Broadcast sent to all friends & groups with your coordinates and Google Maps link!"
+            message = "🆘 Emergency SOS Broadcast + Loud Siren sent to all friends & groups with your coordinates and Google Maps link!"
         )
     }
 
     // --- Subscription Plan Quotas & Enforcement ---
+
+    /**
+     * Strictly enforces the current user's subscription quotas (e.g., Demo = 1 Friend, 0 Groups).
+     * If the user has more friends or groups than their current plan allows (e.g. from before or after downgrade),
+     * excess friends and groups are automatically removed and `friendsCount` / `groupsCount` are synced to the registry.
+     */
+    fun enforcePlanQuotasAndTrimExcess() {
+        val me = prefs.loadCurrentUser() ?: return
+        val currentFriends = prefs.loadFriends()
+        val currentGroups = prefs.loadGroups()
+        var trimmed = false
+
+        val maxF = me.maxFriends.coerceAtLeast(0)
+        if (currentFriends.size > maxF) {
+            val keptFriends = currentFriends.take(maxF)
+            val removedFriends = currentFriends.drop(maxF)
+            prefs.saveFriends(keptFriends)
+            trimmed = true
+
+            // Notify removed friends so they also remove us from their list
+            removedFriends.forEach { rf ->
+                realtime.unsubscribe("pinpulse/v1/user/${rf.id}/loc")
+                val unfriendJson = gson.toJson(mapOf("type" to "UNFRIEND", "fromUserId" to me.id))
+                if (rf.friendCode.isNotBlank()) {
+                    realtime.publish("pinpulse/v1/code/${rf.friendCode}", unfriendJson, qosLevel = 1)
+                }
+                if (rf.id.isNotBlank()) {
+                    realtime.publish("pinpulse/v1/direct/${rf.id}", unfriendJson, qosLevel = 1)
+                }
+            }
+        }
+
+        val maxG = me.maxGroups.coerceAtLeast(0)
+        if (currentGroups.size > maxG) {
+            val keptGroups = currentGroups.take(maxG)
+            val removedGroups = currentGroups.drop(maxG)
+            prefs.saveGroups(keptGroups)
+            trimmed = true
+
+            removedGroups.forEach { rg ->
+                realtime.unsubscribe("pinpulse/v1/groups/${rg.code}/info")
+                realtime.unsubscribe("pinpulse/v1/groups/${rg.code}/events")
+            }
+        }
+
+        val finalFriendsCount = prefs.loadFriends().size
+        val finalGroupsCount = prefs.loadGroups().size
+
+        // Also clear pending friend requests if the user has already reached their friend limit
+        if (finalFriendsCount >= maxF && prefs.loadPendingRequests().isNotEmpty()) {
+            prefs.loadPendingRequests().forEach { req ->
+                prefs.removePendingRequest(req.id)
+            }
+        }
+
+        if (trimmed || me.friendsCount != finalFriendsCount || me.groupsCount != finalGroupsCount) {
+            val updatedMe = me.copy(
+                friendsCount = finalFriendsCount,
+                groupsCount = finalGroupsCount
+            )
+            prefs.saveCurrentUser(updatedMe)
+            realtime.publishUserRegistry(updatedMe)
+            if (trimmed) {
+                syncCloudBackup()
+                _activeAlert.value = AlertMessage(
+                    senderId = "system",
+                    senderName = "Plan Quota Enforced",
+                    type = "PLAN_LIMIT",
+                    message = "🔒 Your ${me.planDisplayName} allows up to $maxF friend${if (maxF == 1) "" else "s"} and $maxG group${if (maxG == 1) "" else "s"}. Excess entries were removed. Upgrade to add more!"
+                )
+            }
+        }
+    }
 
     fun canAddMoreFriends(): Pair<Boolean, String> {
         val me = prefs.loadCurrentUser() ?: return Pair(false, "Please sign in first.")
@@ -1305,6 +1410,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val actualIsEmail = isEmail || rawInput.contains("@")
         val found = if (actualIsEmail) lookupUserByEmail(rawInput) else lookupUserByCode(rawInput)
 
+        // Block sending a friend request if the requested friend has already reached their own plan limit!
+        if (found != null && (found.friendsCount >= found.maxFriends || found.isSubscriptionExpired)) {
+            _activeAlert.value = AlertMessage(
+                senderId = "system",
+                senderName = "Requested Friend Out of Limit",
+                type = "FRIEND_LIMIT_REACHED",
+                message = "🔒 Requested friend (${found.displayName}) is out of limit (${found.friendsCount}/${found.maxFriends} friends on ${found.planDisplayName}). Tell them to upgrade their plan!"
+            )
+            return
+        }
+
         val cleanCode = (found?.friendCode?.ifBlank { null } ?: if (!actualIsEmail) rawInput.uppercase() else "").uppercase()
         val targetUserId = found?.id ?: if (actualIsEmail) prefs.generateDeterministicUserId(rawInput) else cleanCode
         val targetEmail = found?.email?.ifBlank { null } ?: if (actualIsEmail) rawInput.lowercase() else ""
@@ -1343,6 +1459,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
         prefs.addOrUpdateFriend(newFriend)
         prefs.removePendingRequest(request.id)
+        enforcePlanQuotasAndTrimExcess()
 
         // Clear retained invites across all candidate topics
         if (request.toFriendCode.isNotBlank()) {
@@ -1363,10 +1480,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         realtime.subscribe("pinpulse/v1/registry/user/${newFriend.id}")
         syncCloudBackup()
 
+        val updatedMe = prefs.loadCurrentUser() ?: me
         // Broadcast acceptance packet back to requester with QoS 1 so they add us too!
         val payload = mapOf(
             "type" to "FRIEND_ACCEPTED",
-            "friend" to me
+            "friend" to updatedMe
         )
         val json = gson.toJson(payload)
         if (request.fromFriendCode.isNotBlank()) {
@@ -1396,6 +1514,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // Remove locally
         prefs.removeFriend(friendId)
         realtime.unsubscribe("pinpulse/v1/user/$friendId/loc")
+        enforcePlanQuotasAndTrimExcess()
         syncCloudBackup()
 
         // Broadcast mutual removal so they remove us immediately too

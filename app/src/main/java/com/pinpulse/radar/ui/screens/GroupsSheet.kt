@@ -99,6 +99,15 @@ fun GroupsSheet(
         targetMemberForLeaderAvatar = null
     }
 
+    val isGroupLimitReached = currentUser != null && (groups.size >= currentUser.maxGroups || currentUser.isSubscriptionExpired)
+
+    androidx.compose.runtime.LaunchedEffect(isGroupLimitReached) {
+        if (isGroupLimitReached) {
+            showCreateDialog = false
+            showJoinDialog = false
+        }
+    }
+
     LazyColumn(
         modifier = modifier
             .fillMaxWidth()
@@ -117,6 +126,25 @@ fun GroupsSheet(
                         onClick = { viewModel.openSubscriptionDialog() },
                         modifier = Modifier.padding(bottom = 10.dp)
                     )
+                }
+                if (isGroupLimitReached) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF2A1215)),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, DangerRed.copy(alpha = 0.6f)),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 10.dp)
+                            .clickable { viewModel.openSubscriptionDialog() }
+                    ) {
+                        Text(
+                            text = "🔒 Max groups reached (${groups.size}/${currentUser?.maxGroups ?: 0} on ${currentUser?.planDisplayName ?: "Demo"}). Upgrade to Family (2 Groups) or Business (10 Groups) to create or join groups!",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFFFCA5A5),
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                        )
+                    }
                 }
                 // Actions: Create Group & Join Group
                 Row(

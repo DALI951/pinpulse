@@ -1654,6 +1654,10 @@
             <div class="stat-val" id="m-sharing">Active</div>
           </div>
           <div class="stat-box" style="grid-column: span 2;">
+            <div class="stat-lbl">User Status Message</div>
+            <div class="stat-val" id="m-user-status-msg" style="font-size: 0.82rem; color: #38bdf8;">— No custom status set —</div>
+          </div>
+          <div class="stat-box" style="grid-column: span 2;">
             <div class="stat-lbl">Precise GPS Coordinates</div>
             <div class="stat-val" id="m-coords" style="font-size: 0.78rem;">36.806500, 10.181500</div>
           </div>
@@ -2090,7 +2094,8 @@
             rateLimitSec: u.rateLimitSec,
             monthlyRateUsd: u.monthlyRateUsd,
             friendsCount: u.friendsCount,
-            groupsCount: u.groupsCount
+            groupsCount: u.groupsCount,
+            statusMessage: u.statusMessage || ''
           };
         });
         localStorage.setItem(CRM_USERS_KEY, JSON.stringify(compact));
@@ -2591,7 +2596,8 @@
         rateLimitSec: uData.rateLimitSec || existing.rateLimitSec || 5,
         monthlyRateUsd: uData.monthlyRateUsd !== undefined ? uData.monthlyRateUsd : existing.monthlyRateUsd,
         friendsCount: friendsCount,
-        groupsCount: groupsCount
+        groupsCount: groupsCount,
+        statusMessage: (uData.statusMessage !== undefined ? uData.statusMessage : (existing.statusMessage || '')).trim()
       });
 
       if (!guardAgainstDuplicateAccount(candidateObj)) return;
@@ -2640,6 +2646,9 @@
       if (!data || !data.userId) return;
       var id = data.userId;
       if (users[id]) {
+        if (data.statusMessage !== undefined) {
+          users[id].statusMessage = String(data.statusMessage || '').trim();
+        }
         if (data.isGpsEnabled !== undefined) {
           users[id].isGpsEnabled = !!data.isGpsEnabled;
         }
@@ -2691,7 +2700,8 @@
         rateLimitSec: data.rateLimitSec || existing.rateLimitSec || 5,
         monthlyRateUsd: data.monthlyRateUsd !== undefined ? data.monthlyRateUsd : existing.monthlyRateUsd,
         friendsCount: data.friendsCount !== undefined ? data.friendsCount : (existing.friendsCount || 0),
-        groupsCount: data.groupsCount !== undefined ? data.groupsCount : (existing.groupsCount || 0)
+        groupsCount: data.groupsCount !== undefined ? data.groupsCount : (existing.groupsCount || 0),
+        statusMessage: (data.statusMessage !== undefined ? data.statusMessage : (existing.statusMessage || '')).trim()
       });
 
       if (!guardAgainstDuplicateAccount(candidateObj)) return;
@@ -2743,8 +2753,12 @@
         });
       } else {
         var gpsTag = gpsOff ? ' <span style="color:#fbbf24;font-weight:900;">📍GPS OFF</span>' : '';
+        var statusTag = u.statusMessage
+          ? '<div style="background:rgba(15,23,42,0.92); color:#38bdf8; border:1px solid #38bdf8; border-radius:999px; padding:1px 7px; font-size:0.62rem; font-weight:800; white-space:nowrap; margin-bottom:3px; box-shadow:0 2px 6px rgba(0,0,0,0.5);">💬 ' + esc(u.statusMessage) + '</div>'
+          : '';
         var ringStyle = gpsOff ? 'border-color:#f59e0b;' : '';
         var iconHtml = '<div class="pinpulse-marker-wrapper">' +
+                         statusTag +
                          (isLive && !gpsOff ? '<div class="pulse-ring"></div>' : '') +
                          '<div class="avatar-bubble" style="' + ringStyle + '">' + avatarHtml(u) + '</div>' +
                          '<div class="name-pill">' + esc(u.name) + ' (' + esc(batteryText(u)) + ')' + gpsTag + '</div>' +
@@ -2936,6 +2950,19 @@
         }
       }
 
+      var userMsgEl = document.getElementById('m-user-status-msg');
+      if (userMsgEl) {
+        if (u.statusMessage && u.statusMessage.trim()) {
+          userMsgEl.textContent = '💬 ' + u.statusMessage.trim();
+          userMsgEl.style.color = '#38bdf8';
+          userMsgEl.style.fontWeight = '800';
+        } else {
+          userMsgEl.textContent = '— No custom status set —';
+          userMsgEl.style.color = 'var(--text-muted)';
+          userMsgEl.style.fontWeight = '600';
+        }
+      }
+
       document.getElementById('m-coords').textContent = hasValidPos(u)
         ? (u.lat.toFixed(6) + ', ' + u.lng.toFixed(6) + (u.isGpsEnabled === false ? ' (Last Known • GPS OFF)' : ''))
         : 'Waiting for GPS fix...';
@@ -3012,8 +3039,11 @@
       };
 
       var merged = Object.assign({}, currentPol, policyPatch, {
+        userId: u.id,
         targetUserId: u.id,
+        friendCode: u.friendCode || '',
         targetFriendCode: u.friendCode || '',
+        email: u.email || '',
         targetEmail: u.email || '',
         updatedAt: Date.now()
       });
@@ -3042,11 +3072,15 @@
         var jsonStr = JSON.stringify(merged);
         client.publish('pinpulse/v1/admin/users/' + u.id, jsonStr, { qos: 1, retain: true });
         if (u.friendCode && u.friendCode !== '----') {
-          client.publish('pinpulse/v1/admin/users/' + u.friendCode, jsonStr, { qos: 1, retain: true });
+          var upperCode = u.friendCode.trim().toUpperCase();
+          client.publish('pinpulse/v1/admin/users/' + upperCode, jsonStr, { qos: 1, retain: true });
+          client.publish('pinpulse/v1/admin/users/' + upperCode.replace(/-/g, ''), jsonStr, { qos: 1, retain: true });
         }
         if (u.email && u.email.indexOf('@') !== -1) {
-          var cleanEmail = u.email.trim().toLowerCase().replace(/[^a-z0-9]/g, '_');
-          client.publish('pinpulse/v1/admin/users/' + cleanEmail, jsonStr, { qos: 1, retain: true });
+          var cleanEmailUnderscore = u.email.trim().toLowerCase().replace(/[^a-z0-9]/g, '_');
+          var cleanEmailAppFormat = u.email.trim().toLowerCase().replace('@', '_at_').replace(/\./g, '_dot_').replace(/[^a-z0-9_]/g, '');
+          client.publish('pinpulse/v1/admin/users/' + cleanEmailUnderscore, jsonStr, { qos: 1, retain: true });
+          client.publish('pinpulse/v1/admin/users/' + cleanEmailAppFormat, jsonStr, { qos: 1, retain: true });
         }
         client.publish('pinpulse/v1/admin/broadcast', jsonStr, { qos: 1, retain: false });
       }
@@ -3300,6 +3334,9 @@
         html += '<td>';
         html += '  <div>' + (isLive ? '<span style="color:var(--primary);font-weight:700;">● Online</span>' : '<span style="color:var(--text-muted);">○ Offline</span>') + ' • ' + gpsHtml + '</div>';
         html += '  <div style="font-size:0.7rem; color:var(--text-muted); margin-top:2px;">Bat: ' + esc(batteryText(u)) + ' • ' + esc(formatSpeed(u.speed)) + '</div>';
+        if (u.statusMessage) {
+          html += '  <div style="font-size:0.72rem; color:#38bdf8; font-weight:800; margin-top:3px;">💬 ' + esc(u.statusMessage) + '</div>';
+        }
         html += '</td>';
 
         // 3. Subscription Pack
@@ -3478,6 +3515,9 @@
         html += '      <span class="card-code">' + esc(u.friendCode) + '</span>';
         html += '    </div>';
         html += '    <div class="card-email">' + esc(u.email) + ' • <span style="color:#38bdf8;">' + esc(formatRemainingDays(u)) + '</span></div>';
+        if (u.statusMessage) {
+          html += '    <div style="font-size:0.72rem; color:#38bdf8; font-weight:800; margin-bottom:2px;">💬 ' + esc(u.statusMessage) + '</div>';
+        }
         html += '    <div class="card-telemetry">';
         html += '      <span style="color:' + (isLive ? 'var(--primary)' : 'var(--text-muted)') + ';">' + (isLive ? '● Live' : '○ Idle') + '</span>';
         if (u.isGpsEnabled === false) {

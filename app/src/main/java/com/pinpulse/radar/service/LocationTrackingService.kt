@@ -585,9 +585,9 @@ class LocationTrackingService : Service() {
         if (heartbeatJob?.isActive != true) {
             heartbeatJob = serviceScope.launch {
                 var tickCount = 0
+                var lastHeartbeatBroadcastRealtime = 0L
                 while (isActive) {
-                    val currentRateSec = (prefs.loadCurrentUser()?.rateLimitSec ?: 3).coerceIn(1, 300)
-                    delay(currentRateSec * 1000L)
+                    delay(1000L)
                     tickCount++
                     try {
                         ensureWakeAndWifiLocks()
@@ -601,36 +601,45 @@ class LocationTrackingService : Service() {
                                 continue
                             }
 
-                            if (tickCount % 4 == 0 && (SystemClock.elapsedRealtime() - lastLocationElapsedRealtime > 10_000L)) {
+                            val currentRateSec = user.rateLimitSec.coerceIn(1, 300)
+                            if (currentRateSec != lastRegisteredRateLimitSec && hasLocationPermission(this@LocationTrackingService)) {
+                                requestLocationUpdates()
+                            }
+
+                            val nowElapsed = SystemClock.elapsedRealtime()
+                            if (tickCount % 12 == 0 && (nowElapsed - lastLocationElapsedRealtime > 10_000L)) {
                                 pollBestAvailableLocation()
                             }
 
-                            if (tickCount % 15 == 0) {
+                            if (tickCount % 45 == 0) {
                                 scheduleWatchdogAlarm(this@LocationTrackingService, 60_000L)
                                 if (hasLocationPermission(this@LocationTrackingService)) {
                                     requestLocationUpdates()
                                 }
                             }
 
-                            if (user.latitude != 0.0 || user.longitude != 0.0) {
-                                val (batteryPct, isCharging) = getBatteryInfo(this@LocationTrackingService)
-                                val gpsOn = isSystemLocationEnabled()
-                                val now = System.currentTimeMillis()
-                                val friendsCount = prefs.loadFriends().size
-                                val groupsCount = prefs.loadGroups().size
-                                val updatedUser = user.copy(
-                                    batteryPercent = batteryPct,
-                                    isCharging = isCharging,
-                                    isSharingLocation = true,
-                                    isGpsEnabled = gpsOn,
-                                    friendsCount = friendsCount,
-                                    groupsCount = groupsCount,
-                                    lastUpdated = now
-                                )
-                                prefs.saveCurrentUser(updatedUser)
+                            if ((nowElapsed - lastHeartbeatBroadcastRealtime) >= (currentRateSec * 1000L)) {
+                                lastHeartbeatBroadcastRealtime = nowElapsed
+                                if (user.latitude != 0.0 || user.longitude != 0.0) {
+                                    val (batteryPct, isCharging) = getBatteryInfo(this@LocationTrackingService)
+                                    val gpsOn = isSystemLocationEnabled()
+                                    val now = System.currentTimeMillis()
+                                    val friendsCount = prefs.loadFriends().size
+                                    val groupsCount = prefs.loadGroups().size
+                                    val updatedUser = user.copy(
+                                        batteryPercent = batteryPct,
+                                        isCharging = isCharging,
+                                        isSharingLocation = true,
+                                        isGpsEnabled = gpsOn,
+                                        friendsCount = friendsCount,
+                                        groupsCount = groupsCount,
+                                        lastUpdated = now
+                                    )
+                                    prefs.saveCurrentUser(updatedUser)
 
-                                val packet = buildLocationPacket(updatedUser, gpsOn, now)
-                                realtimeService.publishLocation(packet)
+                                    val packet = buildLocationPacket(updatedUser, gpsOn, now)
+                                    realtimeService.publishLocation(packet)
+                                }
                             }
                         }
                     } catch (t: Throwable) {
@@ -851,14 +860,22 @@ class LocationTrackingService : Service() {
         realtimeService.publishLocation(packet)
     }
 
+    @Volatile
+    private var lastRegisteredRateLimitSec: Int = 0
+
     @SuppressLint("MissingPermission")
     private fun requestLocationUpdates() {
         if (!hasLocationPermission(this)) return
 
+        val rateSec = (prefs.loadCurrentUser()?.rateLimitSec ?: 3).coerceIn(1, 300)
+        lastRegisteredRateLimitSec = rateSec
+        val intervalMs = (rateSec * 1000L).coerceAtLeast(1000L)
+        val minIntervalMs = (intervalMs / 2).coerceAtLeast(800L)
+
         try {
-            val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 2500L)
-                .setMinUpdateIntervalMillis(1500L)
-                .setMaxUpdateDelayMillis(3000L)
+            val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, intervalMs)
+                .setMinUpdateIntervalMillis(minIntervalMs)
+                .setMaxUpdateDelayMillis(intervalMs + 1000L)
                 .setMinUpdateDistanceMeters(0f)
                 .setWaitForAccurateLocation(false)
                 .build()
@@ -870,7 +887,7 @@ class LocationTrackingService : Service() {
                 Looper.getMainLooper()
             )
             isListenersRegistered = true
-            Log.d(TAG, "FusedLocation updates registered (2.5s interval)")
+            Log.d(TAG, "FusedLocation updates registered (${rateSec}s rate limit)")
         } catch (e: Exception) {
             Log.e(TAG, "Error requesting fused location: ${e.message}")
         }
@@ -880,7 +897,7 @@ class LocationTrackingService : Service() {
             if (locationManager.allProviders.contains(LocationManager.GPS_PROVIDER)) {
                 locationManager.requestLocationUpdates(
                     LocationManager.GPS_PROVIDER,
-                    3000L,
+                    intervalMs,
                     0f,
                     nativeLocationListener,
                     Looper.getMainLooper()
@@ -889,7 +906,7 @@ class LocationTrackingService : Service() {
             if (locationManager.allProviders.contains(LocationManager.NETWORK_PROVIDER)) {
                 locationManager.requestLocationUpdates(
                     LocationManager.NETWORK_PROVIDER,
-                    3000L,
+                    intervalMs,
                     0f,
                     nativeLocationListener,
                     Looper.getMainLooper()
@@ -898,7 +915,7 @@ class LocationTrackingService : Service() {
             if (locationManager.allProviders.contains(LocationManager.PASSIVE_PROVIDER)) {
                 locationManager.requestLocationUpdates(
                     LocationManager.PASSIVE_PROVIDER,
-                    2000L,
+                    intervalMs,
                     0f,
                     nativeLocationListener,
                     Looper.getMainLooper()

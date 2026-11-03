@@ -106,6 +106,14 @@ fun FriendsSheet(
         }
     }
 
+    val isMyLimitReached = currentUser != null && (friends.size >= currentUser.maxFriends || currentUser.isSubscriptionExpired)
+
+    LaunchedEffect(isMyLimitReached) {
+        if (isMyLimitReached && addFriendInput.isNotEmpty()) {
+            addFriendInput = ""
+        }
+    }
+
     val isSelf = isComplete && (
         (isCodeMode && cleanCode.equals(currentUser?.friendCode?.replace("-", "")?.trim(), ignoreCase = true)) ||
         (!isCodeMode && addFriendInput.trim().equals(currentUser?.email?.trim(), ignoreCase = true)) ||
@@ -116,7 +124,9 @@ fun FriendsSheet(
         (isCodeMode && it.friendCode.replace("-", "").equals(cleanCode, ignoreCase = true)) ||
         (!isCodeMode && it.email.isNotBlank() && it.email.equals(addFriendInput.trim(), ignoreCase = true))
     }
-    val canSend = isComplete && foundUser != null && !isSelf && !isAlreadyFriend
+    val isTargetLimitReached = isComplete && foundUser != null && !isSelf && !isAlreadyFriend &&
+        (foundUser.friendsCount >= foundUser.maxFriends || foundUser.isSubscriptionExpired)
+    val canSend = !isMyLimitReached && !isTargetLimitReached && isComplete && foundUser != null && !isSelf && !isAlreadyFriend
 
     LazyColumn(
         modifier = modifier
@@ -246,16 +256,24 @@ fun FriendsSheet(
                     OutlinedTextField(
                         value = addFriendInput,
                         onValueChange = { newValue ->
-                            addFriendInput = if (isCodeMode) {
-                                formatFriendCodeInput(newValue, addFriendInput)
-                            } else {
-                                newValue.trim().lowercase()
+                            if (!isMyLimitReached) {
+                                addFriendInput = if (isCodeMode) {
+                                    formatFriendCodeInput(newValue, addFriendInput)
+                                } else {
+                                    newValue.trim().lowercase()
+                                }
                             }
                         },
+                        enabled = !isMyLimitReached,
                         placeholder = {
                             Text(
-                                if (isCodeMode) "Enter 8-digit Code (e.g. ABCD-1234)" else "Enter Email (e.g. friend@email.com)",
-                                color = TextMuted
+                                when {
+                                    isMyLimitReached -> "🔒 Limit reached (${friends.size}/${currentUser?.maxFriends ?: 1} friends) — Upgrade or remove a friend"
+                                    isCodeMode -> "Enter 8-digit Code (e.g. ABCD-1234)"
+                                    else -> "Enter Email (e.g. friend@email.com)"
+                                },
+                                color = if (isMyLimitReached) Color(0xFFF87171) else TextMuted,
+                                fontSize = if (isMyLimitReached) 12.sp else 14.sp
                             )
                         },
                         modifier = Modifier.weight(1f),
@@ -263,8 +281,10 @@ fun FriendsSheet(
                         colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = if (foundUser != null) PulseGreen else RadarBlue,
                             unfocusedBorderColor = if (foundUser != null) PulseGreen.copy(alpha = 0.6f) else RadarCardBorder,
+                            disabledBorderColor = DangerRed.copy(alpha = 0.45f),
                             focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White
+                            unfocusedTextColor = Color.White,
+                            disabledTextColor = TextMuted
                         ),
                         shape = RoundedCornerShape(12.dp)
                     )
@@ -294,8 +314,28 @@ fun FriendsSheet(
                     }
                 }
 
+                if (isMyLimitReached) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF2A1215)),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, DangerRed.copy(alpha = 0.6f)),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { viewModel.openSubscriptionDialog() }
+                    ) {
+                        Text(
+                            text = "🔒 Max friends reached (${friends.size}/${currentUser?.maxFriends ?: 1} on ${currentUser?.planDisplayName ?: "Demo"}). You cannot add or accept more friends unless you remove a friend or upgrade your plan.",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFFFCA5A5),
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                        )
+                    }
+                }
+
                 // Realtime Feedback: ONLY shown when code or email is complete!
-                if (isComplete) {
+                if (isComplete && !isMyLimitReached) {
                     Spacer(modifier = Modifier.height(6.dp))
                     when {
                         isSelf -> {
@@ -315,6 +355,31 @@ fun FriendsSheet(
                                 color = Color(0xFF38BDF8),
                                 modifier = Modifier.padding(start = 4.dp)
                             )
+                        }
+                        isTargetLimitReached && foundUser != null -> {
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFF2A1215)),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, DangerRed.copy(alpha = 0.75f)),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 2.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                                    Text(
+                                        text = "🔒 Requested friend (${foundUser.displayName}) is out of limit!",
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFFF87171),
+                                        fontSize = 13.sp
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = "${foundUser.displayName} has reached their plan limit (${foundUser.friendsCount}/${foundUser.maxFriends} friends on ${foundUser.planDisplayName}). Tell them to upgrade their plan!",
+                                        fontSize = 11.sp,
+                                        color = Color(0xFFFCA5A5)
+                                    )
+                                }
+                            }
                         }
                         foundUser != null -> {
                             Card(

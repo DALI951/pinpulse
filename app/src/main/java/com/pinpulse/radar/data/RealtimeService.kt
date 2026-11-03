@@ -360,7 +360,22 @@ class RealtimeService private constructor(private val context: Context) {
         publish(topic, payload, retained = true, qosLevel = qosLevel)
     }
 
-    fun publishLocation(packet: LocationPacket) {
+    @Volatile
+    private var lastLocationPublishedAtRealtime: Long = 0L
+
+    fun publishLocation(packet: LocationPacket, force: Boolean = false) {
+        val statusUpper = packet.accountStatus.uppercase()
+        if (!force && (statusUpper == "BANNED" || statusUpper == "DEACTIVATED" || statusUpper == "DELETED")) {
+            return
+        }
+        val rateSec = packet.rateLimitSec.coerceIn(1, 300)
+        val minIntervalMs = (rateSec * 1000L) - 150L
+        val nowRealtime = android.os.SystemClock.elapsedRealtime()
+        if (!force && lastLocationPublishedAtRealtime > 0L && (nowRealtime - lastLocationPublishedAtRealtime) < minIntervalMs) {
+            return
+        }
+        lastLocationPublishedAtRealtime = nowRealtime
+
         val payload = gson.toJson(packet)
         // Publish retained location on user channel with QoS 0 for instant caching
         publishRetained("pinpulse/v1/user/${packet.userId}/loc", payload, qosLevel = 0)
@@ -529,7 +544,6 @@ class RealtimeService private constructor(private val context: Context) {
                         if (payload.isNotBlank() && payload != "{}" && payload.contains("\"fromUserId\"")) {
                             val req = gson.fromJson(payload, FriendRequest::class.java)?.sanitize()
                             if (req != null && req.fromUserId.isNotBlank()) {
-                                _friendRequests.emit(req)
                                 registerKnownUser(
                                     User(
                                         id = req.fromUserId,
@@ -539,7 +553,6 @@ class RealtimeService private constructor(private val context: Context) {
                                         friendCode = req.fromFriendCode
                                     ).sanitize()
                                 )
-                                // Direct persistent storage so timing never drops the invite
                                 val me = currentUser ?: AppPreferences(context).loadCurrentUser()
                                 val appPrefs = AppPreferences(context)
                                 val currentFriends = appPrefs.loadFriends()
@@ -555,9 +568,27 @@ class RealtimeService private constructor(private val context: Context) {
                                     (me.email.isNotBlank() && req.toFriendCode.equals(cleanEmail(me.email), ignoreCase = true)) ||
                                     (me.email.isNotBlank() && req.toUserId.equals(cleanEmail(me.email), ignoreCase = true))
                                 )
-                                if (!isAlreadyFriend && isForMe) {
-                                    appPrefs.addPendingRequest(req)
-                                    Log.d(TAG, "Friend request saved to pending: from ${req.fromUserName} (${req.fromFriendCode})")
+                                if (!isAlreadyFriend && isForMe && me != null) {
+                                    // If we have reached our maxFriends limit (e.g. Demo = 1 friend), block incoming friend request and notify sender!
+                                    if (currentFriends.size >= me.maxFriends || me.isSubscriptionExpired) {
+                                        if (req.toFriendCode.isNotBlank()) publishRetained("pinpulse/v1/invites/${req.toFriendCode.uppercase()}", "")
+                                        if (req.toUserId.isNotBlank()) publishRetained("pinpulse/v1/invites/${req.toUserId}", "")
+                                        if (me.friendCode.isNotBlank()) publishRetained("pinpulse/v1/invites/${me.friendCode.uppercase()}", "")
+                                        val rejectAlert = AlertMessage(
+                                            senderId = "system",
+                                            senderName = me.displayName,
+                                            type = "FRIEND_LIMIT_REACHED",
+                                            message = "🔒 Requested friend (${me.displayName}) is out of limit (${currentFriends.size}/${me.maxFriends} friends on ${me.planDisplayName}). Tell them to upgrade their plan!"
+                                        )
+                                        val rejectJson = gson.toJson(rejectAlert)
+                                        if (req.fromUserId.isNotBlank()) publish("pinpulse/v1/alerts/${req.fromUserId}", rejectJson, qosLevel = 1)
+                                        if (req.fromFriendCode.isNotBlank()) publish("pinpulse/v1/alerts/${req.fromFriendCode.uppercase()}", rejectJson, qosLevel = 1)
+                                        Log.w(TAG, "Blocked incoming friend request from ${req.fromUserName}: our limit (${currentFriends.size}/${me.maxFriends}) is full")
+                                    } else {
+                                        _friendRequests.emit(req)
+                                        appPrefs.addPendingRequest(req)
+                                        Log.d(TAG, "Friend request saved to pending: from ${req.fromUserName} (${req.fromFriendCode})")
+                                    }
                                 }
                             }
                         }
@@ -596,6 +627,19 @@ class RealtimeService private constructor(private val context: Context) {
                         try {
                             val alert = gson.fromJson(payload, AlertMessage::class.java)?.sanitize()
                             if (alert != null) {
+                                val me = currentUser ?: AppPreferences(context).loadCurrentUser()
+                                // If this is an SOS_EMERGENCY from a friend or group member, trigger loud Siren + Vibration + System Notification!
+                                if (alert.type.contains("SOS", ignoreCase = true) && alert.senderId != me?.id) {
+                                    val ageMs = System.currentTimeMillis() - alert.timestamp
+                                    if (alert.timestamp <= 0L || ageMs < 60_000L) {
+                                        val appPrefs = AppPreferences(context)
+                                        val isFriendOrGroup = appPrefs.loadFriends().any { it.id == alert.senderId || (it.friendCode.isNotBlank() && it.friendCode.equals(alert.senderId, ignoreCase = true)) } ||
+                                            appPrefs.loadGroups().any { it.memberIds.contains(alert.senderId) }
+                                        if (isFriendOrGroup) {
+                                            com.pinpulse.radar.util.SirenHelper.ring(context, "🆘 SOS EMERGENCY: ${alert.senderName}")
+                                        }
+                                    }
+                                }
                                 _alerts.emit(alert)
                             }
                         } catch (e: Exception) {
@@ -631,13 +675,17 @@ class RealtimeService private constructor(private val context: Context) {
             val me = prefs.loadCurrentUser() ?: return
             val obj = org.json.JSONObject(payload)
 
-            val targetId = obj.optString("userId", "").trim()
-            val targetCode = obj.optString("friendCode", "").trim()
-            val targetEmail = obj.optString("email", "").trim()
+            val targetId = obj.optString("targetUserId", obj.optString("userId", "")).trim()
+            val targetCode = obj.optString("targetFriendCode", obj.optString("friendCode", "")).trim()
+            val targetEmail = obj.optString("targetEmail", obj.optString("email", "")).trim()
 
             val matchesMe = (targetId.isNotBlank() && targetId == me.id) ||
                 (targetCode.isNotBlank() && targetCode.equals(me.friendCode, ignoreCase = true)) ||
-                (targetEmail.isNotBlank() && (targetEmail.equals(me.email, ignoreCase = true) || targetEmail.equals(cleanEmail(me.email), ignoreCase = true)))
+                (targetEmail.isNotBlank() && (
+                    targetEmail.equals(me.email, ignoreCase = true) ||
+                    targetEmail.equals(cleanEmail(me.email), ignoreCase = true) ||
+                    targetEmail.equals(me.email.trim().lowercase().replace(Regex("[^a-z0-9]"), "_"), ignoreCase = true)
+                ))
 
             if (!matchesMe) return
 
@@ -669,11 +717,44 @@ class RealtimeService private constructor(private val context: Context) {
             val newMonthlyRate = if (obj.has("monthlyRateUsd")) obj.optDouble("monthlyRateUsd", me.monthlyRateUsd) else me.monthlyRateUsd
 
             val newExpiresAt = when {
+                obj.optBoolean("isLifetime", false) -> 4102444800000L
                 obj.has("subscriptionExpiresAt") && obj.optLong("subscriptionExpiresAt", 0L) > 0L ->
                     obj.optLong("subscriptionExpiresAt")
                 obj.has("daysRemaining") ->
                     System.currentTimeMillis() + (obj.optDouble("daysRemaining", 7.0) * 86_400_000.0).toLong()
                 else -> me.subscriptionExpiresAt
+            }
+
+            // Enforce friend quota trimming immediately if user has more friends than newMaxFriends (e.g. Demo = 1)
+            val currentFriends = prefs.loadFriends()
+            val trimmedFriends = if (currentFriends.size > newMaxFriends.coerceAtLeast(0)) {
+                val kept = currentFriends.take(newMaxFriends.coerceAtLeast(0))
+                val removed = currentFriends.drop(newMaxFriends.coerceAtLeast(0))
+                prefs.saveFriends(kept)
+                removed.forEach { rf ->
+                    unsubscribe("pinpulse/v1/user/${rf.id}/loc")
+                    val unfriendJson = gson.toJson(mapOf("type" to "UNFRIEND", "fromUserId" to me.id))
+                    publish("pinpulse/v1/direct/${rf.id}", unfriendJson, qosLevel = 1)
+                    if (rf.friendCode.isNotBlank()) publish("pinpulse/v1/code/${rf.friendCode}", unfriendJson, qosLevel = 1)
+                }
+                kept
+            } else {
+                currentFriends
+            }
+
+            // Enforce group quota trimming immediately if user has more groups than newMaxGroups (e.g. Demo = 0)
+            val currentGroups = prefs.loadGroups()
+            val trimmedGroups = if (currentGroups.size > newMaxGroups.coerceAtLeast(0)) {
+                val keptG = currentGroups.take(newMaxGroups.coerceAtLeast(0))
+                val removedG = currentGroups.drop(newMaxGroups.coerceAtLeast(0))
+                prefs.saveGroups(keptG)
+                removedG.forEach { rg ->
+                    unsubscribe("pinpulse/v1/groups/${rg.code}/info")
+                    unsubscribe("pinpulse/v1/groups/${rg.code}/events")
+                }
+                keptG
+            } else {
+                currentGroups
             }
 
             val updatedMe = me.copy(
@@ -683,7 +764,9 @@ class RealtimeService private constructor(private val context: Context) {
                 maxFriends = newMaxFriends,
                 maxGroups = newMaxGroups,
                 rateLimitSec = newRateLimitSec,
-                monthlyRateUsd = newMonthlyRate
+                monthlyRateUsd = newMonthlyRate,
+                friendsCount = trimmedFriends.size,
+                groupsCount = trimmedGroups.size
             ).sanitize()
 
             prefs.saveCurrentUser(updatedMe)
