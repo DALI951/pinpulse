@@ -37,51 +37,135 @@ data class UpdateState(
 object UpdateManager {
     private const val TAG = "UpdateManager"
     private const val GITHUB_REPO = "DALI951/pinpulse"
-    private const val RELEASES_API = "https://api.github.com/repos/$GITHUB_REPO/releases/latest"
+    private const val RELEASES_LIST_API = "https://api.github.com/repos/$GITHUB_REPO/releases?per_page=30"
+    private const val LATEST_RELEASE_API = "https://api.github.com/repos/$GITHUB_REPO/releases/latest"
 
     private val _updateState = MutableStateFlow(UpdateState())
     val updateState: StateFlow<UpdateState> = _updateState.asStateFlow()
 
-    suspend fun checkForUpdates(context: Context? = null): UpdateState = withContext(Dispatchers.IO) {
-        _updateState.value = _updateState.value.copy(
-            isChecking = true,
-            statusMessage = "Checking for updates...",
-            errorMessage = null
-        )
+    private data class ReleaseCandidate(
+        val tagName: String,
+        val apkUrl: String,
+        val body: String
+    )
+
+    private fun extractApkUrl(releaseObj: JSONObject): String {
+        val assets = releaseObj.optJSONArray("assets") ?: return ""
+        for (i in 0 until assets.length()) {
+            val asset = assets.optJSONObject(i) ?: continue
+            val name = asset.optString("name", "")
+            val url = asset.optString("browser_download_url", "")
+            if (name.endsWith(".apk", ignoreCase = true) && url.isNotBlank()) {
+                return url
+            }
+        }
+        return ""
+    }
+
+    /**
+     * Scans ALL recent GitHub releases (not stopping at the first update found)
+     * and always picks the single highest version number that has a ready APK.
+     * This ensures that even if a user is 4 or 5 updates behind, they jump
+     * straight to the absolute latest version in a single install.
+     */
+    private fun fetchHighestRelease(): ReleaseCandidate? {
+        var highestCandidate: ReleaseCandidate? = null
+
+        // 1. Scan full releases list and compare every release to find the highest version
         try {
-            val url = URL(RELEASES_API)
-            val conn = (url.openConnection() as HttpURLConnection).apply {
+            val conn = (URL(RELEASES_LIST_API).openConnection() as HttpURLConnection).apply {
                 connectTimeout = 8000
                 readTimeout = 8000
+                useCaches = false
                 setRequestProperty("User-Agent", "PinPulse-Android")
                 setRequestProperty("Accept", "application/vnd.github.v3+json")
+                setRequestProperty("Cache-Control", "no-cache")
             }
+            if (conn.responseCode == 200) {
+                val jsonStr = conn.inputStream.bufferedReader().use { it.readText() }
+                val releasesArray = org.json.JSONArray(jsonStr)
+                for (i in 0 until releasesArray.length()) {
+                    val rel = releasesArray.optJSONObject(i) ?: continue
+                    if (rel.optBoolean("draft", false)) continue
+                    val tag = rel.optString("tag_name", "").trim()
+                    if (tag.isBlank()) continue
+                    val apk = extractApkUrl(rel)
+                    if (apk.isBlank()) continue
+                    val notes = rel.optString("body", "")
 
+                    // Do NOT stop at the first release found — keep checking all releases
+                    // and retain only the one with the highest semantic version!
+                    if (highestCandidate == null || compareVersions(tag, highestCandidate.tagName)) {
+                        highestCandidate = ReleaseCandidate(
+                            tagName = tag,
+                            apkUrl = apk,
+                            body = notes
+                        )
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Releases list scan fallback: ${e.message}")
+        }
+
+        // 2. Also check /releases/latest and take whichever is strictly newer
+        try {
+            val conn = (URL(LATEST_RELEASE_API).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 8000
+                readTimeout = 8000
+                useCaches = false
+                setRequestProperty("User-Agent", "PinPulse-Android")
+                setRequestProperty("Accept", "application/vnd.github.v3+json")
+                setRequestProperty("Cache-Control", "no-cache")
+            }
             if (conn.responseCode == 200) {
                 val jsonStr = conn.inputStream.bufferedReader().use { it.readText() }
                 val root = JSONObject(jsonStr)
-                val tagName = root.optString("tag_name", "").trim()
-                val body = root.optString("body", "")
-
-                // Find APK asset
-                var apkUrl = ""
-                val assets = root.optJSONArray("assets")
-                if (assets != null) {
-                    for (i in 0 until assets.length()) {
-                        val asset = assets.getJSONObject(i)
-                        val name = asset.optString("name", "")
-                        if (name.endsWith(".apk", ignoreCase = true)) {
-                            apkUrl = asset.optString("browser_download_url", "")
-                            break
-                        }
+                val tag = root.optString("tag_name", "").trim()
+                val apk = extractApkUrl(root)
+                val notes = root.optString("body", "")
+                if (tag.isNotBlank() && apk.isNotBlank()) {
+                    if (highestCandidate == null || compareVersions(tag, highestCandidate.tagName)) {
+                        highestCandidate = ReleaseCandidate(
+                            tagName = tag,
+                            apkUrl = apk,
+                            body = notes
+                        )
                     }
                 }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Latest release check failed: ${e.message}")
+        }
+
+        return highestCandidate
+    }
+
+    suspend fun checkForUpdates(context: Context? = null): UpdateState = withContext(Dispatchers.IO) {
+        _updateState.value = _updateState.value.copy(
+            isChecking = true,
+            statusMessage = "Checking for latest update...",
+            errorMessage = null
+        )
+        try {
+            val highest = fetchHighestRelease()
+
+            if (highest != null) {
+                val tagName = highest.tagName
+                val apkUrl = highest.apkUrl
+                val body = highest.body
 
                 val currentVer = BuildConfig.VERSION_NAME
                 val isNewer = compareVersions(tagName, currentVer)
-                val cleanLatest = tagName.removePrefix("v")
+                val cleanLatest = tagName.removePrefix("v").trim()
 
-                // Check if the update is ALREADY downloaded on this device
+                // If there is an older cached APK on disk that does NOT match the absolute latest version,
+                // purge that older APK immediately so we never install an intermediate update!
+                if (context != null && isNewer) {
+                    purgeOutdatedCachedApkIfSuperseded(context, cleanLatest)
+                }
+
+                // Check if the exact latest update is ALREADY downloaded on this device
                 val isAlreadyDownloaded = context?.let { ctx ->
                     isDownloadedApkReady(ctx, cleanLatest)
                 } ?: false
@@ -95,8 +179,8 @@ object UpdateManager {
                     apkUrl = apkUrl,
                     releaseNotes = body,
                     statusMessage = when {
-                        isAlreadyDownloaded -> "Update v$cleanLatest is already downloaded! Ready to install."
-                        isNewer && apkUrl.isNotBlank() -> "Update available: $tagName"
+                        isAlreadyDownloaded -> "Latest update v$cleanLatest is downloaded! Ready to install."
+                        isNewer && apkUrl.isNotBlank() -> "Latest update available: v$cleanLatest (skips older versions)"
                         else -> "You have the latest version ($currentVer)"
                     }
                 )
@@ -105,7 +189,7 @@ object UpdateManager {
             } else {
                 val newState = _updateState.value.copy(
                     isChecking = false,
-                    errorMessage = "GitHub API returned code ${conn.responseCode}",
+                    errorMessage = "Could not reach GitHub releases",
                     statusMessage = null
                 )
                 _updateState.value = newState
@@ -123,12 +207,45 @@ object UpdateManager {
         }
     }
 
+    /**
+     * If a cached APK on disk is from an intermediate update (e.g. v2.2 when v2.6 is out),
+     * delete it immediately so the user always downloads and installs the newest version directly.
+     */
+    private fun purgeOutdatedCachedApkIfSuperseded(context: Context, latestVersion: String) {
+        try {
+            val cleanTarget = latestVersion.removePrefix("v").trim()
+            if (cleanTarget.isBlank()) return
+            val file = File(context.cacheDir, "pinpulse_update.apk")
+            if (!file.exists()) return
+
+            var cachedVersion = ""
+            try {
+                val pkg = context.packageManager.getPackageArchiveInfo(file.absolutePath, 0)
+                if (pkg != null && pkg.packageName == context.packageName) {
+                    cachedVersion = (pkg.versionName ?: "").removePrefix("v").trim()
+                }
+            } catch (_: Exception) {}
+
+            if (cachedVersion.isBlank()) {
+                cachedVersion = AppPreferences(context).getLastDownloadedUpdateVersion().removePrefix("v").trim()
+            }
+
+            if (cachedVersion.isNotBlank() && cachedVersion != cleanTarget) {
+                Log.d(TAG, "Purging superseded cached APK v$cachedVersion in favor of latest v$cleanTarget")
+                file.delete()
+                AppPreferences(context).clearLastDownloadedUpdateVersion()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to check/purge superseded APK: ${e.message}")
+        }
+    }
+
     fun refreshDownloadedStatus(context: Context) {
         val targetVer = _updateState.value.latestVersion
         val isReady = isDownloadedApkReady(context, targetVer)
         _updateState.value = _updateState.value.copy(
             isDownloaded = isReady,
-            statusMessage = if (isReady) "Update v$targetVer is already downloaded! Ready to install." else _updateState.value.statusMessage
+            statusMessage = if (isReady) "Latest update v${targetVer.ifBlank { "new" }} is downloaded! Ready to install." else _updateState.value.statusMessage
         )
     }
 
@@ -154,26 +271,34 @@ object UpdateManager {
 
     /**
      * Check if a valid update APK is already downloaded on disk and matches target version.
+     * When targetVersion is specified, strictly requires the cached APK to match that exact latest version
+     * so an older intermediate APK is never reused when a newer release exists!
      */
     fun isDownloadedApkReady(context: Context, targetVersion: String = ""): Boolean {
         val file = File(context.cacheDir, "pinpulse_update.apk")
         if (!file.exists() || file.length() < 1_500_000) return false
+        val cleanTarget = targetVersion.removePrefix("v").trim()
 
         try {
             val pkg = context.packageManager.getPackageArchiveInfo(file.absolutePath, 0)
             if (pkg != null && pkg.packageName == context.packageName) {
-                val vName = pkg.versionName ?: ""
-                if (targetVersion.isNotBlank()) {
-                    if (vName == targetVersion.removePrefix("v")) return true
+                val vName = (pkg.versionName ?: "").removePrefix("v").trim()
+                return if (cleanTarget.isNotBlank()) {
+                    // Strictly match the latest version on GitHub
+                    vName == cleanTarget && compareVersions(vName, BuildConfig.VERSION_NAME)
+                } else {
+                    compareVersions(vName, BuildConfig.VERSION_NAME)
                 }
-                if (compareVersions(vName, BuildConfig.VERSION_NAME)) return true
             }
         } catch (e: Exception) {}
 
-        val savedVer = AppPreferences(context).getLastDownloadedUpdateVersion()
+        val savedVer = AppPreferences(context).getLastDownloadedUpdateVersion().removePrefix("v").trim()
         if (savedVer.isNotBlank() && file.length() > 5_000_000) {
-            if (targetVersion.isNotBlank() && savedVer == targetVersion.removePrefix("v")) return true
-            if (compareVersions(savedVer, BuildConfig.VERSION_NAME)) return true
+            return if (cleanTarget.isNotBlank()) {
+                savedVer == cleanTarget && compareVersions(savedVer, BuildConfig.VERSION_NAME)
+            } else {
+                compareVersions(savedVer, BuildConfig.VERSION_NAME)
+            }
         }
 
         return false
@@ -188,9 +313,26 @@ object UpdateManager {
     }
 
     suspend fun downloadAndInstall(context: Context, onInstalled: () -> Unit = {}) = withContext(Dispatchers.IO) {
+        // Re-verify the absolute highest release on GitHub right before installing/downloading
+        // so we never install an older version if a newer release is available.
+        try {
+            val freshHighest = fetchHighestRelease()
+            if (freshHighest != null) {
+                val freshClean = freshHighest.tagName.removePrefix("v").trim()
+                if (freshClean.isNotBlank() && compareVersions(freshClean, BuildConfig.VERSION_NAME)) {
+                    purgeOutdatedCachedApkIfSuperseded(context, freshClean)
+                    _updateState.value = _updateState.value.copy(
+                        latestVersion = freshClean,
+                        apkUrl = freshHighest.apkUrl,
+                        releaseNotes = freshHighest.body
+                    )
+                }
+            }
+        } catch (_: Exception) {}
+
         val latestVer = _updateState.value.latestVersion
 
-        // 1. If APK is ALREADY downloaded and valid, do NOT re-download! Launch installer immediately!
+        // 1. If the exact latest APK is ALREADY downloaded and valid, launch installer immediately!
         val existingFile = getDownloadedUpdateApk(context, latestVer)
         if (existingFile != null) {
             Log.d(TAG, "Update APK already downloaded: ${existingFile.absolutePath} (${existingFile.length() / 1024} KB) -> Reusing file without downloading!")
@@ -198,7 +340,7 @@ object UpdateManager {
                 isDownloading = false,
                 isDownloaded = true,
                 downloadProgress = 1f,
-                statusMessage = "Launching installer..."
+                statusMessage = "Launching installer for v$latestVer..."
             )
             withContext(Dispatchers.Main) {
                 installApk(context, existingFile)

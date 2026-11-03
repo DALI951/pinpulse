@@ -3,16 +3,16 @@ package com.pinpulse.radar.model
 import com.google.gson.annotations.SerializedName
 
 data class TrailPoint(
-    @SerializedName("latitude") val latitude: Double,
-    @SerializedName("longitude") val longitude: Double,
+    @SerializedName("latitude") val latitude: Double = 0.0,
+    @SerializedName("longitude") val longitude: Double = 0.0,
     @SerializedName("speedKmh") val speedKmh: Float = 0f,
     @SerializedName("timestamp") val timestamp: Long = System.currentTimeMillis()
 )
 
 data class User(
-    @SerializedName("id") val id: String,
+    @SerializedName("id") val id: String = "",
     @SerializedName("email") val email: String = "",
-    @SerializedName("displayName") val displayName: String,
+    @SerializedName("displayName") val displayName: String = "User",
     @SerializedName("avatarBase64") val avatarBase64: String? = null,
     @SerializedName("friendCode") val friendCode: String = "",
     @SerializedName("statusMessage") val statusMessage: String? = null,
@@ -38,4 +38,12 @@ data class User(
                 else -> "${diffSec / 3600}h ago"
             }
         }
+
+    @Suppress("USELESS_ELVIS")
+    fun sanitize(): User = copy(
+        id = (id as String?) ?: "",
+        email = (email as String?) ?: "",
+        displayName = ((displayName as String?) ?: "").ifBlank { "User" },
+        friendCode = (friendCode as String?) ?: ""
+    )
 }

@@ -61,7 +61,7 @@ class AppPreferences(context: Context) {
     fun loadCurrentUser(): User? {
         val json = prefs.getString("current_user", null) ?: return null
         return try {
-            gson.fromJson(json, User::class.java)
+            gson.fromJson(json, User::class.java)?.sanitize()
         } catch (e: Exception) {
             null
         }
@@ -105,7 +105,8 @@ class AppPreferences(context: Context) {
         val json = prefs.getString("friends_list", null) ?: return emptyList()
         val type = object : TypeToken<List<User>>() {}.type
         return try {
-            gson.fromJson(json, type) ?: emptyList()
+            val raw: List<User>? = gson.fromJson(json, type)
+            raw?.mapNotNull { it?.sanitize() } ?: emptyList()
         } catch (e: Exception) {
             emptyList()
         }
@@ -138,7 +139,8 @@ class AppPreferences(context: Context) {
         val json = prefs.getString("groups_list", null) ?: return emptyList()
         val type = object : TypeToken<List<Group>>() {}.type
         return try {
-            gson.fromJson(json, type) ?: emptyList()
+            val raw: List<Group>? = gson.fromJson(json, type)
+            raw?.mapNotNull { it?.sanitize() } ?: emptyList()
         } catch (e: Exception) {
             emptyList()
         }
@@ -199,7 +201,8 @@ class AppPreferences(context: Context) {
         val json = prefs.getString("pending_requests", null) ?: return emptyList()
         val type = object : TypeToken<List<FriendRequest>>() {}.type
         return try {
-            gson.fromJson(json, type) ?: emptyList()
+            val raw: List<FriendRequest>? = gson.fromJson(json, type)
+            raw?.mapNotNull { it?.sanitize() } ?: emptyList()
         } catch (e: Exception) {
             emptyList()
         }

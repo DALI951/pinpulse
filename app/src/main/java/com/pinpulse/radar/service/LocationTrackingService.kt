@@ -1,6 +1,7 @@
 package com.pinpulse.radar.service
 
 import android.annotation.SuppressLint
+import android.app.ActivityManager
 import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
@@ -59,6 +60,14 @@ class LocationTrackingService : Service() {
         const val ACTION_STOP = "ACTION_STOP_TRACKING"
         const val ACTION_KEEPALIVE_ALARM = "com.pinpulse.radar.ACTION_KEEPALIVE_ALARM"
 
+        private val backgroundPulseScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+        @Volatile
+        private var isServiceRunningInForeground = false
+
+        @Volatile
+        private var activeInstance: LocationTrackingService? = null
+
         fun hasLocationPermission(context: Context): Boolean {
             val hasFine = ContextCompat.checkSelfPermission(
                 context, android.Manifest.permission.ACCESS_FINE_LOCATION
@@ -69,25 +78,185 @@ class LocationTrackingService : Service() {
             return hasFine || hasCoarse
         }
 
+        fun hasBackgroundLocationPermission(context: Context): Boolean {
+            if (!hasLocationPermission(context)) return false
+            return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                ContextCompat.checkSelfPermission(
+                    context, android.Manifest.permission.ACCESS_BACKGROUND_LOCATION
+                ) == PackageManager.PERMISSION_GRANTED
+            } else {
+                true
+            }
+        }
+
+        fun isAppInForeground(context: Context): Boolean {
+            return try {
+                val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager ?: return false
+                val processes = am.runningAppProcesses ?: return false
+                val pkg = context.packageName
+                processes.any {
+                    it.processName == pkg &&
+                        it.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
+                }
+            } catch (e: Exception) {
+                false
+            }
+        }
+
         fun start(context: Context) {
             val appCtx = context.applicationContext
+            val currentUser = AppPreferences(appCtx).loadCurrentUser() ?: return
+
+            // 1. If the Foreground Service is ALREADY running, do NOT re-call startForegroundService()
+            // (prevents Android 14/15 One UI 7.0 background FGS re-verification crashes).
+            val existing = activeInstance
+            if (isServiceRunningInForeground && existing != null) {
+                existing.pokeFromExternalTrigger()
+                return
+            }
+
+            // 2. Check if Android 14/15 allows starting a Foreground Service right now:
+            // Allowed if the app is currently open in the foreground OR user granted "Allow all the time" (ACCESS_BACKGROUND_LOCATION).
+            val inForeground = isAppInForeground(appCtx)
+            val hasBgLoc = hasBackgroundLocationPermission(appCtx)
+
+            if (!inForeground && !hasBgLoc) {
+                // App is in background without "Allow all the time" permission:
+                // Never call startForegroundService() (which crashes Android 15 / One UI 7.0);
+                // instead perform a silent background location & MQTT pulse directly!
+                Log.d(TAG, "Background pulse mode (no ACCESS_BACKGROUND_LOCATION yet) — sending silent pulse")
+                performSilentBackgroundPulse(appCtx)
+                scheduleWatchdogAlarm(appCtx, 60_000L)
+                return
+            }
+
             val intent = Intent(appCtx, LocationTrackingService::class.java).apply {
                 action = ACTION_START
             }
             try {
+                if (inForeground) {
+                    // When in foreground, startService() avoids arming the strict 5s startForegroundService() crash timer
+                    try {
+                        appCtx.startService(intent)
+                        return
+                    } catch (_: Exception) {}
+                }
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     appCtx.startForegroundService(intent)
                 } else {
                     appCtx.startService(intent)
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to start service safely: ${e.message}")
-                scheduleWatchdogAlarm(appCtx, 2000L)
+            } catch (t: Throwable) {
+                Log.w(TAG, "FGS start deferred (${t.message}) — running silent background pulse instead")
+                performSilentBackgroundPulse(appCtx)
+                scheduleWatchdogAlarm(appCtx, 60_000L)
             }
+        }
+
+        private fun performSilentBackgroundPulse(context: Context) {
+            backgroundPulseScope.launch {
+                try {
+                    val prefs = AppPreferences(context)
+                    val user = prefs.loadCurrentUser() ?: return@launch
+                    val realtime = RealtimeService.getInstance(context)
+                    realtime.ensureConnected(user)
+
+                    var lat = user.latitude
+                    var lon = user.longitude
+
+                    // Check cached OS location if permission is granted
+                    if (hasLocationPermission(context)) {
+                        try {
+                            val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+                            @SuppressLint("MissingPermission")
+                            val best = listOfNotNull(
+                                lm?.getLastKnownLocation(LocationManager.GPS_PROVIDER),
+                                lm?.getLastKnownLocation(LocationManager.NETWORK_PROVIDER),
+                                lm?.getLastKnownLocation(LocationManager.PASSIVE_PROVIDER)
+                            ).maxByOrNull { it.time }
+                            if (best != null && (best.latitude != 0.0 || best.longitude != 0.0)) {
+                                lat = best.latitude
+                                lon = best.longitude
+                            }
+                        } catch (_: Exception) {}
+                    }
+
+                    // If still (0,0), try Data Service geolocation
+                    if (lat == 0.0 && lon == 0.0) {
+                        val ipCoords = fetchIpCoordinatesStatic()
+                        if (ipCoords != null) {
+                            lat = ipCoords.first
+                            lon = ipCoords.second
+                        }
+                    }
+
+                    if (lat != 0.0 || lon != 0.0) {
+                        val (batteryPct, isCharging) = getBatteryInfo(context)
+                        val now = System.currentTimeMillis()
+                        val updated = user.copy(
+                            latitude = lat,
+                            longitude = lon,
+                            batteryPercent = batteryPct,
+                            isCharging = isCharging,
+                            isSharingLocation = true,
+                            lastUpdated = now
+                        )
+                        prefs.saveCurrentUser(updated)
+                        realtime.publishLocation(
+                            LocationPacket(
+                                userId = updated.id,
+                                displayName = updated.displayName,
+                                email = updated.email,
+                                friendCode = updated.friendCode,
+                                avatarBase64 = updated.avatarBase64,
+                                statusMessage = updated.statusMessage,
+                                latitude = lat,
+                                longitude = lon,
+                                speedKmh = updated.speedKmh,
+                                batteryPercent = batteryPct,
+                                isCharging = isCharging,
+                                isSharingLocation = true,
+                                timestamp = now
+                            )
+                        )
+                    }
+                } catch (t: Throwable) {
+                    Log.w(TAG, "Silent background pulse error: ${t.message}")
+                }
+            }
+        }
+
+        private fun fetchIpCoordinatesStatic(): Pair<Double, Double>? {
+            val endpoints = listOf(
+                "https://ipwho.is/",
+                "https://ipapi.co/json/",
+                "https://freeipapi.com/api/json",
+                "http://ip-api.com/json/?fields=status,query,lat,lon"
+            )
+            for (endpoint in endpoints) {
+                try {
+                    val conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+                        connectTimeout = 5000
+                        readTimeout = 5000
+                        requestMethod = "GET"
+                        setRequestProperty("User-Agent", "PinPulse-Android")
+                    }
+                    if (conn.responseCode == 200) {
+                        val body = conn.inputStream.bufferedReader().use { it.readText() }
+                        val json = JSONObject(body)
+                        if (json.has("success") && !json.optBoolean("success", true)) continue
+                        val lat = if (json.has("latitude")) json.optDouble("latitude", 0.0) else json.optDouble("lat", 0.0)
+                        val lon = if (json.has("longitude")) json.optDouble("longitude", 0.0) else json.optDouble("lon", 0.0)
+                        if (lat != 0.0 || lon != 0.0) return Pair(lat, lon)
+                    }
+                } catch (_: Exception) {}
+            }
+            return null
         }
 
         fun stop(context: Context) {
             val appCtx = context.applicationContext
+            if (!isServiceRunningInForeground && activeInstance == null) return
             val intent = Intent(appCtx, LocationTrackingService::class.java).apply {
                 action = ACTION_STOP
             }
@@ -104,7 +273,6 @@ class LocationTrackingService : Service() {
                 val alarmManager = appCtx.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
                 val triggerAt = SystemClock.elapsedRealtime() + delayMs
 
-                // 1. Broadcast alarm to BootReceiver (works reliably across all Android versions in Doze)
                 val receiverIntent = Intent(appCtx, BootReceiver::class.java).apply {
                     action = ACTION_KEEPALIVE_ALARM
                     setPackage(appCtx.packageName)
@@ -136,36 +304,6 @@ class LocationTrackingService : Service() {
                         triggerAt,
                         receiverPending
                     )
-                }
-
-                // 2. Direct ForegroundService PendingIntent safety net for short restarts
-                if (delayMs <= 5000L) {
-                    val serviceIntent = Intent(appCtx, LocationTrackingService::class.java).apply {
-                        action = ACTION_START
-                        setPackage(appCtx.packageName)
-                    }
-                    val servicePending = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        PendingIntent.getForegroundService(
-                            appCtx,
-                            9512,
-                            serviceIntent,
-                            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                        )
-                    } else {
-                        PendingIntent.getService(
-                            appCtx,
-                            9512,
-                            serviceIntent,
-                            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                        )
-                    }
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                        alarmManager.setAndAllowWhileIdle(
-                            AlarmManager.ELAPSED_REALTIME_WAKEUP,
-                            triggerAt + 500L,
-                            servicePending
-                        )
-                    }
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to schedule watchdog alarm: ${e.message}")
@@ -216,6 +354,7 @@ class LocationTrackingService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        activeInstance = this
         prefs = AppPreferences(this)
         realtimeService = RealtimeService.getInstance(this)
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
@@ -224,7 +363,6 @@ class LocationTrackingService : Service() {
         createNotificationChannel()
         ensureWakeAndWifiLocks()
 
-        // If user already had saved coordinates on disk, preserve them initially
         val existingUser = prefs.loadCurrentUser()
         if (existingUser != null && (existingUser.latitude != 0.0 || existingUser.longitude != 0.0)) {
             hasExactGpsOrCellFix = true
@@ -250,6 +388,15 @@ class LocationTrackingService : Service() {
             override fun onProviderEnabled(provider: String) {}
             override fun onProviderDisabled(provider: String) {}
         }
+    }
+
+    fun pokeFromExternalTrigger() {
+        ensureWakeAndWifiLocks()
+        scheduleWatchdogAlarm(this, 60_000L)
+        if (!isListenersRegistered && hasLocationPermission(this)) {
+            requestLocationUpdates()
+        }
+        pollBestAvailableLocation()
     }
 
     @Suppress("DEPRECATION")
@@ -295,6 +442,7 @@ class LocationTrackingService : Service() {
         when (intent?.action) {
             ACTION_STOP -> {
                 isExplicitlyStopped = true
+                isServiceRunningInForeground = false
                 handleStopTracking()
                 stopSelf()
             }
@@ -307,48 +455,62 @@ class LocationTrackingService : Service() {
     }
 
     private fun startForegroundTracking() {
-        val notification = buildNotification("24/7 Live Radar Active — Sharing location")
-        var startedFgs = false
+        // Only call startForeground() if not already running in foreground!
+        // Re-calling startForeground() from the background when user only has "While using the app"
+        // triggers Android 14/15 SecurityException.
+        if (!isServiceRunningInForeground) {
+            val notification = buildNotification("24/7 Live Radar Active — Sharing location")
+            var startedFgs = false
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            if (hasLocationPermission(this)) {
-                try {
-                    startForeground(
-                        NOTIFICATION_ID,
-                        notification,
-                        ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-                    )
-                    startedFgs = true
-                } catch (e: Exception) {
-                    Log.w(TAG, "LOCATION FGS type unavailable (${e.message}), falling back to DATA_SYNC")
-                }
-            }
-            if (!startedFgs) {
-                try {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val canUseLocationFgs = hasLocationPermission(this) &&
+                    (hasBackgroundLocationPermission(this) || isAppInForeground(this))
+
+                if (canUseLocationFgs) {
+                    try {
                         startForeground(
                             NOTIFICATION_ID,
                             notification,
-                            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                            ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
                         )
-                    } else {
-                        startForeground(NOTIFICATION_ID, notification)
+                        startedFgs = true
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "LOCATION FGS type rejected (${t.message}), trying DATA_SYNC fallback")
                     }
+                }
+                if (!startedFgs) {
+                    try {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                            startForeground(
+                                NOTIFICATION_ID,
+                                notification,
+                                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                            )
+                        } else {
+                            startForeground(NOTIFICATION_ID, notification)
+                        }
+                        startedFgs = true
+                    } catch (t: Throwable) {
+                        Log.e(TAG, "DATA_SYNC FGS fallback rejected: ${t.message}")
+                    }
+                }
+            } else {
+                try {
+                    startForeground(NOTIFICATION_ID, notification)
                     startedFgs = true
-                } catch (e: Exception) {
-                    Log.e(TAG, "Fallback FGS start error: ${e.message}")
+                } catch (t: Throwable) {
+                    Log.e(TAG, "startForeground error: ${t.message}")
                 }
             }
-        } else {
-            try {
-                startForeground(NOTIFICATION_ID, notification)
-                startedFgs = true
-            } catch (e: Exception) {
-                Log.e(TAG, "startForeground error: ${e.message}")
-            }
-        }
 
-        if (!startedFgs) return
+            if (!startedFgs) {
+                // Stop safely and run silent background pulse instead
+                performSilentBackgroundPulse(applicationContext)
+                stopSelf()
+                return
+            }
+            isServiceRunningInForeground = true
+        }
 
         ensureWakeAndWifiLocks()
         scheduleWatchdogAlarm(this, 60_000L)
@@ -371,7 +533,6 @@ class LocationTrackingService : Service() {
 
         pollBestAvailableLocation()
 
-        // Only launch heartbeat coroutine if not already active (prevents resetting 3s loop on Activity resume)
         if (heartbeatJob?.isActive != true) {
             heartbeatJob = serviceScope.launch {
                 var tickCount = 0
@@ -383,15 +544,12 @@ class LocationTrackingService : Service() {
 
                         val user = prefs.loadCurrentUser()
                         if (user != null) {
-                            // Ensure MQTT stays connected 24/7 even across network switches or idle periods
                             realtimeService.ensureConnected(user)
 
-                            // If no GPS callback arrived in the last 10 seconds, actively poll providers
                             if (tickCount % 4 == 0 && (SystemClock.elapsedRealtime() - lastLocationElapsedRealtime > 10_000L)) {
                                 pollBestAvailableLocation()
                             }
 
-                            // Every 60 seconds, refresh watchdog alarm and re-assert location listeners
                             if (tickCount % 20 == 0) {
                                 scheduleWatchdogAlarm(this@LocationTrackingService, 60_000L)
                                 if (hasLocationPermission(this@LocationTrackingService)) {
@@ -428,8 +586,8 @@ class LocationTrackingService : Service() {
                                 realtimeService.publishLocation(packet)
                             }
                         }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Heartbeat tick error: ${e.message}")
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "Heartbeat tick error: ${t.message}")
                     }
                 }
             }
@@ -491,7 +649,6 @@ class LocationTrackingService : Service() {
                 Log.w(TAG, "Native location poll error: ${e.message}")
             }
         } else if (hasPerm) {
-            // Even if GPS/Network toggle was just turned off, check cached last known location in OS
             try {
                 val cachedGps = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
                 val cachedNet = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
@@ -504,7 +661,6 @@ class LocationTrackingService : Service() {
             } catch (e: Exception) {}
         }
 
-        // Silent Data Service (Mobile Data / Wi-Fi Carrier IP) Fallback when GPS is OFF or no fix yet!
         val currentUser = prefs.loadCurrentUser()
         val hasNoCoordinatesYet = currentUser == null || (currentUser.latitude == 0.0 && currentUser.longitude == 0.0)
         val nowRealtime = SystemClock.elapsedRealtime()
@@ -520,10 +676,6 @@ class LocationTrackingService : Service() {
         }
     }
 
-    /**
-     * Silently resolves approximate coordinates via Mobile Data (4G/5G carrier) or Wi-Fi internet
-     * without ever bothering the user or turning on GPS.
-     */
     private fun pollDataServiceLocationFallback() {
         val endpoints = listOf(
             "https://ipwho.is/",
@@ -545,7 +697,6 @@ class LocationTrackingService : Service() {
                     val body = conn.inputStream.bufferedReader().use { it.readText() }
                     val json = JSONObject(body)
 
-                    // Validate provider success flags if present
                     if (json.has("success") && !json.optBoolean("success", true)) continue
                     if (json.has("status") && !json.optString("status", "success").equals("success", ignoreCase = true)) continue
 
@@ -582,11 +733,8 @@ class LocationTrackingService : Service() {
         val hasExistingCoords = currentUser.latitude != 0.0 || currentUser.longitude != 0.0
 
         val shouldUpdateCoordinates = if (!hasExistingCoords || !hasExactGpsOrCellFix) {
-            // User had no coordinates or only had a previous Data Service coordinate -> use new Data Service coordinate
             true
         } else {
-            // User already has an exact street-level GPS/Cell fix.
-            // Only move their pin to the coarse Data Service coordinate if they traveled > 15 km to a new network/city while GPS was off!
             val distResults = FloatArray(1)
             Location.distanceBetween(currentUser.latitude, currentUser.longitude, lat, lon, distResults)
             val distanceMeters = distResults[0]
@@ -658,7 +806,6 @@ class LocationTrackingService : Service() {
             Log.e(TAG, "Error requesting fused location: ${e.message}")
         }
 
-        // Register native hardware GPS & Network listeners on main looper as Doze-proof fallback
         try {
             locationManager.removeUpdates(nativeLocationListener)
             if (locationManager.allProviders.contains(LocationManager.GPS_PROVIDER)) {
@@ -771,7 +918,6 @@ class LocationTrackingService : Service() {
             )
             realtimeService.publishLocation(packet)
 
-            // Broadcast immediate alert to all friends and all groups
             val alert = AlertMessage(
                 senderId = currentUser.id,
                 senderName = currentUser.displayName,
@@ -779,12 +925,10 @@ class LocationTrackingService : Service() {
                 message = "${currentUser.displayName} turned off their live location sharing."
             )
 
-            // Alert 1-on-1 friends
             prefs.loadFriends().forEach { friend ->
                 realtimeService.broadcastAlert(friend.friendCode, alert)
             }
 
-            // Alert all group channels
             prefs.loadGroups().forEach { group ->
                 realtimeService.publish("pinpulse/v1/groups/${group.code}/events", com.google.gson.Gson().toJson(alert))
             }
@@ -835,12 +979,17 @@ class LocationTrackingService : Service() {
         if (currentUser != null && !isExplicitlyStopped) {
             Log.d(TAG, "Task removed from Recents — preserving 24/7 background location tracking!")
             scheduleWatchdogAlarm(applicationContext, 1500L)
-            startForegroundTracking()
+            // Keep existing foreground session alive without re-calling startForeground() from background
+            pokeFromExternalTrigger()
         }
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        isServiceRunningInForeground = false
+        if (activeInstance === this) {
+            activeInstance = null
+        }
         heartbeatJob?.cancel()
         heartbeatJob = null
         isListenersRegistered = false
@@ -861,10 +1010,9 @@ class LocationTrackingService : Service() {
             }
         } catch (e: Exception) {}
 
-        // If OS killed the service unexpectedly while user is logged in, immediately schedule revival!
         if (!isExplicitlyStopped && prefs.loadCurrentUser() != null) {
             Log.w(TAG, "Service destroyed unexpectedly — scheduling immediate watchdog revival!")
-            scheduleWatchdogAlarm(applicationContext, 1500L)
+            scheduleWatchdogAlarm(applicationContext, 2000L)
         }
     }
 

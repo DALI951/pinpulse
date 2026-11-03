@@ -486,9 +486,9 @@ class RealtimeService private constructor(private val context: Context) {
                         }
                     }
                     topic.contains("/loc") || topic.contains("/network/live") -> {
-                        val packet = gson.fromJson(payload, LocationPacket::class.java)
-                        _locationUpdates.emit(packet)
+                        val packet = gson.fromJson(payload, LocationPacket::class.java)?.sanitize()
                         if (packet != null && packet.userId.isNotBlank()) {
+                            _locationUpdates.emit(packet)
                             val u = User(
                                 id = packet.userId,
                                 displayName = packet.displayName,
@@ -503,13 +503,13 @@ class RealtimeService private constructor(private val context: Context) {
                                 isCharging = packet.isCharging,
                                 isSharingLocation = packet.isSharingLocation,
                                 lastUpdated = packet.timestamp
-                            )
+                            ).sanitize()
                             registerKnownUser(u)
                         }
                     }
                     topic.contains("/invites/") || (topic.contains("/code/") && payload.contains("\"status\":\"PENDING\"")) -> {
                         if (payload.isNotBlank() && payload != "{}" && payload.contains("\"fromUserId\"")) {
-                            val req = gson.fromJson(payload, FriendRequest::class.java)
+                            val req = gson.fromJson(payload, FriendRequest::class.java)?.sanitize()
                             if (req != null && req.fromUserId.isNotBlank()) {
                                 _friendRequests.emit(req)
                                 registerKnownUser(
@@ -519,7 +519,7 @@ class RealtimeService private constructor(private val context: Context) {
                                         email = req.fromUserEmail,
                                         avatarBase64 = req.fromUserAvatar,
                                         friendCode = req.fromFriendCode
-                                    )
+                                    ).sanitize()
                                 )
                                 // Direct persistent storage so timing never drops the invite
                                 val me = currentUser ?: AppPreferences(context).loadCurrentUser()
@@ -548,7 +548,7 @@ class RealtimeService private constructor(private val context: Context) {
                         val codeFromTopic = topic.removePrefix("pinpulse/v1/registry/code/").trim().uppercase()
                         if (payload.isNotBlank() && payload != "{}") {
                             try {
-                                val regUser = gson.fromJson(payload, User::class.java)
+                                val regUser = gson.fromJson(payload, User::class.java)?.sanitize()
                                 if (regUser != null) {
                                     val finalUser = if (regUser.friendCode.isBlank()) regUser.copy(friendCode = codeFromTopic) else regUser
                                     registerKnownUser(finalUser)
@@ -559,7 +559,7 @@ class RealtimeService private constructor(private val context: Context) {
                     topic.startsWith("pinpulse/v1/registry/") -> {
                         if (payload.isNotBlank() && payload != "{}") {
                             try {
-                                val regUser = gson.fromJson(payload, User::class.java)
+                                val regUser = gson.fromJson(payload, User::class.java)?.sanitize()
                                 if (regUser != null && regUser.id.isNotBlank()) {
                                     registerKnownUser(regUser)
                                 }
@@ -568,7 +568,7 @@ class RealtimeService private constructor(private val context: Context) {
                     }
                     topic.contains("/groups/") && topic.endsWith("/info") -> {
                         if (payload.isNotBlank() && payload != "{}") {
-                            val group = gson.fromJson(payload, Group::class.java)
+                            val group = gson.fromJson(payload, Group::class.java)?.sanitize()
                             if (group != null && group.id.isNotBlank()) {
                                 _groupUpdates.emit(group)
                             }
@@ -576,8 +576,10 @@ class RealtimeService private constructor(private val context: Context) {
                     }
                     topic.contains("/alerts/") -> {
                         try {
-                            val alert = gson.fromJson(payload, AlertMessage::class.java)
-                            _alerts.emit(alert)
+                            val alert = gson.fromJson(payload, AlertMessage::class.java)?.sanitize()
+                            if (alert != null) {
+                                _alerts.emit(alert)
+                            }
                         } catch (e: Exception) {
                             val map = gson.fromJson(payload, Map::class.java)
                             val senderName = map["senderName"]?.toString() ?: map["name"]?.toString() ?: "Friend"

@@ -170,16 +170,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         // Observe realtime location packets
         viewModelScope.launch {
-            realtime.locationUpdates.collect { packet ->
-                handleIncomingLocationPacket(packet)
+            realtime.locationUpdates.collect { rawPacket ->
+                try {
+                    handleIncomingLocationPacket(rawPacket.sanitize())
+                } catch (t: Throwable) {
+                    Log.e("MainViewModel", "Error handling location packet: ${t.message}")
+                }
             }
         }
 
         // Record our own 15-minute movement breadcrumb trail as currentUser coordinates update
         viewModelScope.launch {
             currentUser.collect { me ->
-                if (me != null && (me.latitude != 0.0 || me.longitude != 0.0)) {
-                    recordTrailPoint(me.id, me.latitude, me.longitude, me.speedKmh, me.lastUpdated)
+                try {
+                    if (me != null && (me.latitude != 0.0 || me.longitude != 0.0)) {
+                        recordTrailPoint(me.id, me.latitude, me.longitude, me.speedKmh, me.lastUpdated)
+                    }
+                } catch (t: Throwable) {
+                    Log.e("MainViewModel", "Error recording self trail: ${t.message}")
                 }
             }
         }
@@ -187,37 +195,42 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val appStartTime = System.currentTimeMillis()
         // Observe incoming alerts (e.g. emergency alert or location toggle)
         viewModelScope.launch {
-            realtime.alerts.collect { alert ->
-                val me = prefs.loadCurrentUser()
-                if (alert.senderId == me?.id) return@collect
+            realtime.alerts.collect { rawAlert ->
+                try {
+                    val alert = rawAlert.sanitize()
+                    val me = prefs.loadCurrentUser()
+                    if (alert.senderId == me?.id) return@collect
 
-                // 1. Only show alerts for confirmed friends (or system/group kick events)
-                val currentFriends = prefs.loadFriends()
-                val isFriend = currentFriends.any {
-                    it.id == alert.senderId ||
-                    (it.friendCode.isNotBlank() && it.friendCode.equals(alert.senderId, ignoreCase = true))
-                }
-                val isSystemOrKick = alert.senderId == "system" || alert.type.contains("KICKED") || alert.type.contains("SIREN")
-                if (!isFriend && !isSystemOrKick) {
-                    // Non-friends MUST NEVER trigger alert notifications!
-                    return@collect
-                }
+                    // 1. Only show alerts for confirmed friends (or system/group kick events)
+                    val currentFriends = prefs.loadFriends()
+                    val isFriend = currentFriends.any {
+                        it.id == alert.senderId ||
+                        (it.friendCode.isNotBlank() && it.friendCode.equals(alert.senderId, ignoreCase = true))
+                    }
+                    val isSystemOrKick = alert.senderId == "system" || alert.type.contains("KICKED") || alert.type.contains("SIREN")
+                    if (!isFriend && !isSystemOrKick) {
+                        // Non-friends MUST NEVER trigger alert notifications!
+                        return@collect
+                    }
 
-                // 2. Suppress non-critical alerts during startup sync (first 15 seconds) so stale broker messages never popup
-                if (!isSystemOrKick && (System.currentTimeMillis() - appStartTime < 15_000L)) {
-                    return@collect
-                }
+                    // 2. Suppress non-critical alerts during startup sync (first 15 seconds) so stale broker messages never popup
+                    if (!isSystemOrKick && (System.currentTimeMillis() - appStartTime < 15_000L)) {
+                        return@collect
+                    }
 
-                // 3. Suppress stale alerts older than 20 seconds
-                if (alert.timestamp > 0 && (System.currentTimeMillis() - alert.timestamp > 20_000L)) {
-                    return@collect
-                }
+                    // 3. Suppress stale alerts older than 20 seconds
+                    if (alert.timestamp > 0 && (System.currentTimeMillis() - alert.timestamp > 20_000L)) {
+                        return@collect
+                    }
 
-                _activeAlert.value = alert
-                // Auto dismiss banner after 7 seconds without corrupting saved friends
-                delay(7000)
-                if (_activeAlert.value?.id == alert.id) {
-                    _activeAlert.value = null
+                    _activeAlert.value = alert
+                    // Auto dismiss banner after 7 seconds without corrupting saved friends
+                    delay(7000)
+                    if (_activeAlert.value?.id == alert.id) {
+                        _activeAlert.value = null
+                    }
+                } catch (t: Throwable) {
+                    Log.e("MainViewModel", "Error handling alert: ${t.message}")
                 }
             }
         }
@@ -231,50 +244,60 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         // Observe incoming friend requests
         viewModelScope.launch {
-            realtime.friendRequests.collect { req ->
-                val me = currentUser.value ?: prefs.loadCurrentUser()
-                val currentFriends = prefs.loadFriends()
-                val isAlreadyFriend = currentFriends.any {
-                    it.id == req.fromUserId || (req.fromFriendCode.isNotBlank() && it.friendCode.equals(req.fromFriendCode, ignoreCase = true))
-                }
-                if (isAlreadyFriend) {
-                    // Already friends: clear broker retained invite and skip
-                    if (req.toFriendCode.isNotBlank()) {
-                        realtime.publishRetained("pinpulse/v1/invites/${req.toFriendCode}", "")
+            realtime.friendRequests.collect { rawReq ->
+                try {
+                    val req = rawReq.sanitize()
+                    val me = currentUser.value ?: prefs.loadCurrentUser()
+                    val currentFriends = prefs.loadFriends()
+                    val isAlreadyFriend = currentFriends.any {
+                        it.id == req.fromUserId || (req.fromFriendCode.isNotBlank() && it.friendCode.equals(req.fromFriendCode, ignoreCase = true))
                     }
-                    return@collect
-                }
-                if (me != null && (req.toFriendCode.equals(me.friendCode, ignoreCase = true) || req.toUserId == me.id)) {
-                    prefs.addPendingRequest(req)
+                    if (isAlreadyFriend) {
+                        // Already friends: clear broker retained invite and skip
+                        if (req.toFriendCode.isNotBlank()) {
+                            realtime.publishRetained("pinpulse/v1/invites/${req.toFriendCode}", "")
+                        }
+                        return@collect
+                    }
+                    if (me != null && (req.toFriendCode.equals(me.friendCode, ignoreCase = true) || req.toUserId == me.id)) {
+                        prefs.addPendingRequest(req)
+                    }
+                } catch (t: Throwable) {
+                    Log.e("MainViewModel", "Error handling friend request: ${t.message}")
                 }
             }
         }
 
         // Observe incoming group updates
         viewModelScope.launch {
-            realtime.groupUpdates.collect { group ->
-                val myId = currentUser.value?.id ?: prefs.loadCurrentUser()?.id ?: return@collect
-                val codeUpper = group.code.trim().uppercase()
+            realtime.groupUpdates.collect { rawGroup ->
+                try {
+                    val group = rawGroup.sanitize()
+                    val myId = currentUser.value?.id ?: prefs.loadCurrentUser()?.id ?: return@collect
+                    val codeUpper = group.code.trim().uppercase()
 
-                if (pendingJoinGroupCodes.remove(codeUpper)) {
-                    // User explicitly requested to join this group by code!
-                    val updatedMembers = (group.memberIds + myId).distinct()
-                    val joinedGroup = group.copy(memberIds = updatedMembers)
-                    prefs.addOrUpdateGroup(joinedGroup)
-                    realtime.publishGroupInfo(joinedGroup)
-                    syncCloudBackup()
-                    subscribeToGroupMembers(joinedGroup, myId)
-                } else if (group.memberIds.contains(myId)) {
-                    prefs.addOrUpdateGroup(group)
-                    syncCloudBackup()
-                    subscribeToGroupMembers(group, myId)
-                } else {
-                    // If we previously had this group locally, and the new memberIds list no longer contains us, we were removed!
-                    val existing = prefs.loadGroups().find { it.id == group.id || it.code.equals(group.code, ignoreCase = true) }
-                    if (existing != null && existing.creatorId != myId) {
-                        prefs.removeGroup(existing.id)
+                    if (pendingJoinGroupCodes.remove(codeUpper)) {
+                        // User explicitly requested to join this group by code!
+                        val updatedMembers = (group.memberIds + myId).distinct()
+                        val joinedGroup = group.copy(memberIds = updatedMembers)
+                        prefs.addOrUpdateGroup(joinedGroup)
+                        realtime.publishGroupInfo(joinedGroup)
                         syncCloudBackup()
+                        subscribeToGroupMembers(joinedGroup, myId)
+                    } else if (group.memberIds.contains(myId)) {
+                        prefs.addOrUpdateGroup(group)
+                        syncCloudBackup()
+                        subscribeToGroupMembers(group, myId)
+                    } else {
+                        // If we previously had this group locally, and the new memberIds list no longer contains us, we were removed!
+                        val existing = prefs.loadGroups().find { it.id == group.id || it.code.equals(group.code, ignoreCase = true) }
+                        if (existing != null && existing.creatorId != myId) {
+                            prefs.removeGroup(existing.id)
+                            syncCloudBackup()
+                        }
                     }
+                } catch (t: Throwable) {
+                    Log.e("MainViewModel", "Error handling group update: ${t.message}")
                 }
             }
         }
@@ -437,8 +460,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 // Cloud Account Restore from retained backup!
                 val jsonMap = gson.fromJson(payload, Map::class.java)
                 val userJson = gson.toJson(jsonMap["user"])
-                val restoredUser = gson.fromJson(userJson, User::class.java)
-                if (restoredUser != null) {
+                val restoredUser = gson.fromJson(userJson, User::class.java)?.sanitize()
+                if (restoredUser != null && restoredUser.id.isNotBlank()) {
                     val current = prefs.loadCurrentUser()
                     val mergedUser = (current ?: restoredUser).copy(
                         id = restoredUser.id,
@@ -446,18 +469,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         displayName = if (current?.displayName?.isNotBlank() == true) current.displayName else restoredUser.displayName,
                         avatarBase64 = current?.avatarBase64 ?: restoredUser.avatarBase64,
                         isSharingLocation = true
-                    )
+                    ).sanitize()
                     prefs.saveCurrentUser(mergedUser)
                 }
 
                 // Restore friends list
                 val friendsListType = object : com.google.gson.reflect.TypeToken<List<User>>() {}.type
                 val friendsJson = gson.toJson(jsonMap["friends"])
-                val restoredFriends = gson.fromJson<List<User>>(friendsJson, friendsListType)
+                val restoredFriends = gson.fromJson<List<User>>(friendsJson, friendsListType)?.mapNotNull { it?.sanitize() }
                 if (!restoredFriends.isNullOrEmpty()) {
                     val currentFriends = prefs.loadFriends().toMutableList()
                     restoredFriends.forEach { rf ->
-                        if (currentFriends.none { it.id == rf.id }) {
+                        if (rf.id.isNotBlank() && currentFriends.none { it.id == rf.id }) {
                             currentFriends.add(rf.copy(isSharingLocation = true))
                         }
                     }
@@ -472,12 +495,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 // Restore groups list
                 val groupsListType = object : com.google.gson.reflect.TypeToken<List<Group>>() {}.type
                 val groupsJson = gson.toJson(jsonMap["groups"])
-                val restoredGroups = gson.fromJson<List<Group>>(groupsJson, groupsListType)
+                val restoredGroups = gson.fromJson<List<Group>>(groupsJson, groupsListType)?.mapNotNull { it?.sanitize() }
                 if (!restoredGroups.isNullOrEmpty()) {
                     val currentGroups = prefs.loadGroups().toMutableList()
                     val myId = prefs.loadCurrentUser()?.id ?: ""
                     restoredGroups.forEach { rg ->
-                        if (currentGroups.none { it.id == rg.id || it.code.equals(rg.code, ignoreCase = true) }) {
+                        if (rg.id.isNotBlank() && currentGroups.none { it.id == rg.id || it.code.equals(rg.code, ignoreCase = true) }) {
                             currentGroups.add(rg)
                         }
                     }
@@ -504,8 +527,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 // Requester receives acceptance from recipient!
                 val jsonMap = gson.fromJson(payload, Map::class.java)
                 val friendJson = gson.toJson(jsonMap["friend"])
-                val friend = gson.fromJson(friendJson, User::class.java)
-                if (friend != null) {
+                val friend = gson.fromJson(friendJson, User::class.java)?.sanitize()
+                if (friend != null && friend.id.isNotBlank()) {
                     prefs.addOrUpdateFriend(friend.copy(isSharingLocation = true))
                     realtime.subscribe("pinpulse/v1/user/${friend.id}/loc")
                     realtime.subscribe("pinpulse/v1/user/${friend.id}/status")
@@ -517,8 +540,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val jsonMap = gson.fromJson(payload, Map::class.java)
                 val groupCode = (jsonMap["groupCode"] as? String)?.uppercase()
                 val userJson = gson.toJson(jsonMap["user"])
-                val joiningUser = gson.fromJson(userJson, User::class.java)
-                if (groupCode != null && joiningUser != null) {
+                val joiningUser = gson.fromJson(userJson, User::class.java)?.sanitize()
+                if (groupCode != null && joiningUser != null && joiningUser.id.isNotBlank()) {
                     realtime.registerKnownUser(joiningUser)
                     _groupMembers.value = _groupMembers.value + (joiningUser.id to joiningUser)
 

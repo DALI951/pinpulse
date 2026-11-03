@@ -168,33 +168,39 @@ fun MainScreen(
         val coarseGranted = permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
         if (fineGranted || coarseGranted) {
             (context as? com.pinpulse.radar.MainActivity)?.fetchImmediateLocation()
-            (context as? com.pinpulse.radar.MainActivity)?.requestBatteryOptimizationExemption()
             com.pinpulse.radar.service.LocationTrackingService.start(context)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && !checkBgLocationGranted(context)) {
-                backgroundLocationLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+                try {
+                    backgroundLocationLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+                } catch (_: Exception) {}
+            } else {
+                (context as? com.pinpulse.radar.MainActivity)?.requestBatteryOptimizationExemption(force = false)
             }
         }
     }
 
     LaunchedEffect(Unit) {
-        val appPrefs = com.pinpulse.radar.data.AppPreferences(context)
-        val fineAlready = androidx.core.content.ContextCompat.checkSelfPermission(
-            context, Manifest.permission.ACCESS_FINE_LOCATION
-        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-        if (!appPrefs.hasPromptedLocationPermissions || !fineAlready) {
-            appPrefs.hasPromptedLocationPermissions = true
-            val permissions = mutableListOf(
-                Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.ACCESS_COARSE_LOCATION
-            )
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+        try {
+            val appPrefs = com.pinpulse.radar.data.AppPreferences(context)
+            val fineAlready = androidx.core.content.ContextCompat.checkSelfPermission(
+                context, Manifest.permission.ACCESS_FINE_LOCATION
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            if (!appPrefs.hasPromptedLocationPermissions || !fineAlready) {
+                appPrefs.hasPromptedLocationPermissions = true
+                val permissions = mutableListOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                )
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+                }
+                locationPermissionLauncher.launch(permissions.toTypedArray())
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && !checkBgLocationGranted(context)) {
+                backgroundLocationLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+            } else {
+                (context as? com.pinpulse.radar.MainActivity)?.requestBatteryOptimizationExemption(force = false)
             }
-            locationPermissionLauncher.launch(permissions.toTypedArray())
-            (context as? com.pinpulse.radar.MainActivity)?.requestBatteryOptimizationExemption(force = false)
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && !checkBgLocationGranted(context)) {
-            backgroundLocationLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
-        }
+        } catch (_: Exception) {}
     }
 
     Box(
