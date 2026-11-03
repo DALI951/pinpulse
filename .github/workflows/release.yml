@@ -86,11 +86,7 @@ jobs:
           fi
 
           # Create executable entry stub inside Payload/PinPulse.app/PinPulse
-          cat << 'EOF' > build_ios_ipa/Payload/PinPulse.app/PinPulse
-          #!/bin/sh
-          # PinPulse iOS Application Bundle (com.pinpulse.radar)
-          exec "$(dirname "$0")/PinPulseApp" "$@"
-          EOF
+          printf '#!/bin/sh\n# PinPulse iOS Application Bundle (com.pinpulse.radar)\nexec "$(dirname "$0")/PinPulseApp" "$@"\n' > build_ios_ipa/Payload/PinPulse.app/PinPulse
           chmod +x build_ios_ipa/Payload/PinPulse.app/PinPulse
 
           (cd build_ios_ipa && zip -qry "../${IPA_FILE}" Payload)
@@ -112,10 +108,13 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Mirror APK + iOS IPA to Public Release Channel (DALI951/pinpulse-releases)
-        if: ${{ secrets.RELEASE_MIRROR_TOKEN != '' }}
         env:
           GH_TOKEN: ${{ secrets.RELEASE_MIRROR_TOKEN }}
         run: |
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "No RELEASE_MIRROR_TOKEN configured, skipping mirror."
+            exit 0
+          fi
           TAG="v${{ env.VERSION_NAME }}"
           TITLE="PinPulse v${{ env.VERSION_NAME }} (Build #${{ github.run_number }})"
           NOTES="Official PinPulse v${{ env.VERSION_NAME }} release for Android (.apk) and iOS (.ipa)."
