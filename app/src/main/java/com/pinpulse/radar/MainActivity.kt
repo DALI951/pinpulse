@@ -59,17 +59,38 @@ class MainActivity : ComponentActivity() {
                     color = RadarDarkBg
                 ) {
                     val currentUser by viewModel.currentUser.collectAsState()
+                    val hasCompletedSetup by viewModel.hasCompletedSetup.collectAsState()
+                    val hasUserCreatedPassword by viewModel.hasUserCreatedPassword.collectAsState()
 
                     if (currentUser == null) {
-                        AuthScreen(
-                            onSignIn = { email, name, avatar, pin ->
-                                viewModel.signInWithGoogleIdentity(email, name, avatar)
-                                viewModel.setSecurityPin(pin)
+                        AuthScreen(viewModel = viewModel)
+                    } else if (!hasCompletedSetup) {
+                        OnboardingSetupScreen(
+                            viewModel = viewModel,
+                            onFinish = {
                                 fetchImmediateLocation()
                             }
                         )
                     } else {
                         MainScreen(viewModel = viewModel)
+
+                        if (!hasUserCreatedPassword && currentUser?.email?.isNotBlank() == true) {
+                            CreatePasswordPromptDialog(
+                                email = currentUser?.email ?: "",
+                                onSetPassword = { pass ->
+                                    viewModel.setPasswordForCurrentAccount(pass) { success: Boolean, err: String? ->
+                                        if (success) {
+                                            Toast.makeText(this@MainActivity, "Account secured with password!", Toast.LENGTH_SHORT).show()
+                                        } else if (err != null) {
+                                            Toast.makeText(this@MainActivity, err, Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                },
+                                onDismiss = {
+                                    viewModel.markPasswordCreated()
+                                }
+                            )
+                        }
                     }
                 }
             }
