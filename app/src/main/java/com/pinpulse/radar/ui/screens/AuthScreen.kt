@@ -515,6 +515,8 @@ fun AuthScreen(
     }
 
     if (showForgotPasswordDialog) {
+        var isSending by remember { mutableStateOf(false) }
+        var resetStatusMsg by remember { mutableStateOf<String?>(null) }
         AlertDialog(
             onDismissRequest = { showForgotPasswordDialog = false },
             title = { Text("Reset Password", fontWeight = FontWeight.Bold, color = Color.White) },
@@ -525,29 +527,54 @@ fun AuthScreen(
                     OutlinedTextField(
                         value = forgotPasswordEmail,
                         onValueChange = { forgotPasswordEmail = it },
-                        label = { Text("Email") },
+                        label = { Text("Email Address") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "💡 Tip: If you previously signed in with Google, you can tap 'Continue with Google' without needing a password. If resetting, check your SPAM / JUNK folder.",
+                        fontSize = 11.sp,
+                        color = TextMuted
+                    )
+                    if (resetStatusMsg != null) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(resetStatusMsg ?: "", color = DangerRed, fontSize = 12.sp)
+                    }
                 }
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        if (forgotPasswordEmail.isNotBlank()) {
-                            viewModel.sendPasswordReset(forgotPasswordEmail.trim()) { success, err ->
+                        val clean = forgotPasswordEmail.trim()
+                        if (clean.isNotBlank()) {
+                            isSending = true
+                            resetStatusMsg = null
+                            viewModel.sendPasswordReset(clean) { success, err ->
+                                isSending = false
                                 if (success) {
-                                    Toast.makeText(context, "Reset link sent! Check your email.", Toast.LENGTH_LONG).show()
+                                    Toast.makeText(
+                                        context,
+                                        "Reset link sent to $clean! Please check your SPAM / JUNK folder if not in inbox.",
+                                        Toast.LENGTH_LONG
+                                    ).show()
                                     showForgotPasswordDialog = false
                                 } else {
-                                    Toast.makeText(context, err ?: "Failed to send reset link", Toast.LENGTH_SHORT).show()
+                                    resetStatusMsg = err ?: "Failed to send reset link. Please verify your email."
                                 }
                             }
                         }
                     },
+                    enabled = !isSending && forgotPasswordEmail.isNotBlank(),
                     colors = ButtonDefaults.buttonColors(containerColor = PulseGreen)
                 ) {
-                    Text("Send Reset Link", color = Color(0xFF0F172A), fontWeight = FontWeight.Bold)
+                    if (isSending) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color(0xFF0F172A), strokeWidth = 2.dp)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Sending...", color = Color(0xFF0F172A), fontWeight = FontWeight.Bold)
+                    } else {
+                        Text("Send Reset Link", color = Color(0xFF0F172A), fontWeight = FontWeight.Bold)
+                    }
                 }
             },
             dismissButton = {

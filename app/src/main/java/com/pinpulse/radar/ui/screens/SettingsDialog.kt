@@ -121,8 +121,14 @@ fun SettingsDialog(
     var newPinVisible by remember { mutableStateOf(false) }
     var confirmPinVisible by remember { mutableStateOf(false) }
     var pinErrorMessage by remember { mutableStateOf<String?>(null) }
-    var showPasswordResetConfirm by remember { mutableStateOf(false) }
-    var isSendingPasswordReset by remember { mutableStateOf(false) }
+    var showChangePasswordDialog by remember { mutableStateOf(false) }
+    var newPasswordInput by remember { mutableStateOf("") }
+    var confirmPasswordInput by remember { mutableStateOf("") }
+    var newPasswordVisible by remember { mutableStateOf(false) }
+    var confirmPasswordVisible by remember { mutableStateOf(false) }
+    var passwordChangeError by remember { mutableStateOf<String?>(null) }
+    var isSavingPassword by remember { mutableStateOf(false) }
+    var isSendingResetEmail by remember { mutableStateOf(false) }
 
     val avatarPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -826,20 +832,19 @@ fun SettingsDialog(
 
                                 Button(
                                     onClick = {
-                                        showPasswordResetConfirm = true
+                                        newPasswordInput = ""
+                                        confirmPasswordInput = ""
+                                        passwordChangeError = null
+                                        showChangePasswordDialog = true
                                     },
-                                    enabled = !isSendingPasswordReset && currentUser?.email?.isNotBlank() == true,
+                                    enabled = currentUser?.email?.isNotBlank() == true,
                                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B)),
                                     shape = RoundedCornerShape(8.dp),
                                     modifier = Modifier.height(34.dp)
                                 ) {
-                                    if (isSendingPasswordReset) {
-                                        CircularProgressIndicator(modifier = Modifier.size(14.dp), color = PulseGreen, strokeWidth = 2.dp)
-                                    } else {
-                                        Icon(Icons.Default.Email, contentDescription = null, tint = PulseGreen, modifier = Modifier.size(14.dp))
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Change Password", fontSize = 11.sp, color = PulseGreen, fontWeight = FontWeight.Bold)
-                                    }
+                                    Icon(Icons.Default.Lock, contentDescription = null, tint = PulseGreen, modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Change Password", fontSize = 11.sp, color = PulseGreen, fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
@@ -1062,50 +1067,166 @@ fun SettingsDialog(
         }
     }
 
-    if (showPasswordResetConfirm) {
+    if (showChangePasswordDialog) {
         val targetEmail = currentUser?.email ?: ""
         AlertDialog(
-            onDismissRequest = { showPasswordResetConfirm = false },
-            title = { Text("✉️ Change Account Password", fontWeight = FontWeight.Bold, color = Color.White) },
+            onDismissRequest = { showChangePasswordDialog = false },
+            title = { Text("🔐 Change Account Password", fontWeight = FontWeight.Bold, color = Color.White) },
             text = {
                 Column {
                     Text(
-                        text = "We will send a secure password reset link to your email address:\n\n$targetEmail\n\nYou can click the link in your email to choose a new password anytime.",
+                        text = "Set a new password directly for $targetEmail (no email required), or send a password reset link to your email:",
                         fontSize = 13.sp,
                         color = TextSecondary
                     )
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        showPasswordResetConfirm = false
-                        isSendingPasswordReset = true
-                        viewModel.sendPasswordReset(targetEmail) { success, err ->
-                            isSendingPasswordReset = false
-                            if (success) {
-                                Toast.makeText(
-                                    context,
-                                    "Password reset link sent to $targetEmail! Check your inbox (and spam).",
-                                    Toast.LENGTH_LONG
-                                ).show()
-                            } else {
-                                Toast.makeText(
-                                    context,
-                                    err ?: "Failed to send reset link. Please try again.",
-                                    Toast.LENGTH_LONG
-                                ).show()
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    OutlinedTextField(
+                        value = newPasswordInput,
+                        onValueChange = { newPasswordInput = it },
+                        label = { Text("New Password (min 6 chars)") },
+                        leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = TextMuted) },
+                        trailingIcon = {
+                            IconButton(onClick = { newPasswordVisible = !newPasswordVisible }) {
+                                Icon(
+                                    imageVector = if (newPasswordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                    contentDescription = if (newPasswordVisible) "Hide password" else "Show password",
+                                    tint = TextMuted
+                                )
                             }
+                        },
+                        visualTransformation = if (newPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = PulseGreen,
+                            unfocusedBorderColor = Color(0xFF334155)
+                        )
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    OutlinedTextField(
+                        value = confirmPasswordInput,
+                        onValueChange = { confirmPasswordInput = it },
+                        label = { Text("Confirm New Password") },
+                        leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = TextMuted) },
+                        trailingIcon = {
+                            IconButton(onClick = { confirmPasswordVisible = !confirmPasswordVisible }) {
+                                Icon(
+                                    imageVector = if (confirmPasswordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                    contentDescription = if (confirmPasswordVisible) "Hide password" else "Show password",
+                                    tint = TextMuted
+                                )
+                            }
+                        },
+                        visualTransformation = if (confirmPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = PulseGreen,
+                            unfocusedBorderColor = Color(0xFF334155)
+                        )
+                    )
+
+                    if (passwordChangeError != null) {
+                        Text(
+                            text = passwordChangeError ?: "",
+                            color = DangerRed,
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(top = 6.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // Direct In-App Save Button
+                    Button(
+                        onClick = {
+                            if (newPasswordInput.length < 6) {
+                                passwordChangeError = "Password must be at least 6 characters."
+                            } else if (newPasswordInput != confirmPasswordInput) {
+                                passwordChangeError = "Passwords do not match."
+                            } else {
+                                isSavingPassword = true
+                                passwordChangeError = null
+                                viewModel.setPasswordForCurrentAccount(newPasswordInput) { success, err ->
+                                    isSavingPassword = false
+                                    if (success) {
+                                        showChangePasswordDialog = false
+                                        Toast.makeText(context, "Password updated successfully!", Toast.LENGTH_LONG).show()
+                                    } else {
+                                        passwordChangeError = err ?: "Failed to update password."
+                                    }
+                                }
+                            }
+                        },
+                        enabled = !isSavingPassword && !isSendingResetEmail,
+                        colors = ButtonDefaults.buttonColors(containerColor = PulseGreen),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth().height(42.dp)
+                    ) {
+                        if (isSavingPassword) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color(0xFF0F172A), strokeWidth = 2.dp)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Saving...", color = Color(0xFF0F172A), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        } else {
+                            Text("Update Password (Instant)", color = Color(0xFF0F172A), fontWeight = FontWeight.Bold, fontSize = 13.sp)
                         }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = PulseGreen)
-                ) {
-                    Text("Send Reset Link", color = Color(0xFF0F172A), fontWeight = FontWeight.Bold)
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Or Send Reset Email Button
+                    OutlinedButton(
+                        onClick = {
+                            isSendingResetEmail = true
+                            passwordChangeError = null
+                            viewModel.sendPasswordReset(targetEmail) { success, err ->
+                                isSendingResetEmail = false
+                                if (success) {
+                                    Toast.makeText(
+                                        context,
+                                        "Reset link sent to $targetEmail! Check your SPAM / JUNK folder if not in inbox.",
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                    showChangePasswordDialog = false
+                                } else {
+                                    passwordChangeError = err ?: "Failed to send reset email. Please try again."
+                                }
+                            }
+                        },
+                        enabled = !isSavingPassword && !isSendingResetEmail,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth().height(40.dp)
+                    ) {
+                        if (isSendingResetEmail) {
+                            CircularProgressIndicator(modifier = Modifier.size(14.dp), color = Color.White, strokeWidth = 2.dp)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Sending Email...", color = Color.White, fontSize = 12.sp)
+                        } else {
+                            Icon(Icons.Default.Email, contentDescription = null, tint = PulseGreen, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Send Password Reset Email Link", color = Color.White, fontSize = 12.sp)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "💡 Tip: Emails from Firebase can sometimes land in the Spam/Junk folder (sender: noreply@pinpulse-81d6a.firebaseapp.com).",
+                        fontSize = 10.sp,
+                        color = TextMuted
+                    )
                 }
             },
+            confirmButton = {},
             dismissButton = {
-                TextButton(onClick = { showPasswordResetConfirm = false }) {
-                    Text("Cancel", color = TextMuted)
+                TextButton(onClick = { showChangePasswordDialog = false }) {
+                    Text("Close", color = TextMuted)
                 }
             },
             containerColor = Color(0xFF1E293B)

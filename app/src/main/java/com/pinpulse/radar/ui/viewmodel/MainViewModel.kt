@@ -1108,14 +1108,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         onComplete: (Boolean, String?) -> Unit
     ) {
         val user = firebaseAuth.currentUser
-        val email = prefs.loadCurrentUser()?.email ?: ""
+        val email = (user?.email ?: prefs.loadCurrentUser()?.email ?: "").trim()
+        if (pass.length < 6) {
+            onComplete(false, "Password must be at least 6 characters")
+            return
+        }
+
         if (user != null) {
             user.updatePassword(pass).addOnCompleteListener { task ->
                 if (task.isSuccessful) {
                     markPasswordCreated()
                     onComplete(true, null)
                 } else {
-                    onComplete(false, task.exception?.localizedMessage ?: "Failed to update password")
+                    // If update failed (e.g. user originally signed in via Google provider and needs password provider linked), link credential!
+                    val userEmail = user.email ?: email
+                    if (userEmail.isNotBlank()) {
+                        val cred = com.google.firebase.auth.EmailAuthProvider.getCredential(userEmail, pass)
+                        user.linkWithCredential(cred).addOnCompleteListener { linkTask ->
+                            if (linkTask.isSuccessful) {
+                                markPasswordCreated()
+                                onComplete(true, null)
+                            } else {
+                                val err = linkTask.exception?.localizedMessage ?: task.exception?.localizedMessage ?: "Failed to update password"
+                                onComplete(false, err)
+                            }
+                        }
+                    } else {
+                        onComplete(false, task.exception?.localizedMessage ?: "Failed to update password")
+                    }
                 }
             }
         } else if (email.isNotBlank()) {
