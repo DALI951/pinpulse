@@ -2914,14 +2914,7 @@
     function layoutMarkers() {
       if (!map || !legsLayer) return;
       legsLayer.clearLayers();
-      // Place every marker strictly on its exact true GPS coordinates identical to the app
-      Object.keys(markers).forEach(function(id) {
-        var u = users[id];
-        if (u && hasValidPos(u) && markers[id]) {
-          markers[id].setLatLng([u.lat, u.lng]);
-        }
-      });
-      return;
+
 
       var OVERLAP_PX = (a11ySettings.markerStyle === 'dot') ? 28 : 64;
 
