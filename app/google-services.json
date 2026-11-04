@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "74590505513",
+    "project_id": "pinpulse-81d6a",
+    "storage_bucket": "pinpulse-81d6a.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:74590505513:android:5b04c8375d948902256a38",
+        "android_client_info": {
+          "package_name": "com.pinpulse.radar"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "74590505513-si0mil13aoia2c183larlv05lh2i2rv2.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.pinpulse.radar",
+            "certificate_hash": "e58ec6ea82c6b013524eaee731d0931c7e362637"
+          }
+        },
+        {
+          "client_id": "74590505513-pfr3jrldca87a8j1l9vqrjo61j4cfq5m.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCWfCwEEBUrRMIk9lth8ref0_vescrsaHg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "74590505513-pfr3jrldca87a8j1l9vqrjo61j4cfq5m.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

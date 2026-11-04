@@ -41,6 +41,9 @@ import org.osmdroid.util.GeoPoint
 import org.osmdroid.util.MapTileIndex
 import org.osmdroid.views.CustomZoomButtonsController
 import org.osmdroid.views.MapView
+import org.osmdroid.events.MapListener
+import org.osmdroid.events.ScrollEvent
+import org.osmdroid.events.ZoomEvent
 import org.osmdroid.views.overlay.MapEventsOverlay
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polyline
@@ -111,6 +114,7 @@ fun MapViewComponent(
     var hasAutoCentered by remember { mutableStateOf(false) }
 
     val currentOnAvatarClick by rememberUpdatedState(onAvatarClick)
+    var mapMotionTick by remember { mutableStateOf(0) }
     val currentOnMapClick by rememberUpdatedState(onMapClick)
 
     // Manage native MapView lifecycle
@@ -155,6 +159,17 @@ fun MapViewComponent(
                 })
                 overlays.add(0, clickEventsOverlay)
 
+                addMapListener(object : MapListener {
+                    override fun onScroll(event: ScrollEvent?): Boolean {
+                        mapMotionTick++
+                        return false
+                    }
+                    override fun onZoom(event: ZoomEvent?): Boolean {
+                        mapMotionTick++
+                        return false
+                    }
+                })
+
                 mapViewRef = this
             }
         }
@@ -173,7 +188,7 @@ fun MapViewComponent(
     }
 
     // Sync native user markers and 15-minute movement trails
-    LaunchedEffect(mapViewRef, visibleUsers, currentUserId, selfMarkerMode, userTrails, selectedPersonId) {
+    LaunchedEffect(mapViewRef, visibleUsers, currentUserId, selfMarkerMode, userTrails, selectedPersonId, mapMotionTick) {
         val mapView = mapViewRef ?: return@LaunchedEffect
         val density = context.resources.displayMetrics.density
         val now = System.currentTimeMillis()

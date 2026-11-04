@@ -11,6 +11,8 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.gson.Gson
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.GoogleAuthProvider
 import com.pinpulse.radar.data.AppPreferences
 import com.pinpulse.radar.data.RealtimeService
 import com.pinpulse.radar.model.AlertMessage
@@ -57,6 +59,24 @@ data class KickConfirmationState(
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
+
+    private val firebaseAuth: FirebaseAuth by lazy { FirebaseAuth.getInstance() }
+
+    private val _hasCompletedSetup = MutableStateFlow(prefs.hasCompletedSetup)
+    val hasCompletedSetup: StateFlow<Boolean> = _hasCompletedSetup.asStateFlow()
+
+    private val _hasUserCreatedPassword = MutableStateFlow(prefs.hasUserCreatedPassword)
+    val hasUserCreatedPassword: StateFlow<Boolean> = _hasUserCreatedPassword.asStateFlow()
+
+    fun completeOnboardingSetup() {
+        prefs.hasCompletedSetup = true
+        _hasCompletedSetup.value = true
+    }
+
+    fun markPasswordCreated() {
+        prefs.hasUserCreatedPassword = true
+        _hasUserCreatedPassword.value = true
+    }
 
     private val app: Application = application
     private val prefs = AppPreferences(application)
@@ -957,6 +977,165 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             groupsCount = groupsCount
         )
         realtime.publishLocation(packet, force = true)
+    }
+
+    fun updateDisplayName(name: String) {
+        val current = prefs.loadCurrentUser() ?: return
+        val cleanName = name.trim().take(30)
+        if (cleanName.isBlank()) return
+        val now = System.currentTimeMillis()
+        val updated = current.copy(displayName = cleanName, lastUpdated = now)
+        prefs.saveCurrentUser(updated)
+        _currentUser.value = updated
+        if (_selectedPerson.value?.id == updated.id) {
+            _selectedPerson.value = updated
+        }
+        realtime.publishUserRegistry(updated)
+        syncCloudBackup()
+
+        updateMyLocation(updated.latitude, updated.longitude, updated.speedKmh / 3.6f)
+        LocationTrackingService.start(app)
+    }
+
+    fun signInWithGoogleFirebase(
+        idToken: String,
+        email: String,
+        name: String,
+        avatarUrl: String?,
+        onComplete: (Boolean, String?) -> Unit
+    ) {
+        val credential = GoogleAuthProvider.getCredential(idToken, null)
+        firebaseAuth.signInWithCredential(credential)
+            .addOnCompleteListener { task ->
+                if (task.isSuccessful) {
+                    val firebaseUser = firebaseAuth.currentUser
+                    val finalEmail = firebaseUser?.email ?: email
+                    val finalName = firebaseUser?.displayName ?: name
+                    val finalPhoto = firebaseUser?.photoUrl?.toString() ?: avatarUrl
+                    markPasswordCreated()
+                    signInWithGoogleIdentity(finalEmail, finalName, finalPhoto)
+                    onComplete(true, null)
+                } else {
+                    val err = task.exception?.localizedMessage ?: "Google sign in failed"
+                    Log.w("MainViewModel", "Firebase Google sign in failed, fallback to local: $err")
+                    signInWithGoogleIdentity(email, name, avatarUrl)
+                    onComplete(true, null)
+                }
+            }
+    }
+
+    fun signInWithEmailPassword(
+        email: String,
+        pass: String,
+        onComplete: (Boolean, String?) -> Unit
+    ) {
+        if (email.isBlank() || pass.isBlank()) {
+            onComplete(false, "Email and password are required")
+            return
+        }
+        firebaseAuth.signInWithEmailAndPassword(email.trim(), pass)
+            .addOnCompleteListener { task ->
+                if (task.isSuccessful) {
+                    val firebaseUser = firebaseAuth.currentUser
+                    val realEmail = firebaseUser?.email ?: email.trim()
+                    val realName = firebaseUser?.displayName ?: realEmail.substringBefore("@")
+                    markPasswordCreated()
+                    signInWithGoogleIdentity(realEmail, realName, null)
+                    onComplete(true, null)
+                } else {
+                    val msg = task.exception?.localizedMessage ?: "Invalid email or password"
+                    onComplete(false, msg)
+                }
+            }
+    }
+
+    fun signUpWithEmailPassword(
+        email: String,
+        pass: String,
+        displayName: String,
+        onComplete: (Boolean, String?) -> Unit
+    ) {
+        if (email.isBlank() || pass.isBlank()) {
+            onComplete(false, "Email and password are required")
+            return
+        }
+        if (pass.length < 6) {
+            onComplete(false, "Password must be at least 6 characters")
+            return
+        }
+        firebaseAuth.createUserWithEmailAndPassword(email.trim(), pass)
+            .addOnCompleteListener { task ->
+                if (task.isSuccessful) {
+                    val firebaseUser = firebaseAuth.currentUser
+                    val realEmail = firebaseUser?.email ?: email.trim()
+                    val name = displayName.trim().ifBlank { realEmail.substringBefore("@") }
+                    val profileUpdates = com.google.firebase.auth.UserProfileChangeRequest.Builder()
+                        .setDisplayName(name)
+                        .build()
+                    firebaseUser?.updateProfile(profileUpdates)
+                    markPasswordCreated()
+                    signInWithGoogleIdentity(realEmail, name, null)
+                    onComplete(true, null)
+                } else {
+                    val msg = task.exception?.localizedMessage ?: "Could not create account"
+                    onComplete(false, msg)
+                }
+            }
+    }
+
+    fun sendPasswordReset(
+        email: String,
+        onComplete: (Boolean, String?) -> Unit
+    ) {
+        if (email.isBlank()) {
+            onComplete(false, "Please enter your email address")
+            return
+        }
+        firebaseAuth.sendPasswordResetEmail(email.trim())
+            .addOnCompleteListener { task ->
+                if (task.isSuccessful) {
+                    onComplete(true, null)
+                } else {
+                    val msg = task.exception?.localizedMessage ?: "Failed to send reset link"
+                    onComplete(false, msg)
+                }
+            }
+    }
+
+    fun setPasswordForCurrentAccount(
+        pass: String,
+        onComplete: (Boolean, String?) -> Unit
+    ) {
+        val user = firebaseAuth.currentUser
+        val email = prefs.loadCurrentUser()?.email ?: ""
+        if (user != null) {
+            user.updatePassword(pass).addOnCompleteListener { task ->
+                if (task.isSuccessful) {
+                    markPasswordCreated()
+                    onComplete(true, null)
+                } else {
+                    onComplete(false, task.exception?.localizedMessage ?: "Failed to update password")
+                }
+            }
+        } else if (email.isNotBlank()) {
+            firebaseAuth.createUserWithEmailAndPassword(email, pass).addOnCompleteListener { task ->
+                if (task.isSuccessful) {
+                    markPasswordCreated()
+                    onComplete(true, null)
+                } else {
+                    firebaseAuth.signInWithEmailAndPassword(email, pass).addOnCompleteListener { t2 ->
+                        if (t2.isSuccessful) {
+                            markPasswordCreated()
+                            onComplete(true, null)
+                        } else {
+                            onComplete(false, task.exception?.localizedMessage ?: "Failed to set password")
+                        }
+                    }
+                }
+            }
+        } else {
+            onComplete(false, "No active email found")
+        }
     }
 
     fun updateMyStatusMessage(status: String) {

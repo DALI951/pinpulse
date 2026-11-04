@@ -238,6 +238,14 @@ class AppPreferences(context: Context) {
         get() = prefs.getBoolean("has_accepted_privacy_policy", false)
         set(value) = prefs.edit().putBoolean("has_accepted_privacy_policy", value).apply()
 
+    var hasCompletedSetup: Boolean
+        get() = prefs.getBoolean("has_completed_setup", hasSecurityPin() && loadCurrentUser() != null)
+        set(value) = prefs.edit().putBoolean("has_completed_setup", value).apply()
+
+    var hasUserCreatedPassword: Boolean
+        get() = prefs.getBoolean("has_user_created_password", false)
+        set(value) = prefs.edit().putBoolean("has_user_created_password", value).apply()
+
     fun getSecurityPin(): String? {
         val pin = prefs.getString("security_pin", null)
         return if (!pin.isNullOrBlank()) pin else null

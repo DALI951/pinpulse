@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.google.services)
 }
 
 val propVersionCode = (project.findProperty("versionCode") as? String)?.toIntOrNull() ?: 1
@@ -107,6 +108,8 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.paho.mqtt)
     implementation(libs.osmdroid.android)
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.auth.ktx)
 
     debugImplementation(libs.androidx.ui.tooling)
 }

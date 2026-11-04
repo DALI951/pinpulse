@@ -102,6 +102,8 @@ fun SettingsDialog(
     val hasSecurityPin by viewModel.hasSecurityPin.collectAsState()
     val friends by viewModel.friends.collectAsState()
 
+    var isEditingName by remember { mutableStateOf(false) }
+    var nameInput by remember(currentUser?.displayName) { mutableStateOf(currentUser?.displayName ?: "") }
     var isEditingPin by remember { mutableStateOf(false) }
     var oldPinInput by remember { mutableStateOf("") }
     var newPinInput by remember { mutableStateOf("") }

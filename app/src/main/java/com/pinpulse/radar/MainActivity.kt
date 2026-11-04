@@ -22,6 +22,20 @@ import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.pinpulse.radar.ui.screens.AuthScreen
 import com.pinpulse.radar.ui.screens.MainScreen
+import com.pinpulse.radar.ui.screens.OnboardingSetupScreen
+import android.widget.Toast
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.pinpulse.radar.ui.theme.DangerRed
+import com.pinpulse.radar.ui.theme.PulseGreen
+import com.pinpulse.radar.ui.theme.TextMuted
+import com.pinpulse.radar.ui.theme.TextSecondary
 import com.pinpulse.radar.ui.theme.PinPulseTheme
 import com.pinpulse.radar.ui.theme.RadarDarkBg
 import com.pinpulse.radar.ui.viewmodel.MainViewModel
@@ -201,4 +215,72 @@ class MainActivity : ComponentActivity() {
             fetchImmediateLocation()
         }
     }
+}
+
+@Composable
+fun CreatePasswordPromptDialog(
+    email: String,
+    onSetPassword: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var pass by remember { mutableStateOf("") }
+    var confirmPass by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("🔐 Secure Your Account", fontWeight = FontWeight.Bold, color = Color.White) },
+        text = {
+            Column {
+                Text(
+                    text = "Welcome back! To protect your account ($email) and circle data, please choose a secure password:",
+                    fontSize = 13.sp,
+                    color = TextSecondary
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = pass,
+                    onValueChange = { pass = it },
+                    label = { Text("New Password (min 6 chars)") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = confirmPass,
+                    onValueChange = { confirmPass = it },
+                    label = { Text("Confirm Password") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (error != null) {
+                    Text(error ?: "", color = DangerRed, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (pass.length < 6) {
+                        error = "Password must be at least 6 characters."
+                    } else if (pass != confirmPass) {
+                        error = "Passwords do not match."
+                    } else {
+                        onSetPassword(pass)
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = PulseGreen)
+            ) {
+                Text("Save Password", color = Color(0xFF0F172A), fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Later", color = TextMuted)
+            }
+        },
+        containerColor = Color(0xFF1E293B)
+    )
 }
