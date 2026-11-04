@@ -272,9 +272,10 @@ fun OnboardingSetupScreen(
                                 contentAlignment = Alignment.Center
                             ) {
                                 UserAvatar(
-                                    avatarBase64 = currentUser?.avatarBase64,
+                                    avatarSource = currentUser?.avatarBase64,
                                     displayName = displayName.ifBlank { "User" },
-                                    size = 76.dp
+                                    modifier = Modifier.fillMaxSize(),
+                                    fallbackTextSize = 22.sp
                                 )
                                 Box(
                                     modifier = Modifier.fillMaxSize().background(Color(0x33000000)),

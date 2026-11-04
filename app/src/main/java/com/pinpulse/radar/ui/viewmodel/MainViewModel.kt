@@ -62,6 +62,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val firebaseAuth: FirebaseAuth by lazy { FirebaseAuth.getInstance() }
 
+
+
+    private val app: Application = application
+    private val prefs = AppPreferences(application)
+    private val realtime = RealtimeService.getInstance(application)
+    private val gson = Gson()
+
     private val _hasCompletedSetup = MutableStateFlow(prefs.hasCompletedSetup)
     val hasCompletedSetup: StateFlow<Boolean> = _hasCompletedSetup.asStateFlow()
 
@@ -77,11 +84,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         prefs.hasUserCreatedPassword = true
         _hasUserCreatedPassword.value = true
     }
-
-    private val app: Application = application
-    private val prefs = AppPreferences(application)
-    private val realtime = RealtimeService.getInstance(application)
-    private val gson = Gson()
 
     val currentUser: StateFlow<User?> = prefs.currentUserFlow
     val friends: StateFlow<List<User>> = prefs.friendsFlow
@@ -986,7 +988,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val now = System.currentTimeMillis()
         val updated = current.copy(displayName = cleanName, lastUpdated = now)
         prefs.saveCurrentUser(updated)
-        _currentUser.value = updated
         if (_selectedPerson.value?.id == updated.id) {
             _selectedPerson.value = updated
         }
