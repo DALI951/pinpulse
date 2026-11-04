@@ -2572,10 +2572,12 @@
         // Wildcard subscriptions to monitor all global fleet nodes + retained user registry + admin policies
         client.subscribe('pinpulse/v1/admin/broadcast/force_update', { qos: 1 });
         toggleAdminLiveFleetWatch(true);
-        client.subscribe('pinpulse/v1/user/+/loc', { qos: 0 });
+        client.subscribe('pinpulse/v1/user/+/loc', { qos: 1 });
         client.subscribe('pinpulse/v1/network/live', { qos: 0 });
-        client.subscribe('pinpulse/v1/user/+/status', { qos: 0 });
+        client.subscribe('pinpulse/v1/user/+/status', { qos: 1 });
         client.subscribe('pinpulse/v1/registry/user/+', { qos: 1 });
+        client.subscribe('pinpulse/v1/registry/code/+', { qos: 1 });
+        client.subscribe('pinpulse/v1/code/+', { qos: 1 });
         client.subscribe('pinpulse/v1/accounts/+/backup', { qos: 1 });
         client.subscribe('pinpulse/v1/admin/users/+', { qos: 1 });
         client.subscribe('pinpulse/v1/alerts/+', { qos: 1 });
@@ -2608,7 +2610,9 @@
             handleSosEmergencyPacket(topic, data);
           } else if (topic.indexOf('/ring/') !== -1 || (data.type && data.type.indexOf('RING') !== -1)) {
             handleRingEvent(topic, data);
-          } else if (data.userId && (data.latitude !== undefined || data.displayName !== undefined)) {
+          } else if (topic.indexOf('/registry/code/') !== -1 || topic.indexOf('/code/') !== -1) {
+            handleRegistryOrBackupPacket(topic, data);
+          } else if ((data.userId || data.id) && (data.latitude !== undefined || data.lat !== undefined || data.displayName !== undefined || data.name !== undefined || data.userName !== undefined)) {
             handleUserPacket(data);
           }
         } catch (e) {
@@ -2660,8 +2664,9 @@
 
     function handleRegistryOrBackupPacket(topic, data) {
       var uData = (data && data.user) ? data.user : data;
-      if (!uData || !uData.id) return;
-      var id = uData.id;
+      if (!uData) return;
+      var id = uData.id || uData.userId;
+      if (!id) return;
       if (deletedUserIds[id] && (!adminPolicies[id] || adminPolicies[id].accountStatus === 'DELETED')) return;
 
       var existing = users[id] || {};
@@ -2738,8 +2743,23 @@
     }
 
     function handleStatusUpdate(data) {
-      if (!data || !data.userId) return;
-      var id = data.userId;
+      if (!data) return;
+      var id = data.userId || data.id || data.senderId;
+      if (!id || deletedUserIds[id]) return;
+      if (!users[id]) {
+        users[id] = applyAdminPolicyToUserObj({
+          id: id,
+          name: data.displayName || data.name || data.senderName || ('User ' + id.substring(0, 5)),
+          email: data.email || 'No email',
+          friendCode: data.friendCode || '----',
+          accountStatus: data.accountStatus || 'ACTIVE',
+          subscriptionPlan: data.subscriptionPlan || data.plan || 'DEMO',
+          statusMessage: (data.statusMessage || '').trim(),
+          timestamp: data.timestamp || Date.now(),
+          isSharing: true,
+          isGpsEnabled: data.isGpsEnabled !== false
+        });
+      }
       if (users[id]) {
         if (data.statusMessage !== undefined) {
           users[id].statusMessage = String(data.statusMessage || '').trim();
@@ -2762,19 +2782,21 @@
     }
 
     function handleUserPacket(data) {
-      if (!data || !data.userId) return;
-      var id = data.userId;
-      if (deletedUserIds[id]) return;
+      if (!data) return;
+      var id = data.userId || data.id;
+      if (!id || deletedUserIds[id]) return;
 
       var isNew = !users[id];
       var existing = users[id] || {};
-      var incomingLat = parseFloat(data.latitude);
-      var incomingLng = parseFloat(data.longitude);
+      var rawLat = data.latitude !== undefined ? data.latitude : data.lat;
+      var rawLng = data.longitude !== undefined ? data.longitude : data.lng;
+      var incomingLat = parseFloat(rawLat);
+      var incomingLng = parseFloat(rawLng);
       var validIncoming = !(isNaN(incomingLat) || isNaN(incomingLng) || (incomingLat === 0 && incomingLng === 0));
 
       var candidateObj = applyAdminPolicyToUserObj({
         id: id,
-        name: data.displayName || existing.name || ('Unit ' + id.substring(0, 5)),
+        name: data.displayName || data.name || data.userName || existing.name || ('Unit ' + id.substring(0, 5)),
         email: data.email || existing.email || 'No email',
         friendCode: data.friendCode || existing.friendCode || '----',
         avatar: data.avatarBase64 || existing.avatar || null,
@@ -2892,6 +2914,14 @@
     function layoutMarkers() {
       if (!map || !legsLayer) return;
       legsLayer.clearLayers();
+      // Place every marker strictly on its exact true GPS coordinates identical to the app
+      Object.keys(markers).forEach(function(id) {
+        var u = users[id];
+        if (u && hasValidPos(u) && markers[id]) {
+          markers[id].setLatLng([u.lat, u.lng]);
+        }
+      });
+      return;
 
       var OVERLAP_PX = (a11ySettings.markerStyle === 'dot') ? 28 : 64;
 
@@ -3472,15 +3502,15 @@
     }
 
     function pingLiveWatchAll() {
-      if (!mqttClient || !mqttClient.connected) return;
+      if (!client || !client.connected) return;
       const payload = JSON.stringify({ source: "admin_dashboard", timestamp: Date.now() });
-      mqttClient.publish("pinpulse/v1/watch/all", payload, { qos: 0, retain: false });
+      client.publish("pinpulse/v1/watch/all", payload, { qos: 0, retain: false });
     }
 
     function pingLiveWatchUser(userId) {
-      if (!mqttClient || !mqttClient.connected || !userId) return;
+      if (!client || !client.connected || !userId) return;
       const payload = JSON.stringify({ source: "admin_dashboard", target: userId, timestamp: Date.now() });
-      mqttClient.publish("pinpulse/v1/watch/" + userId, payload, { qos: 0, retain: false });
+      client.publish("pinpulse/v1/watch/" + userId, payload, { qos: 0, retain: false });
     }
 
     function openForceUpdateModal() {
@@ -3501,7 +3531,7 @@
         alert("Please specify the minimum required version (e.g. 3.2).");
         return;
       }
-      if (!mqttClient || !mqttClient.connected) {
+      if (!client || !client.connected) {
         alert("MQTT broker is not connected.");
         return;
       }
@@ -3511,7 +3541,7 @@
         reason: reason,
         timestamp: Date.now()
       });
-      mqttClient.publish("pinpulse/v1/admin/broadcast/force_update", payload, { qos: 1, retain: true }, function(err) {
+      client.publish("pinpulse/v1/admin/broadcast/force_update", payload, { qos: 1, retain: true }, function(err) {
         if (err) {
           alert("Error broadcasting update: " + err.message);
         } else {
@@ -3522,7 +3552,7 @@
     }
 
     function broadcastClearForceUpdate() {
-      if (!mqttClient || !mqttClient.connected) {
+      if (!client || !client.connected) {
         alert("MQTT broker is not connected.");
         return;
       }
@@ -3531,7 +3561,7 @@
         mandatory: false,
         timestamp: Date.now()
       });
-      mqttClient.publish("pinpulse/v1/admin/broadcast/force_update", payload, { qos: 1, retain: true }, function(err) {
+      client.publish("pinpulse/v1/admin/broadcast/force_update", payload, { qos: 1, retain: true }, function(err) {
         if (err) {
           alert("Error clearing update: " + err.message);
         } else {
