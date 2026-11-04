@@ -129,6 +129,7 @@ fun SettingsDialog(
     var passwordChangeError by remember { mutableStateOf<String?>(null) }
     var isSavingPassword by remember { mutableStateOf(false) }
     var isSendingResetEmail by remember { mutableStateOf(false) }
+    var emailSentConfirmationFor by remember { mutableStateOf<String?>(null) }
 
     val avatarPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -1189,11 +1190,7 @@ fun SettingsDialog(
                             viewModel.sendPasswordReset(targetEmail) { success, err ->
                                 isSendingResetEmail = false
                                 if (success) {
-                                    Toast.makeText(
-                                        context,
-                                        "Reset link sent to $targetEmail! Check your SPAM / JUNK folder if not in inbox.",
-                                        Toast.LENGTH_LONG
-                                    ).show()
+                                    emailSentConfirmationFor = targetEmail
                                     showChangePasswordDialog = false
                                 } else {
                                     passwordChangeError = err ?: "Failed to send reset email. Please try again."
@@ -1227,6 +1224,78 @@ fun SettingsDialog(
             dismissButton = {
                 TextButton(onClick = { showChangePasswordDialog = false }) {
                     Text("Close", color = TextMuted)
+                }
+            },
+            containerColor = Color(0xFF1E293B)
+        )
+    }
+
+    if (emailSentConfirmationFor != null) {
+        val sentToEmail = emailSentConfirmationFor ?: ""
+        AlertDialog(
+            onDismissRequest = { emailSentConfirmationFor = null },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Email, contentDescription = null, tint = PulseGreen, modifier = Modifier.size(24.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Check Your Email", fontWeight = FontWeight.Bold, color = Color.White)
+                }
+            },
+            text = {
+                Column {
+                    Text(
+                        text = "A password reset link was sent to:",
+                        fontSize = 13.sp,
+                        color = TextSecondary
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFF0F172A))
+                            .padding(horizontal = 12.dp, vertical = 10.dp)
+                    ) {
+                        Text(
+                            text = sentToEmail,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = PulseGreen
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF2D2006)),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFF59E0B)),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(
+                                text = "⚠️ IMPORTANT: CHECK YOUR SPAM / JUNK FOLDER",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color(0xFFF59E0B)
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Because this is an automated security email from Firebase, Gmail often places it directly in your SPAM or JUNK folder (or the 'Promotions' tab).\n\nSender: noreply@pinpulse-81d6a.firebaseapp.com",
+                                fontSize = 11.sp,
+                                color = Color.White,
+                                lineHeight = 16.sp
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { emailSentConfirmationFor = null },
+                    colors = ButtonDefaults.buttonColors(containerColor = PulseGreen)
+                ) {
+                    Text("Got It! I'll Check Spam", color = Color(0xFF0F172A), fontWeight = FontWeight.Bold)
                 }
             },
             containerColor = Color(0xFF1E293B)
