@@ -246,6 +246,28 @@ class AppPreferences(context: Context) {
         get() = prefs.getBoolean("has_user_created_password", false)
         set(value) = prefs.edit().putBoolean("has_user_created_password", value).apply()
 
+    // --- Anti-Abuse Tracking (Ring Siren & SOS Rate Limits) ---
+
+    var lastSosTimestamp: Long
+        get() = prefs.getLong("anti_abuse_last_sos_time", 0L)
+        set(value) = prefs.edit().putLong("anti_abuse_last_sos_time", value).apply()
+
+    fun getLastRingTimestamp(targetUserId: String): Long {
+        return prefs.getLong("anti_abuse_last_ring_$targetUserId", 0L)
+    }
+
+    fun setLastRingTimestamp(targetUserId: String, timeMs: Long) {
+        prefs.edit().putLong("anti_abuse_last_ring_$targetUserId", timeMs).apply()
+    }
+
+    fun getRingCount(targetUserId: String): Int {
+        return prefs.getInt("anti_abuse_ring_count_$targetUserId", 0)
+    }
+
+    fun setRingCount(targetUserId: String, count: Int) {
+        prefs.edit().putInt("anti_abuse_ring_count_$targetUserId", count).apply()
+    }
+
     fun getSecurityPin(): String? {
         val pin = prefs.getString("security_pin", null)
         return if (!pin.isNullOrBlank()) pin else null

@@ -36,6 +36,9 @@ import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Radar
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -65,6 +68,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -99,6 +103,8 @@ fun OnboardingSetupScreen(
     // Step 1: Security PIN
     var pinInput by remember { mutableStateOf("") }
     var confirmPinInput by remember { mutableStateOf("") }
+    var pinVisible by remember { mutableStateOf(false) }
+    var confirmPinVisible by remember { mutableStateOf(false) }
     var pinError by remember { mutableStateOf<String?>(null) }
 
     // Step 2: Profile Customization
@@ -197,7 +203,16 @@ fun OnboardingSetupScreen(
                                 onValueChange = { if (it.length <= 6 && it.all { c -> c.isDigit() }) pinInput = it },
                                 label = { Text("Security PIN (4-6 digits)") },
                                 leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = TextMuted) },
-                                visualTransformation = PasswordVisualTransformation(),
+                                trailingIcon = {
+                                    IconButton(onClick = { pinVisible = !pinVisible }) {
+                                        Icon(
+                                            imageVector = if (pinVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                            contentDescription = if (pinVisible) "Hide PIN" else "Show PIN",
+                                            tint = TextMuted
+                                        )
+                                    }
+                                },
+                                visualTransformation = if (pinVisible) VisualTransformation.None else PasswordVisualTransformation(),
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
                                 singleLine = true,
                                 modifier = Modifier.fillMaxWidth(),
@@ -216,7 +231,16 @@ fun OnboardingSetupScreen(
                                 onValueChange = { if (it.length <= 6 && it.all { c -> c.isDigit() }) confirmPinInput = it },
                                 label = { Text("Confirm PIN") },
                                 leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = TextMuted) },
-                                visualTransformation = PasswordVisualTransformation(),
+                                trailingIcon = {
+                                    IconButton(onClick = { confirmPinVisible = !confirmPinVisible }) {
+                                        Icon(
+                                            imageVector = if (confirmPinVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                            contentDescription = if (confirmPinVisible) "Hide PIN" else "Show PIN",
+                                            tint = TextMuted
+                                        )
+                                    }
+                                },
+                                visualTransformation = if (confirmPinVisible) VisualTransformation.None else PasswordVisualTransformation(),
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
                                 singleLine = true,
                                 modifier = Modifier.fillMaxWidth(),

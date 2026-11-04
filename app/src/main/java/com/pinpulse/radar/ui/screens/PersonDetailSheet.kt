@@ -425,6 +425,7 @@ fun PersonDetailSheet(
 
             // REMOTE SIREN / RING PHONE & STOP BUTTONS
             if (!isSelf) {
+                val ringCooldown = viewModel.getRemainingRingCooldownSeconds(targetUser.id)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -434,7 +435,9 @@ fun PersonDetailSheet(
                         modifier = Modifier
                             .weight(1.1f)
                             .height(48.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD97706)),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (ringCooldown > 0) Color(0xFF78350F) else Color(0xFFD97706)
+                        ),
                         shape = RoundedCornerShape(14.dp)
                     ) {
                         Icon(
@@ -445,7 +448,7 @@ fun PersonDetailSheet(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "Ring Siren",
+                            text = if (ringCooldown > 0) "Cooldown (${ringCooldown}s)" else "Ring Siren",
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color.White

@@ -1288,6 +1288,46 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             notifyPlanLimitBlocked("Your plan has expired. Upgrade your plan to ring friends.")
             return
         }
+
+        // Anti-Abuse Rate Limiting: 1st ring -> 1 minute cooldown, then 5 minutes for subsequent rings
+        val now = System.currentTimeMillis()
+        val lastRingTime = prefs.getLastRingTimestamp(targetUser.id)
+        val currentCount = prefs.getRingCount(targetUser.id)
+        val effectiveCount = if (now - lastRingTime > 15 * 60_000L) 0 else currentCount
+
+        val requiredCooldownMs = if (effectiveCount == 1) {
+            60_000L // 1 minute cooldown after 1st ring
+        } else if (effectiveCount >= 2) {
+            5 * 60_000L // 5 minutes cooldown for repeated rings
+        } else {
+            0L // First ring is allowed immediately
+        }
+
+        val elapsed = now - lastRingTime
+        if (lastRingTime > 0L && elapsed < requiredCooldownMs) {
+            val remainingSec = ((requiredCooldownMs - elapsed) / 1000).coerceAtLeast(1)
+            val remainingMin = remainingSec / 60
+            val remSecMod = remainingSec % 60
+            val timeText = if (remainingMin > 0) "${remainingMin}m ${remSecMod}s" else "${remainingSec}s"
+
+            val message = if (effectiveCount >= 2) {
+                "⏳ Anti-Abuse Protection: Ringing is limited to once every 5 minutes to prevent harassment. Please wait $timeText before ringing ${targetUser.displayName} again."
+            } else {
+                "⏳ Anti-Abuse Cooldown: Ringing is limited to once every 1 minute. Please wait $timeText before ringing ${targetUser.displayName} again."
+            }
+
+            postAlert(AlertMessage(
+                senderId = "system",
+                senderName = "Anti-Abuse Limit",
+                type = "RING_COOLDOWN",
+                message = message
+            ), autoDismissMs = 6000L)
+            return
+        }
+
+        prefs.setLastRingTimestamp(targetUser.id, now)
+        prefs.setRingCount(targetUser.id, (effectiveCount + 1).coerceAtMost(5))
+
         val callerName = me?.displayName ?: "Friend"
         realtime.sendRingCommand(targetUser.id, targetUser.friendCode, callerName)
         postAlert(AlertMessage(
@@ -1296,6 +1336,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             type = "RING_SENT",
             message = "🔊 Siren alert sent to ${targetUser.displayName}'s phone!"
         ), autoDismissMs = 6000L)
+    }
+
+    fun getRemainingRingCooldownSeconds(targetUserId: String): Int {
+        val now = System.currentTimeMillis()
+        val lastRingTime = prefs.getLastRingTimestamp(targetUserId)
+        val currentCount = prefs.getRingCount(targetUserId)
+        if (now - lastRingTime > 15 * 60_000L) return 0
+        val requiredCooldownMs = if (currentCount == 1) 60_000L else if (currentCount >= 2) 5 * 60_000L else 0L
+        val elapsed = now - lastRingTime
+        if (lastRingTime > 0L && elapsed < requiredCooldownMs) {
+            return ((requiredCooldownMs - elapsed) / 1000).toInt().coerceAtLeast(1)
+        }
+        return 0
+    }
+
+    fun getRemainingSosCooldownSeconds(): Int {
+        val now = System.currentTimeMillis()
+        val lastSosTime = prefs.lastSosTimestamp
+        val sosCooldownMs = 5 * 60_000L
+        val elapsed = now - lastSosTime
+        if (lastSosTime > 0L && elapsed < sosCooldownMs) {
+            return ((sosCooldownMs - elapsed) / 1000).toInt().coerceAtLeast(1)
+        }
+        return 0
     }
 
     fun stopPersonPhone(targetUser: User) {
@@ -1321,6 +1385,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             notifyPlanLimitBlocked("Your plan has expired. Upgrade your plan to send SOS emergency broadcasts.")
             return
         }
+
+        // Anti-Abuse Rate Limiting: SOS can happen only once each 5 minutes
+        val now = System.currentTimeMillis()
+        val lastSosTime = prefs.lastSosTimestamp
+        val sosCooldownMs = 5 * 60_000L // 5 minutes
+
+        val elapsedSos = now - lastSosTime
+        if (lastSosTime > 0L && elapsedSos < sosCooldownMs) {
+            val remainingSec = ((sosCooldownMs - elapsedSos) / 1000).coerceAtLeast(1)
+            val remainingMin = remainingSec / 60
+            val remSecMod = remainingSec % 60
+            val timeText = if (remainingMin > 0) "${remainingMin}m ${remSecMod}s" else "${remainingSec}s"
+
+            postAlert(AlertMessage(
+                senderId = "system",
+                senderName = "SOS Rate Limit",
+                type = "SOS_COOLDOWN",
+                message = "⏳ Anti-Abuse Limit: Emergency SOS can only be sent once every 5 minutes. Next broadcast available in $timeText."
+            ), autoDismissMs = 6000L)
+            return
+        }
+
+        prefs.lastSosTimestamp = now
         val batteryInfo = LocationTrackingService.getBatteryInfo(app)
         val lat = me.latitude
         val lng = me.longitude

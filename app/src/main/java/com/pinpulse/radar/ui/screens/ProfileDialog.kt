@@ -28,14 +28,20 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -82,6 +88,9 @@ fun ProfileDialog(
 ) {
     val context = LocalContext.current
     var statusInput by remember(user.statusMessage) { mutableStateOf(user.statusMessage.orEmpty()) }
+    var isEditingName by remember { mutableStateOf(false) }
+    var nameInput by remember(user.displayName) { mutableStateOf(user.displayName) }
+    var isSendingResetEmail by remember { mutableStateOf(false) }
 
     val avatarPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -148,18 +157,112 @@ fun ProfileDialog(
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                Text(
-                    text = user.displayName,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = TextPrimary
-                )
+                if (!isEditingName) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            text = user.displayName,
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = TextPrimary
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        IconButton(
+                            onClick = {
+                                isEditingName = true
+                                nameInput = user.displayName
+                            },
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Edit,
+                                contentDescription = "Edit Name",
+                                tint = PulseGreen,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = nameInput,
+                            onValueChange = { if (it.length <= 30) nameInput = it },
+                            label = { Text("Display Name") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.weight(1f),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White,
+                                focusedBorderColor = PulseGreen,
+                                unfocusedBorderColor = Color(0xFF334155)
+                            )
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        IconButton(
+                            onClick = {
+                                val clean = nameInput.trim()
+                                if (clean.isNotBlank()) {
+                                    viewModel.updateDisplayName(clean)
+                                    isEditingName = false
+                                    Toast.makeText(context, "Username updated to \"$clean\"!", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            enabled = nameInput.trim().isNotBlank(),
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(Icons.Default.Check, contentDescription = "Save", tint = PulseGreen, modifier = Modifier.size(20.dp))
+                        }
+                        IconButton(
+                            onClick = { isEditingName = false },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(Icons.Default.Close, contentDescription = "Cancel", tint = DangerRed, modifier = Modifier.size(20.dp))
+                        }
+                    }
+                }
 
                 Text(
                     text = user.email,
                     fontSize = 12.sp,
                     color = TextSecondary
                 )
+
+                if (user.email.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier
+                            .clickable {
+                                isSendingResetEmail = true
+                                viewModel.sendPasswordReset(user.email) { success, err ->
+                                    isSendingResetEmail = false
+                                    if (success) {
+                                        Toast.makeText(context, "Password reset link sent to ${user.email}!", Toast.LENGTH_LONG).show()
+                                    } else {
+                                        Toast.makeText(context, err ?: "Failed to send reset link", Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                            }
+                            .padding(4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.Lock, contentDescription = null, tint = RadarBlue, modifier = Modifier.size(13.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = if (isSendingResetEmail) "Sending reset email..." else "Change Password (Send Email)",
+                            fontSize = 11.sp,
+                            color = RadarBlue,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
 
                 Spacer(modifier = Modifier.height(14.dp))
 

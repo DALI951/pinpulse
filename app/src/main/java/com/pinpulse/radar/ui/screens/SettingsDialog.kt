@@ -31,11 +31,14 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BatteryChargingFull
 import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Logout
@@ -45,6 +48,9 @@ import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -57,7 +63,10 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -108,7 +117,12 @@ fun SettingsDialog(
     var oldPinInput by remember { mutableStateOf("") }
     var newPinInput by remember { mutableStateOf("") }
     var confirmPinInput by remember { mutableStateOf("") }
+    var oldPinVisible by remember { mutableStateOf(false) }
+    var newPinVisible by remember { mutableStateOf(false) }
+    var confirmPinVisible by remember { mutableStateOf(false) }
     var pinErrorMessage by remember { mutableStateOf<String?>(null) }
+    var showPasswordResetConfirm by remember { mutableStateOf(false) }
+    var isSendingPasswordReset by remember { mutableStateOf(false) }
 
     val avatarPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -502,9 +516,18 @@ fun SettingsDialog(
                                 onValueChange = { if (it.all { c -> c.isDigit() } && it.length <= 6) oldPinInput = it },
                                 label = { Text("Current PIN") },
                                 placeholder = { Text("Enter existing PIN") },
+                                trailingIcon = {
+                                    IconButton(onClick = { oldPinVisible = !oldPinVisible }) {
+                                        Icon(
+                                            imageVector = if (oldPinVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                            contentDescription = if (oldPinVisible) "Hide PIN" else "Show PIN",
+                                            tint = TextMuted
+                                        )
+                                    }
+                                },
                                 singleLine = true,
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                                visualTransformation = PasswordVisualTransformation(),
+                                visualTransformation = if (oldPinVisible) VisualTransformation.None else PasswordVisualTransformation(),
                                 shape = RoundedCornerShape(10.dp),
                                 modifier = Modifier.fillMaxWidth()
                             )
@@ -516,9 +539,18 @@ fun SettingsDialog(
                             onValueChange = { if (it.all { c -> c.isDigit() } && it.length <= 6) newPinInput = it },
                             label = { Text(if (hasSecurityPin) "New 4-6 digit PIN" else "Create 4-6 digit PIN") },
                             placeholder = { Text("4-6 digits") },
+                            trailingIcon = {
+                                IconButton(onClick = { newPinVisible = !newPinVisible }) {
+                                    Icon(
+                                        imageVector = if (newPinVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                        contentDescription = if (newPinVisible) "Hide PIN" else "Show PIN",
+                                        tint = TextMuted
+                                    )
+                                }
+                            },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                            visualTransformation = PasswordVisualTransformation(),
+                            visualTransformation = if (newPinVisible) VisualTransformation.None else PasswordVisualTransformation(),
                             shape = RoundedCornerShape(10.dp),
                             modifier = Modifier.fillMaxWidth()
                         )
@@ -529,9 +561,18 @@ fun SettingsDialog(
                             value = confirmPinInput,
                             onValueChange = { if (it.all { c -> c.isDigit() } && it.length <= 6) confirmPinInput = it },
                             label = { Text(if (hasSecurityPin) "Confirm New PIN" else "Confirm PIN") },
+                            trailingIcon = {
+                                IconButton(onClick = { confirmPinVisible = !confirmPinVisible }) {
+                                    Icon(
+                                        imageVector = if (confirmPinVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                        contentDescription = if (confirmPinVisible) "Hide PIN" else "Show PIN",
+                                        tint = TextMuted
+                                    )
+                                }
+                            },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                            visualTransformation = PasswordVisualTransformation(),
+                            visualTransformation = if (confirmPinVisible) VisualTransformation.None else PasswordVisualTransformation(),
                             shape = RoundedCornerShape(10.dp),
                             modifier = Modifier.fillMaxWidth()
                         )
@@ -639,9 +680,168 @@ fun SettingsDialog(
                         Spacer(modifier = Modifier.width(12.dp))
 
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(currentUser?.displayName ?: "User", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 15.sp)
+                            Text(currentUser?.displayName ?: "User", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 16.sp)
                             Text(currentUser?.email ?: "", fontSize = 12.sp, color = TextMuted)
                             Text("Tap photo to change avatar", fontSize = 10.sp, color = PulseGreen)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // DISPLAY NAME / RADAR USERNAME EDIT SECTION
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF131D2E)),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Display Name (Radar Username)", fontSize = 11.sp, color = TextMuted)
+                                    Text(
+                                        text = currentUser?.displayName ?: "User",
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = PulseGreen
+                                    )
+                                    Text(
+                                        text = "How circle members see you on the map",
+                                        fontSize = 10.sp,
+                                        color = TextMuted
+                                    )
+                                }
+
+                                Button(
+                                    onClick = {
+                                        isEditingName = !isEditingName
+                                        if (isEditingName) {
+                                            nameInput = currentUser?.displayName ?: ""
+                                        }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = if (isEditingName) Color(0xFF334155) else RadarBlue),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.height(34.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = if (isEditingName) Icons.Default.Close else Icons.Default.Edit,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(if (isEditingName) "Cancel" else "Edit Name", fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.SemiBold)
+                                }
+                            }
+
+                            if (isEditingName) {
+                                Spacer(modifier = Modifier.height(10.dp))
+                                OutlinedTextField(
+                                    value = nameInput,
+                                    onValueChange = { if (it.length <= 30) nameInput = it },
+                                    label = { Text("New Display Name") },
+                                    placeholder = { Text("Enter your name") },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedTextColor = Color.White,
+                                        unfocusedTextColor = Color.White,
+                                        focusedBorderColor = PulseGreen,
+                                        unfocusedBorderColor = Color(0xFF334155)
+                                    )
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("${nameInput.trim().length}/30", fontSize = 11.sp, color = TextMuted)
+                                    Button(
+                                        onClick = {
+                                            val clean = nameInput.trim()
+                                            if (clean.isNotBlank()) {
+                                                viewModel.updateDisplayName(clean)
+                                                isEditingName = false
+                                                Toast.makeText(context, "Username updated to \"$clean\"!", Toast.LENGTH_SHORT).show()
+                                            } else {
+                                                Toast.makeText(context, "Display name cannot be empty", Toast.LENGTH_SHORT).show()
+                                            }
+                                        },
+                                        enabled = nameInput.trim().isNotBlank(),
+                                        colors = ButtonDefaults.buttonColors(containerColor = PulseGreen),
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier.height(36.dp)
+                                    ) {
+                                        Icon(Icons.Default.Check, contentDescription = null, tint = Color.Black, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Save Name", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // PASSWORD RESET / CHANGE PASSWORD VIA EMAIL
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF131D2E)),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(32.dp)
+                                            .clip(CircleShape)
+                                            .background(RadarBlue.copy(alpha = 0.2f)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(Icons.Default.Lock, contentDescription = null, tint = RadarBlue, modifier = Modifier.size(16.dp))
+                                    }
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Column {
+                                        Text("Account Password", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 13.sp)
+                                        Text(
+                                            text = if (currentUser?.email?.isNotBlank() == true) "Reset via ${currentUser?.email}" else "Change password via email",
+                                            fontSize = 11.sp,
+                                            color = TextMuted
+                                        )
+                                    }
+                                }
+
+                                Button(
+                                    onClick = {
+                                        showPasswordResetConfirm = true
+                                    },
+                                    enabled = !isSendingPasswordReset && currentUser?.email?.isNotBlank() == true,
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B)),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.height(34.dp)
+                                ) {
+                                    if (isSendingPasswordReset) {
+                                        CircularProgressIndicator(modifier = Modifier.size(14.dp), color = PulseGreen, strokeWidth = 2.dp)
+                                    } else {
+                                        Icon(Icons.Default.Email, contentDescription = null, tint = PulseGreen, modifier = Modifier.size(14.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Change Password", fontSize = 11.sp, color = PulseGreen, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -860,5 +1060,55 @@ fun SettingsDialog(
 
             Spacer(modifier = Modifier.height(24.dp))
         }
+    }
+
+    if (showPasswordResetConfirm) {
+        val targetEmail = currentUser?.email ?: ""
+        AlertDialog(
+            onDismissRequest = { showPasswordResetConfirm = false },
+            title = { Text("✉️ Change Account Password", fontWeight = FontWeight.Bold, color = Color.White) },
+            text = {
+                Column {
+                    Text(
+                        text = "We will send a secure password reset link to your email address:\n\n$targetEmail\n\nYou can click the link in your email to choose a new password anytime.",
+                        fontSize = 13.sp,
+                        color = TextSecondary
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showPasswordResetConfirm = false
+                        isSendingPasswordReset = true
+                        viewModel.sendPasswordReset(targetEmail) { success, err ->
+                            isSendingPasswordReset = false
+                            if (success) {
+                                Toast.makeText(
+                                    context,
+                                    "Password reset link sent to $targetEmail! Check your inbox (and spam).",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            } else {
+                                Toast.makeText(
+                                    context,
+                                    err ?: "Failed to send reset link. Please try again.",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = PulseGreen)
+                ) {
+                    Text("Send Reset Link", color = Color(0xFF0F172A), fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPasswordResetConfirm = false }) {
+                    Text("Cancel", color = TextMuted)
+                }
+            },
+            containerColor = Color(0xFF1E293B)
+        )
     }
 }

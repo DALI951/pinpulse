@@ -78,6 +78,7 @@ class RealtimeService private constructor(private val context: Context) {
 
     private val _rawMessages = MutableSharedFlow<Pair<String, String>>(extraBufferCapacity = 64)
     val rawMessages: SharedFlow<Pair<String, String>> = _rawMessages.asSharedFlow()
+    private var lastIncomingRingTime: Long = 0L
 
     init {
         registerNetworkMonitor()
@@ -510,13 +511,21 @@ class RealtimeService private constructor(private val context: Context) {
                                     message = "🛑 Alarm silenced remotely by $caller."
                                 ))
                             } else {
-                                com.pinpulse.radar.util.SirenHelper.ring(context, caller)
+                                val now = System.currentTimeMillis()
+                                if (now - lastIncomingRingTime >= 30_000L || !com.pinpulse.radar.util.SirenHelper.isCurrentlyPlaying()) {
+                                    lastIncomingRingTime = now
+                                    com.pinpulse.radar.util.SirenHelper.ring(context, caller)
+                                }
                             }
                         } catch (e: Exception) {
                             if (payload.contains("\"STOP_RING\"")) {
                                 com.pinpulse.radar.util.SirenHelper.stop(context)
                             } else {
-                                com.pinpulse.radar.util.SirenHelper.ring(context, "A friend")
+                                val now = System.currentTimeMillis()
+                                if (now - lastIncomingRingTime >= 30_000L || !com.pinpulse.radar.util.SirenHelper.isCurrentlyPlaying()) {
+                                    lastIncomingRingTime = now
+                                    com.pinpulse.radar.util.SirenHelper.ring(context, "A friend")
+                                }
                             }
                         }
                     }
