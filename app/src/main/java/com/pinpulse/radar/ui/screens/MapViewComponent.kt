@@ -9,6 +9,7 @@ import android.graphics.DashPathEffect
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.Point
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
@@ -170,6 +171,10 @@ fun MapViewComponent(
                     }
                 })
 
+                addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+                    mapMotionTick++
+                }
+
                 mapViewRef = this
             }
         }
@@ -267,20 +272,20 @@ fun MapViewComponent(
             }
         }
 
-        // 2. Draw user markers (with floating status bubble above avatar)
-        visibleUsers.forEach { user ->
-            if (user.latitude == 0.0 && user.longitude == 0.0) return@forEach
+        // 2. Draw user markers with Screen-Pixel Spider Circle Layout to prevent any visual overlap/clutter
+        val proj = mapView.projection
+        val hasProjection = (proj != null && mapView.width > 0 && mapView.height > 0)
 
+        // Filter valid candidates to display
+        val candidateUsers = visibleUsers.filter { user ->
+            if (user.latitude == 0.0 && user.longitude == 0.0) return@filter false
             val isSelf = (user.id == currentUserId)
+            if (isSelf && selfMarkerMode.equals("HIDDEN", ignoreCase = true)) return@filter false
+            true
+        }
 
-            // If user chose to remove themselves from the map, don't draw self marker
-            if (isSelf && selfMarkerMode.equals("HIDDEN", ignoreCase = true)) {
-                return@forEach
-            }
-
-            val isDotMode = isSelf && selfMarkerMode.equals("DOT", ignoreCase = true)
-
-            val markerIcon = if (isDotMode) {
+        fun getMarkerIcon(user: User, isSelf: Boolean, isDotMode: Boolean): BitmapDrawable {
+            return if (isDotMode) {
                 BitmapDrawable(context.resources, createSelfDotBitmap(context, user.isLive))
             } else {
                 BitmapDrawable(
@@ -299,18 +304,144 @@ fun MapViewComponent(
                     )
                 )
             }
+        }
 
-            val marker = Marker(mapView).apply {
-                position = GeoPoint(user.latitude, user.longitude)
-                setAnchor(Marker.ANCHOR_CENTER, if (isDotMode) Marker.ANCHOR_CENTER else 0.50f)
-                infoWindow = null // No default popup bubble
-                icon = markerIcon
-                setOnMarkerClickListener { _, _ ->
-                    currentOnAvatarClick(user.id)
-                    true
+        if (hasProjection && proj != null) {
+            val screenPt = Point()
+            val mappedItems = candidateUsers.map { user ->
+                val isSelf = (user.id == currentUserId)
+                val isDotMode = isSelf && selfMarkerMode.equals("DOT", ignoreCase = true)
+                val originalGeo = GeoPoint(user.latitude, user.longitude)
+                proj.toPixels(originalGeo, screenPt)
+                MarkerClusterItem(
+                    user = user,
+                    isSelf = isSelf,
+                    isDotMode = isDotMode,
+                    originalGeo = originalGeo,
+                    screenX = screenPt.x.toFloat(),
+                    screenY = screenPt.y.toFloat()
+                )
+            }
+
+            // Cluster based on screen pixel proximity (not geographical distance)
+            val overlapThresholdPx = 58f * density
+            val assigned = mutableSetOf<String>()
+            val clusterGroups = mutableListOf<MutableList<MarkerClusterItem>>()
+
+            for (i in mappedItems.indices) {
+                val itemI = mappedItems[i]
+                if (assigned.contains(itemI.user.id)) continue
+                val group = mutableListOf(itemI)
+                assigned.add(itemI.user.id)
+
+                var g = 0
+                while (g < group.size) {
+                    val currentMember = group[g]
+                    for (j in mappedItems.indices) {
+                        val candidate = mappedItems[j]
+                        if (assigned.contains(candidate.user.id)) continue
+                        val dx = currentMember.screenX - candidate.screenX
+                        val dy = currentMember.screenY - candidate.screenY
+                        val dist = Math.hypot(dx.toDouble(), dy.toDouble()).toFloat()
+                        if (dist < overlapThresholdPx) {
+                            group.add(candidate)
+                            assigned.add(candidate.user.id)
+                        }
+                    }
+                    g++
+                }
+                clusterGroups.add(group)
+            }
+
+            clusterGroups.forEach { group ->
+                if (group.size == 1) {
+                    // Single user - no screen overlap, place directly at original GPS position
+                    val item = group[0]
+                    val markerIcon = getMarkerIcon(item.user, item.isSelf, item.isDotMode)
+                    val marker = Marker(mapView).apply {
+                        position = item.originalGeo
+                        setAnchor(Marker.ANCHOR_CENTER, if (item.isDotMode) Marker.ANCHOR_CENTER else 0.50f)
+                        infoWindow = null
+                        icon = markerIcon
+                        setOnMarkerClickListener { _, _ ->
+                            currentOnAvatarClick(item.user.id)
+                            true
+                        }
+                    }
+                    mapView.overlays.add(marker)
+                } else {
+                    // Multiple overlapping users on screen! Form a circle around their center screen pixel
+                    var cx = 0f
+                    var cy = 0f
+                    group.forEach {
+                        cx += it.screenX
+                        cy += it.screenY
+                    }
+                    cx /= group.size
+                    cy /= group.size
+
+                    val n = group.size
+                    // Calculate circle radius depending on number of overlapping users
+                    val minRadiusPx = 52f * density
+                    val dynamicRadiusPx = (n * 55f * density) / (2f * Math.PI.toFloat())
+                    val radiusPx = maxOf(minRadiusPx, dynamicRadiusPx)
+
+                    group.forEachIndexed { k, item ->
+                        val angle = (2.0 * Math.PI * k / n) - (Math.PI / 2.0)
+                        val spiderX = (cx + radiusPx * Math.cos(angle)).toInt()
+                        val spiderY = (cy + radiusPx * Math.sin(angle)).toInt()
+
+                        val spiderGeo = proj.fromPixels(spiderX, spiderY).let {
+                            GeoPoint(it.latitude, it.longitude)
+                        }
+
+                        // Dotted connector leg from original coordinates to circle position
+                        val legLine = Polyline(mapView).apply {
+                            setPoints(listOf(item.originalGeo, spiderGeo))
+                            infoWindow = null
+                            outlinePaint.apply {
+                                isAntiAlias = true
+                                color = if (item.isSelf) 0xAA3B82F6.toInt() else 0xAA10B981.toInt()
+                                strokeWidth = 2f * density
+                                style = Paint.Style.STROKE
+                                pathEffect = DashPathEffect(floatArrayOf(6f * density, 5f * density), 0f)
+                            }
+                        }
+                        mapView.overlays.add(legLine)
+
+                        val markerIcon = getMarkerIcon(item.user, item.isSelf, item.isDotMode)
+                        val marker = Marker(mapView).apply {
+                            position = spiderGeo
+                            setAnchor(Marker.ANCHOR_CENTER, if (item.isDotMode) Marker.ANCHOR_CENTER else 0.50f)
+                            infoWindow = null
+                            icon = markerIcon
+                            setOnMarkerClickListener { _, _ ->
+                                currentOnAvatarClick(item.user.id)
+                                true
+                            }
+                        }
+                        mapView.overlays.add(marker)
+                    }
                 }
             }
-            mapView.overlays.add(marker)
+        } else {
+            // Fallback before projection is laid out
+            candidateUsers.forEach { user ->
+                val isSelf = (user.id == currentUserId)
+                val isDotMode = isSelf && selfMarkerMode.equals("DOT", ignoreCase = true)
+                val markerIcon = getMarkerIcon(user, isSelf, isDotMode)
+                val marker = Marker(mapView).apply {
+                    position = GeoPoint(user.latitude, user.longitude)
+                    setAnchor(Marker.ANCHOR_CENTER, if (isDotMode) Marker.ANCHOR_CENTER else 0.50f)
+                    infoWindow = null
+                    icon = markerIcon
+                    setOnMarkerClickListener { _, _ ->
+                        currentOnAvatarClick(user.id)
+                        true
+                    }
+                }
+                mapView.overlays.add(marker)
+            }
         }
 
         // Auto-center on self on first GPS fix
@@ -571,3 +702,12 @@ private fun createMarkerBitmap(
 
     return bitmap
 }
+
+private data class MarkerClusterItem(
+    val user: User,
+    val isSelf: Boolean,
+    val isDotMode: Boolean,
+    val originalGeo: GeoPoint,
+    val screenX: Float,
+    val screenY: Float
+)
