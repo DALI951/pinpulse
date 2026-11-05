@@ -114,7 +114,7 @@ class RealtimeService private constructor(private val context: Context) {
     fun ensureConnected(user: User? = currentUser) {
         val targetUser = user ?: currentUser ?: AppPreferences(context).loadCurrentUser() ?: return
         currentUser = targetUser
-        if (client?.isConnected == true) return
+        if (client?.isConnected == true && client?.serverURI == BROKER_URL) return
         if (connectMutex.isLocked) return
         scope.launch {
             connectInternal(targetUser, forceResubscribe = false)
@@ -204,7 +204,12 @@ class RealtimeService private constructor(private val context: Context) {
             }
 
             override fun connectionLost(cause: Throwable?) {
-                Log.w(TAG, "MQTT Connection lost: ${cause?.message}")
+                Log.w(TAG, "MQTT Connection lost: ${cause?.message} — scheduling reconnect to primary broker")
+                scope.launch {
+                    kotlinx.coroutines.delay(3000L)
+                    val activeUser = currentUser ?: user
+                    ensureConnected(activeUser)
+                }
             }
 
             override fun messageArrived(topic: String?, message: MqttMessage?) {
@@ -220,6 +225,7 @@ class RealtimeService private constructor(private val context: Context) {
     private fun resubscribeUserChannels(user: User) {
         val emailTag = if (user.email.isNotBlank()) cleanEmail(user.email) else ""
         val codeUpper = user.friendCode.trim().uppercase()
+        val rawEmailLower = user.email.trim().lowercase()
 
         val coreTopics = mutableListOf(
             "pinpulse/v1/user/${user.id}/loc",
@@ -241,9 +247,13 @@ class RealtimeService private constructor(private val context: Context) {
 
         if (codeUpper.isNotBlank()) {
             coreTopics.add("pinpulse/v1/code/$codeUpper")
+            coreTopics.add("pinpulse/v1/code/${codeUpper.replace("-", "")}")
+            coreTopics.add("pinpulse/v1/code/${codeUpper.lowercase()}")
             coreTopics.add("pinpulse/v1/invites/$codeUpper")
             coreTopics.add("pinpulse/v1/alerts/$codeUpper")
             coreTopics.add("pinpulse/v1/ring/$codeUpper")
+            coreTopics.add("pinpulse/v1/ring/${codeUpper.replace("-", "")}")
+            coreTopics.add("pinpulse/v1/ring/${codeUpper.lowercase()}")
             coreTopics.add("pinpulse/v1/registry/code/$codeUpper")
             coreTopics.add("pinpulse/v1/registry/code/${codeUpper.replace("-", "")}")
             coreTopics.add("pinpulse/v1/admin/users/$codeUpper")
@@ -256,6 +266,10 @@ class RealtimeService private constructor(private val context: Context) {
             coreTopics.add("pinpulse/v1/ring/$emailTag")
             coreTopics.add("pinpulse/v1/registry/email/$emailTag")
             coreTopics.add("pinpulse/v1/admin/users/$emailTag")
+            if (rawEmailLower.isNotBlank() && rawEmailLower != emailTag) {
+                coreTopics.add("pinpulse/v1/ring/$rawEmailLower")
+                coreTopics.add("pinpulse/v1/alerts/$rawEmailLower")
+            }
         }
 
         synchronized(subscribedTopics) {
@@ -470,25 +484,61 @@ class RealtimeService private constructor(private val context: Context) {
         publishRetained(topic, accountJson, qosLevel = 1)
     }
 
-    fun sendRingCommand(targetUserId: String, targetFriendCode: String, callerName: String) {
+    fun sendRingCommand(
+        targetUserId: String,
+        targetFriendCode: String,
+        callerName: String,
+        targetEmail: String = ""
+    ) {
         val payload = """{"type":"RING_PHONE","callerName":"$callerName","timestamp":${System.currentTimeMillis()}}"""
-        if (targetUserId.isNotBlank()) {
-            publish("pinpulse/v1/ring/$targetUserId", payload, qosLevel = 1)
+        val cleanUserId = targetUserId.trim()
+        val cleanCode = targetFriendCode.trim().uppercase()
+        val cleanEmailTag = if (targetEmail.contains("@")) cleanEmail(targetEmail) else ""
+
+        if (cleanUserId.isNotBlank()) {
+            publish("pinpulse/v1/ring/$cleanUserId", payload, qosLevel = 1)
+            publish("pinpulse/v1/alerts/$cleanUserId", payload, qosLevel = 1)
         }
-        if (targetFriendCode.isNotBlank()) {
-            publish("pinpulse/v1/ring/$targetFriendCode", payload, qosLevel = 1)
+        if (cleanCode.isNotBlank()) {
+            publish("pinpulse/v1/ring/$cleanCode", payload, qosLevel = 1)
+            publish("pinpulse/v1/ring/${cleanCode.replace("-", "")}", payload, qosLevel = 1)
+            publish("pinpulse/v1/ring/${cleanCode.lowercase()}", payload, qosLevel = 1)
+            publish("pinpulse/v1/alerts/$cleanCode", payload, qosLevel = 1)
+        }
+        if (cleanEmailTag.isNotBlank()) {
+            publish("pinpulse/v1/ring/$cleanEmailTag", payload, qosLevel = 1)
+            publish("pinpulse/v1/alerts/$cleanEmailTag", payload, qosLevel = 1)
+            val rawEmailLower = targetEmail.trim().lowercase()
+            if (rawEmailLower != cleanEmailTag) {
+                publish("pinpulse/v1/ring/$rawEmailLower", payload, qosLevel = 1)
+            }
         }
     }
 
-    fun sendStopRingCommand(targetUserId: String, targetFriendCode: String, callerName: String) {
+    fun sendStopRingCommand(
+        targetUserId: String,
+        targetFriendCode: String,
+        callerName: String,
+        targetEmail: String = ""
+    ) {
         val payload = """{"type":"STOP_RING","callerName":"$callerName","timestamp":${System.currentTimeMillis()}}"""
-        if (targetUserId.isNotBlank()) {
-            publish("pinpulse/v1/ring/$targetUserId", payload, qosLevel = 1)
-            publish("pinpulse/v1/alerts/$targetUserId", payload, qosLevel = 1)
+        val cleanUserId = targetUserId.trim()
+        val cleanCode = targetFriendCode.trim().uppercase()
+        val cleanEmailTag = if (targetEmail.contains("@")) cleanEmail(targetEmail) else ""
+
+        if (cleanUserId.isNotBlank()) {
+            publish("pinpulse/v1/ring/$cleanUserId", payload, qosLevel = 1)
+            publish("pinpulse/v1/alerts/$cleanUserId", payload, qosLevel = 1)
         }
-        if (targetFriendCode.isNotBlank()) {
-            publish("pinpulse/v1/ring/$targetFriendCode", payload, qosLevel = 1)
-            publish("pinpulse/v1/alerts/$targetFriendCode", payload, qosLevel = 1)
+        if (cleanCode.isNotBlank()) {
+            publish("pinpulse/v1/ring/$cleanCode", payload, qosLevel = 1)
+            publish("pinpulse/v1/ring/${cleanCode.replace("-", "")}", payload, qosLevel = 1)
+            publish("pinpulse/v1/ring/${cleanCode.lowercase()}", payload, qosLevel = 1)
+            publish("pinpulse/v1/alerts/$cleanCode", payload, qosLevel = 1)
+        }
+        if (cleanEmailTag.isNotBlank()) {
+            publish("pinpulse/v1/ring/$cleanEmailTag", payload, qosLevel = 1)
+            publish("pinpulse/v1/alerts/$cleanEmailTag", payload, qosLevel = 1)
         }
     }
 
@@ -512,7 +562,7 @@ class RealtimeService private constructor(private val context: Context) {
                                 ))
                             } else {
                                 val now = System.currentTimeMillis()
-                                if (now - lastIncomingRingTime >= 30_000L || !com.pinpulse.radar.util.SirenHelper.isCurrentlyPlaying()) {
+                                if (now - lastIncomingRingTime >= 3000L || !com.pinpulse.radar.util.SirenHelper.isCurrentlyPlaying()) {
                                     lastIncomingRingTime = now
                                     com.pinpulse.radar.util.SirenHelper.ring(context, caller)
                                 }
@@ -522,7 +572,7 @@ class RealtimeService private constructor(private val context: Context) {
                                 com.pinpulse.radar.util.SirenHelper.stop(context)
                             } else {
                                 val now = System.currentTimeMillis()
-                                if (now - lastIncomingRingTime >= 30_000L || !com.pinpulse.radar.util.SirenHelper.isCurrentlyPlaying()) {
+                                if (now - lastIncomingRingTime >= 3000L || !com.pinpulse.radar.util.SirenHelper.isCurrentlyPlaying()) {
                                     lastIncomingRingTime = now
                                     com.pinpulse.radar.util.SirenHelper.ring(context, "A friend")
                                 }

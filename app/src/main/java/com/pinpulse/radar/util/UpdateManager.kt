@@ -196,9 +196,14 @@ object UpdateManager {
                 val isNewer = compareVersions(tagName, currentVer)
                 val cleanLatest = tagName.removePrefix("v").trim()
 
+                val prefs = context?.let { AppPreferences(it) }
+                val currentEmail = prefs?.loadCurrentUser()?.email.orEmpty()
+                val isTargeted = isUserTargetedForRelease(body, currentEmail)
+                val effectiveIsNewer = isNewer && isTargeted
+
                 // If there is an older cached APK on disk that does NOT match the absolute latest version,
                 // purge that older APK immediately so we never install an intermediate update!
-                if (context != null && isNewer) {
+                if (context != null && effectiveIsNewer) {
                     purgeOutdatedCachedApkIfSuperseded(context, cleanLatest)
                 }
 
@@ -207,19 +212,15 @@ object UpdateManager {
                     isDownloadedApkReady(ctx, cleanLatest)
                 } ?: false
 
-                val prefs = context?.let { AppPreferences(it) }
                 val minVer = prefs?.getMinRequiredVersion() ?: ""
                 val isMandatoryByAdmin = prefs?.isMandatoryUpdateEnforced == true ||
                     (minVer.isNotBlank() && compareVersions(minVer, currentVer))
-                val isMandatoryByRelease = body.contains("[MANDATORY]", ignoreCase = true) ||
-                    body.contains("mandatory: true", ignoreCase = true) ||
-                    body.contains("force_update", ignoreCase = true) ||
-                    body.contains("min_version:", ignoreCase = true)
-                val isMandatory = isNewer && (isMandatoryByAdmin || isMandatoryByRelease)
+                val isMandatoryByRelease = body.contains("[MANDATORY]", ignoreCase = true)
+                val isMandatory = effectiveIsNewer && (isMandatoryByAdmin || isMandatoryByRelease)
 
                 val newState = _updateState.value.copy(
                     isChecking = false,
-                    updateAvailable = isNewer && apkUrl.isNotBlank(),
+                    updateAvailable = effectiveIsNewer && apkUrl.isNotBlank(),
                     isDownloaded = isAlreadyDownloaded,
                     isMandatory = isMandatory,
                     minRequiredVersion = if (isMandatory) (minVer.ifBlank { cleanLatest }) else "",
@@ -228,8 +229,9 @@ object UpdateManager {
                     apkUrl = apkUrl,
                     releaseNotes = body,
                     statusMessage = when {
+                        !isTargeted -> "You have the latest version ($currentVer)"
                         isAlreadyDownloaded -> "Latest update v$cleanLatest is downloaded! Ready to install."
-                        isNewer && apkUrl.isNotBlank() -> "Latest update available: v$cleanLatest"
+                        effectiveIsNewer && apkUrl.isNotBlank() -> "Latest update available: v$cleanLatest"
                         else -> "You have the latest version ($currentVer)"
                     }
                 )
@@ -400,6 +402,19 @@ object UpdateManager {
         } finally {
             isDownloadInProgress.set(false)
         }
+    }
+
+    fun isUserTargetedForRelease(releaseNotes: String, userEmail: String): Boolean {
+        if (releaseNotes.isBlank()) return true
+        val cleanEmail = userEmail.trim().lowercase()
+        val pattern = Regex("\[(?:TARGET|TARGET_EMAILS|EMAILS):\\s*([^\\]]+)\]", RegexOption.IGNORE_CASE)
+        val match = pattern.find(releaseNotes) ?: return true
+        val rawEmails = match.groupValues[1]
+        val allowedEmails = rawEmails.split(",", ";", " ", "\n", "\t")
+            .map { it.trim().lowercase() }
+            .filter { it.contains("@") }
+        if (allowedEmails.isEmpty()) return true
+        return cleanEmail.isNotBlank() && allowedEmails.contains(cleanEmail)
     }
 
     fun compareVersions(latestTag: String, currentVer: String): Boolean {

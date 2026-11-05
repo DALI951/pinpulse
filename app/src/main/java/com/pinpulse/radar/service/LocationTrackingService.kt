@@ -741,7 +741,8 @@ class LocationTrackingService : Service() {
                     locationManager.getLastKnownLocation(LocationManager.PASSIVE_PROVIDER)
                 } else null
 
-                val bestNative = listOfNotNull(gpsLoc, netLoc, passiveLoc).maxByOrNull { it.time }
+                val candidates = listOfNotNull(gpsLoc, netLoc, passiveLoc).filter { isAcceptableLocationFix(it) }
+                val bestNative = candidates.maxByOrNull { it.time }
                 if (bestNative != null) {
                     hasExactGpsOrCellFix = true
                     handleNewLocation(bestNative)
@@ -755,7 +756,7 @@ class LocationTrackingService : Service() {
                 val cachedGps = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
                 val cachedNet = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
                 val cachedPassive = locationManager.getLastKnownLocation(LocationManager.PASSIVE_PROVIDER)
-                val bestCached = listOfNotNull(cachedGps, cachedNet, cachedPassive).maxByOrNull { it.time }
+                val bestCached = listOfNotNull(cachedGps, cachedNet, cachedPassive).filter { isAcceptableLocationFix(it) }.maxByOrNull { it.time }
                 if (bestCached != null) {
                     hasExactGpsOrCellFix = true
                     handleNewLocation(bestCached)
@@ -989,15 +990,57 @@ class LocationTrackingService : Service() {
 
     private fun getBatteryInfo(): Pair<Int, Boolean> = getBatteryInfo(this)
 
+    private var lastValidGpsLocation: Location? = null
+    private var lastValidGpsTimestamp: Long = 0L
+
+    private fun isAcceptableLocationFix(loc: Location): Boolean {
+        if (loc.latitude == 0.0 && loc.longitude == 0.0) return false
+        if (loc.hasAccuracy() && loc.accuracy > 150f) return false
+        val ageMs = System.currentTimeMillis() - loc.time
+        if (loc.time > 0L && ageMs > 60_000L) return false
+        return true
+    }
+
     private fun handleNewLocation(location: Location) {
         if (location.latitude == 0.0 && location.longitude == 0.0) return
+        if (location.latitude < -90.0 || location.latitude > 90.0 || location.longitude < -180.0 || location.longitude > 180.0) return
+
+        // 1. Accuracy Filter: discard coarse cell tower triangulation or Wi-Fi geo-database jumps
+        if (location.hasAccuracy() && location.accuracy > 150f) {
+            Log.d(TAG, "Discarding inaccurate fix: accuracy=${location.accuracy}m > 150m")
+            return
+        }
+
+        // 2. Stale Fix Filter: discard cached locations older than 60 seconds
+        val now = System.currentTimeMillis()
+        if (location.time > 0L && (now - location.time) > 60_000L) {
+            Log.d(TAG, "Discarding stale fix: age=${now - location.time}ms > 60s")
+            return
+        }
+
+        // 3. Teleportation / Plausibility Filter:
+        // Prevent sudden jumps across town or to distant cities caused by multipath or cell tower switching
+        val prev = lastValidGpsLocation
+        val prevTime = lastValidGpsTimestamp
+        if (prev != null && prevTime > 0L) {
+            val elapsedSec = ((now - prevTime) / 1000f).coerceAtLeast(0.1f)
+            val distMeters = prev.distanceTo(location)
+            val impliedSpeedKmh = (distMeters / elapsedSec) * 3.6f
+            // If movement requires > 200 km/h and distance is > 400m, reject unless fix is pinpoint (< 20m)
+            if (distMeters > 400f && impliedSpeedKmh > 200f && (!location.hasAccuracy() || location.accuracy > 20f)) {
+                Log.w(TAG, "Discarded teleportation jump: dist=${distMeters}m in ${elapsedSec}s (${impliedSpeedKmh} km/h)")
+                return
+            }
+        }
+        lastValidGpsLocation = location
+        lastValidGpsTimestamp = now
+
         val currentUser = prefs.loadCurrentUser() ?: return
         val st = currentUser.accountStatus.uppercase()
         if (st == "BANNED" || st == "DEACTIVATED" || st == "DELETED") return
         val speedKmh = (location.speed * 3.6f).coerceAtLeast(0f)
         val (batteryPct, isCharging) = getBatteryInfo()
         val gpsOn = isSystemLocationEnabled()
-        val now = System.currentTimeMillis()
         val friendsCount = prefs.loadFriends().size
         val groupsCount = prefs.loadGroups().size
 

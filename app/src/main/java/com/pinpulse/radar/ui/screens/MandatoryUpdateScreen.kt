@@ -39,6 +39,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -60,10 +61,13 @@ import com.pinpulse.radar.util.UpdateState
 @Composable
 fun MandatoryUpdateScreen(
     updateState: UpdateState,
-    onUpdateClick: () -> Unit
+    onUpdateClick: () -> Unit,
+    onDismiss: (() -> Unit)? = null
 ) {
-    // Completely disable hardware back button to prevent bypassing mandatory update
-    BackHandler { /* Do nothing - update is strictly mandatory */ }
+    // Allow back button to dismiss if onDismiss is provided
+    BackHandler(enabled = onDismiss != null) {
+        onDismiss?.invoke()
+    }
 
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
     val pulseScale by infiniteTransition.animateFloat(
@@ -301,12 +305,27 @@ fun MandatoryUpdateScreen(
                 Spacer(modifier = Modifier.height(16.dp))
 
                 Text(
-                    text = "🔒 PinPulse operates on real-time synchronized telemetry. Updating is mandatory to prevent desynchronization with your friends and circle radar.",
+                    text = "🔒 PinPulse operates on real-time synchronized telemetry. Updating is recommended to enjoy the latest real-time tracking features.",
                     color = Color(0xFF64748B),
                     fontSize = 11.sp,
                     textAlign = TextAlign.Center,
                     lineHeight = 15.sp
                 )
+
+                if (onDismiss != null) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    TextButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = "Continue to Map (Skip for now)",
+                            color = Color(0xFF94A3B8),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
             }
         }
     }

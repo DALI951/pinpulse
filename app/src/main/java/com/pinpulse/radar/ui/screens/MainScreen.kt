@@ -165,7 +165,8 @@ fun MainScreen(
         return
     }
 
-    // Enforce Mandatory Update Screen (blocks entire app if a critical update is required)
+    // Enforce Mandatory Update Screen (shows update screen, but allows user to skip to map)
+    var dismissedMandatoryScreen by remember { mutableStateOf(false) }
     val updateState by viewModel.updateState.collectAsState()
     val isMandatoryEnforced = remember(updateState) {
         val appPrefs = AppPreferences(context)
@@ -174,7 +175,7 @@ fun MainScreen(
         updateState.updateAvailable && (updateState.isMandatory || appPrefs.isMandatoryUpdateEnforced || isMinVerOutdated)
     }
 
-    if (isMandatoryEnforced) {
+    if (isMandatoryEnforced && !dismissedMandatoryScreen) {
         MandatoryUpdateScreen(
             updateState = updateState,
             onUpdateClick = {
@@ -184,7 +185,8 @@ fun MainScreen(
                 } else {
                     viewModel.downloadAndInstallUpdate(context)
                 }
-            }
+            },
+            onDismiss = { dismissedMandatoryScreen = true }
         )
         return
     }

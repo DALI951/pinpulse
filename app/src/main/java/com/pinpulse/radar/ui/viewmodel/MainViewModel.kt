@@ -496,11 +496,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         recordTrailPoint(packet.userId, packet.latitude, packet.longitude, packet.speedKmh, packet.timestamp)
 
         val currentFriends = prefs.loadFriends().toMutableList()
-        val index = currentFriends.indexOfFirst { it.id == packet.userId }
+        val index = currentFriends.indexOfFirst { f ->
+            f.id == packet.userId ||
+            (packet.friendCode.isNotBlank() && f.friendCode.isNotBlank() && f.friendCode.equals(packet.friendCode, ignoreCase = true)) ||
+            (packet.email.isNotBlank() && f.email.isNotBlank() && f.email.equals(packet.email, ignoreCase = true))
+        }
         if (index >= 0) {
             val existing = currentFriends[index]
             val hasNewCoords = packet.latitude != 0.0 || packet.longitude != 0.0
+            val resolvedId = if (existing.id.isBlank() || existing.id == existing.friendCode) packet.userId else existing.id
             val updated = existing.copy(
+                id = resolvedId,
                 displayName = packet.displayName.ifBlank { existing.displayName },
                 email = packet.email.ifBlank { existing.email },
                 friendCode = packet.friendCode.ifBlank { existing.friendCode },
@@ -1309,47 +1315,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        // Anti-Abuse Rate Limiting: 1st ring -> 1 minute cooldown, then 5 minutes for subsequent rings
-        val now = System.currentTimeMillis()
-        val lastRingTime = prefs.getLastRingTimestamp(targetUser.id)
-        val currentCount = prefs.getRingCount(targetUser.id)
-        val effectiveCount = if (now - lastRingTime > 15 * 60_000L) 0 else currentCount
-
-        val requiredCooldownMs = if (effectiveCount == 1) {
-            60_000L // 1 minute cooldown after 1st ring
-        } else if (effectiveCount >= 2) {
-            5 * 60_000L // 5 minutes cooldown for repeated rings
-        } else {
-            0L // First ring is allowed immediately
-        }
-
-        val elapsed = now - lastRingTime
-        if (lastRingTime > 0L && elapsed < requiredCooldownMs) {
-            val remainingSec = ((requiredCooldownMs - elapsed) / 1000).coerceAtLeast(1)
-            val remainingMin = remainingSec / 60
-            val remSecMod = remainingSec % 60
-            val timeText = if (remainingMin > 0) "${remainingMin}m ${remSecMod}s" else "${remainingSec}s"
-
-            val message = if (effectiveCount >= 2) {
-                "⏳ Anti-Abuse Protection: Ringing is limited to once every 5 minutes to prevent harassment. Please wait $timeText before ringing ${targetUser.displayName} again."
-            } else {
-                "⏳ Anti-Abuse Cooldown: Ringing is limited to once every 1 minute. Please wait $timeText before ringing ${targetUser.displayName} again."
-            }
-
-            postAlert(AlertMessage(
-                senderId = "system",
-                senderName = "Anti-Abuse Limit",
-                type = "RING_COOLDOWN",
-                message = message
-            ), autoDismissMs = 6000L)
-            return
-        }
-
-        prefs.setLastRingTimestamp(targetUser.id, now)
-        prefs.setRingCount(targetUser.id, (effectiveCount + 1).coerceAtMost(5))
-
-        val callerName = me?.displayName ?: "Friend"
-        realtime.sendRingCommand(targetUser.id, targetUser.friendCode, callerName)
+        val callerName = me?.displayName?.ifBlank { null } ?: "Friend"
+        realtime.sendRingCommand(
+            targetUserId = targetUser.id,
+            targetFriendCode = targetUser.friendCode,
+            callerName = callerName,
+            targetEmail = targetUser.email
+        )
         postAlert(AlertMessage(
             senderId = me?.id ?: "",
             senderName = callerName,
@@ -1359,15 +1331,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun getRemainingRingCooldownSeconds(targetUserId: String): Int {
-        val now = System.currentTimeMillis()
-        val lastRingTime = prefs.getLastRingTimestamp(targetUserId)
-        val currentCount = prefs.getRingCount(targetUserId)
-        if (now - lastRingTime > 15 * 60_000L) return 0
-        val requiredCooldownMs = if (currentCount == 1) 60_000L else if (currentCount >= 2) 5 * 60_000L else 0L
-        val elapsed = now - lastRingTime
-        if (lastRingTime > 0L && elapsed < requiredCooldownMs) {
-            return ((requiredCooldownMs - elapsed) / 1000).toInt().coerceAtLeast(1)
-        }
         return 0
     }
 

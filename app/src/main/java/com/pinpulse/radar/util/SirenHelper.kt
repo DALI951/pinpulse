@@ -57,15 +57,20 @@ object SirenHelper {
         sirenStartTime = System.currentTimeMillis()
 
         try {
-            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-            val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM)
-            previousAlarmVolume = audioManager.getStreamVolume(AudioManager.STREAM_ALARM)
-            targetAlarmVolume = maxVol
-            audioManager.setStreamVolume(AudioManager.STREAM_ALARM, maxVol, 0)
+            try {
+                val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM)
+                previousAlarmVolume = audioManager.getStreamVolume(AudioManager.STREAM_ALARM)
+                targetAlarmVolume = maxVol
+                audioManager.setStreamVolume(AudioManager.STREAM_ALARM, maxVol, 0)
+            } catch (ve: Exception) {
+                Log.w(TAG, "Could not set max alarm volume (DND or permission restriction): ${ve.message}")
+            }
 
             val alarmUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
                 ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
                 ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+                ?: android.provider.Settings.System.DEFAULT_ALARM_ALERT_URI
 
             try {
                 mediaPlayer = MediaPlayer().apply {
@@ -135,6 +140,8 @@ object SirenHelper {
         } catch (e: Exception) {
             Log.e(TAG, "Error playing siren: ${e.message}")
             stop(context)
+            isPlaying = false
+            _isSirenActive.value = false
         }
     }
 
@@ -210,8 +217,8 @@ object SirenHelper {
 
         // 2. Immediately stop all audio sources
         stopAudio()
+        stopVibration(context)
 
-        if (!isPlaying) return
         isPlaying = false
         _isSirenActive.value = false
         autoStopRunnable?.let { handler.removeCallbacks(it) }
