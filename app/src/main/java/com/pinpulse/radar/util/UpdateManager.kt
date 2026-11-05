@@ -407,7 +407,7 @@ object UpdateManager {
     fun isUserTargetedForRelease(releaseNotes: String, userEmail: String): Boolean {
         if (releaseNotes.isBlank()) return true
         val cleanEmail = userEmail.trim().lowercase()
-        val pattern = Regex("\[(?:TARGET|TARGET_EMAILS|EMAILS):\\s*([^\\]]+)\]", RegexOption.IGNORE_CASE)
+        val pattern = Regex("""\[(?:TARGET|TARGET_EMAILS|EMAILS):\s*([^\]]+)\]""", RegexOption.IGNORE_CASE)
         val match = pattern.find(releaseNotes) ?: return true
         val rawEmails = match.groupValues[1]
         val allowedEmails = rawEmails.split(",", ";", " ", "\n", "\t")
