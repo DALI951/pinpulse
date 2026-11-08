@@ -90,7 +90,7 @@ object UpdateManager {
      * and the public release binary mirror (DALI951/pinpulse-releases), never stopping at the first update found,
      * and always picks the single highest version number that has a ready APK.
      */
-    private fun fetchHighestRelease(): ReleaseCandidate? {
+    private fun fetchHighestRelease(targetEmail: String = ""): ReleaseCandidate? {
         var highestCandidate: ReleaseCandidate? = null
         val token = decodeGhToken()
 
@@ -128,6 +128,11 @@ object UpdateManager {
                         if (apk.isBlank()) continue
                         val notes = rel.optString("body", "")
 
+                        // Respect targeted releases: only consider if user is targeted or release is general
+                        if (targetEmail.isNotBlank() && !isUserTargetedForRelease(notes, targetEmail)) {
+                            continue
+                        }
+
                         if (highestCandidate == null || compareVersions(tag, highestCandidate.tagName)) {
                             highestCandidate = ReleaseCandidate(
                                 tagName = tag,
@@ -161,7 +166,8 @@ object UpdateManager {
                     val apk = extractApkUrl(root, preferApiAssetUrl = isPrivateRepo)
                     val notes = root.optString("body", "")
                     if (tag.isNotBlank() && apk.isNotBlank()) {
-                        if (highestCandidate == null || compareVersions(tag, highestCandidate.tagName)) {
+                        val isAllowed = targetEmail.isBlank() || isUserTargetedForRelease(notes, targetEmail)
+                        if (isAllowed && (highestCandidate == null || compareVersions(tag, highestCandidate.tagName))) {
                             highestCandidate = ReleaseCandidate(
                                 tagName = tag,
                                 apkUrl = apk,
@@ -185,7 +191,9 @@ object UpdateManager {
             errorMessage = null
         )
         try {
-            val highest = fetchHighestRelease()
+            val prefs = context?.let { AppPreferences(it) }
+            val currentEmail = prefs?.loadCurrentUser()?.email.orEmpty()
+            val highest = fetchHighestRelease(currentEmail)
 
             if (highest != null) {
                 val tagName = highest.tagName
@@ -195,9 +203,6 @@ object UpdateManager {
                 val currentVer = BuildConfig.VERSION_NAME
                 val isNewer = compareVersions(tagName, currentVer)
                 val cleanLatest = tagName.removePrefix("v").trim()
-
-                val prefs = context?.let { AppPreferences(it) }
-                val currentEmail = prefs?.loadCurrentUser()?.email.orEmpty()
                 val isTargeted = isUserTargetedForRelease(body, currentEmail)
                 val effectiveIsNewer = isNewer && isTargeted
 
@@ -489,7 +494,8 @@ object UpdateManager {
             // Re-verify the absolute highest release on GitHub right before installing/downloading
             // so we never install an older version if a newer release is available.
             try {
-                val freshHighest = fetchHighestRelease()
+                val currentEmail = AppPreferences(context).loadCurrentUser()?.email.orEmpty()
+                val freshHighest = fetchHighestRelease(currentEmail)
                 if (freshHighest != null) {
                     val freshClean = freshHighest.tagName.removePrefix("v").trim()
                     if (freshClean.isNotBlank() && compareVersions(freshClean, BuildConfig.VERSION_NAME)) {
