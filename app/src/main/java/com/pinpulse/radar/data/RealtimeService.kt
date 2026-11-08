@@ -1021,10 +1021,6 @@ class RealtimeService private constructor(private val context: Context) {
             Log.w(TAG, "Failed to apply admin command: ${e.message}")
         }
     }
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to apply admin command: ${e.message}")
-        }
-    }
 
     fun publishDirectLocation(targetUserId: String, targetFriendCode: String, packet: LocationPacket) {
         val payload = gson.toJson(packet)
