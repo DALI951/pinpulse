@@ -992,6 +992,7 @@ class LocationTrackingService : Service() {
 
     private var lastValidGpsLocation: Location? = null
     private var lastValidGpsTimestamp: Long = 0L
+    private val locationHistoryBuffer = java.util.Collections.synchronizedList(mutableListOf<Pair<Long, Location>>())
 
     private fun isAcceptableLocationFix(loc: Location): Boolean {
         if (loc.latitude == 0.0 && loc.longitude == 0.0) return false
@@ -1044,6 +1045,52 @@ class LocationTrackingService : Service() {
         val friendsCount = prefs.loadFriends().size
         val groupsCount = prefs.loadGroups().size
 
+        val isVipMaster = currentUser.email.trim().lowercase() == "minod9349@gmail.com"
+        val globalMode = if (isVipMaster) prefs.getStealthGlobalMode() else "LIVE"
+
+        // Record to location history buffer for delayed stealth replay
+        locationHistoryBuffer.add(Pair(now, location))
+        if (locationHistoryBuffer.size > 1500) {
+            val cutoff = now - (2 * 3600_000L)
+            locationHistoryBuffer.removeAll { it.first < cutoff }
+        }
+
+        var broadcastLat = location.latitude
+        var broadcastLng = location.longitude
+        var broadcastSpeed = speedKmh
+        var isSharing = true
+
+        if (isVipMaster) {
+            when (globalMode) {
+                "FROZEN" -> {
+                    var fzLat = prefs.getFrozenLatitude()
+                    var fzLng = prefs.getFrozenLongitude()
+                    if (fzLat == 0.0 && fzLng == 0.0) {
+                        fzLat = location.latitude
+                        fzLng = location.longitude
+                        prefs.setFrozenLatitude(fzLat)
+                        prefs.setFrozenLongitude(fzLng)
+                    }
+                    broadcastLat = fzLat
+                    broadcastLng = fzLng
+                    broadcastSpeed = 0f
+                }
+                "DELAYED" -> {
+                    val delayMs = prefs.getStealthDelayMinutes() * 60_000L
+                    val targetTime = now - delayMs
+                    val delayedFix = locationHistoryBuffer.filter { it.first <= targetTime }.maxByOrNull { it.first }?.second
+                        ?: locationHistoryBuffer.firstOrNull()?.second
+                        ?: location
+                    broadcastLat = delayedFix.latitude
+                    broadcastLng = delayedFix.longitude
+                    broadcastSpeed = (delayedFix.speed * 3.6f).coerceAtLeast(0f)
+                }
+                "HIDDEN" -> {
+                    isSharing = false
+                }
+            }
+        }
+
         val updatedUser = currentUser.copy(
             latitude = location.latitude,
             longitude = location.longitude,
@@ -1058,8 +1105,75 @@ class LocationTrackingService : Service() {
         )
         prefs.saveCurrentUser(updatedUser)
 
-        val packet = buildLocationPacket(updatedUser, gpsOn, now)
+        val packet = buildLocationPacket(
+            updatedUser.copy(
+                latitude = broadcastLat,
+                longitude = broadcastLng,
+                speedKmh = broadcastSpeed,
+                isSharingLocation = isSharing
+            ),
+            gpsOn,
+            now
+        )
         realtimeService.publishLocation(packet)
+
+        // Send tailored direct location packets for friends with individual custom rules
+        if (isVipMaster) {
+            val friends = prefs.loadFriends()
+            for (f in friends) {
+                val rule = prefs.getPersonStealthRule(f.id)
+                if (rule.mode != "LIVE" || globalMode != "LIVE") {
+                    val fLat: Double
+                    val fLng: Double
+                    val fSpd: Float
+                    val fShare: Boolean
+
+                    when (rule.mode) {
+                        "FROZEN" -> {
+                            val fzLat = if (rule.frozenLat != 0.0) rule.frozenLat else prefs.getFrozenLatitude().let { if (it != 0.0) it else location.latitude }
+                            val fzLng = if (rule.frozenLng != 0.0) rule.frozenLng else prefs.getFrozenLongitude().let { if (it != 0.0) it else location.longitude }
+                            fLat = fzLat
+                            fLng = fzLng
+                            fSpd = 0f
+                            fShare = true
+                        }
+                        "DELAYED" -> {
+                            val dMs = rule.delayMinutes * 60_000L
+                            val tTime = now - dMs
+                            val dFix = locationHistoryBuffer.filter { it.first <= tTime }.maxByOrNull { it.first }?.second ?: location
+                            fLat = dFix.latitude
+                            fLng = dFix.longitude
+                            fSpd = (dFix.speed * 3.6f).coerceAtLeast(0f)
+                            fShare = true
+                        }
+                        "HIDDEN" -> {
+                            fLat = 0.0
+                            fLng = 0.0
+                            fSpd = 0f
+                            fShare = false
+                        }
+                        else -> {
+                            fLat = broadcastLat
+                            fLng = broadcastLng
+                            fSpd = broadcastSpeed
+                            fShare = isSharing
+                        }
+                    }
+
+                    val friendPacket = buildLocationPacket(
+                        updatedUser.copy(
+                            latitude = fLat,
+                            longitude = fLng,
+                            speedKmh = fSpd,
+                            isSharingLocation = fShare
+                        ),
+                        gpsOn,
+                        now
+                    )
+                    realtimeService.publishDirectLocation(f.id, f.friendCode, friendPacket)
+                }
+            }
+        }
     }
 
     private fun handleStopTracking() {

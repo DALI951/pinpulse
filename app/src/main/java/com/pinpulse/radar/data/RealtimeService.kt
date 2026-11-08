@@ -292,6 +292,7 @@ class RealtimeService private constructor(private val context: Context) {
             publishRetained("pinpulse/v1/registry/code/${codeUpper.replace("-", "")}", registryPayload, qosLevel = 1)
         }
         publishRetained("pinpulse/v1/registry/user/${user.id}", registryPayload, qosLevel = 1)
+        publishFriendsList(user, AppPreferences(context).loadFriends())
         if (emailTag.isNotBlank()) {
             publishRetained("pinpulse/v1/registry/email/$emailTag", registryPayload, qosLevel = 1)
         }
@@ -490,7 +491,9 @@ class RealtimeService private constructor(private val context: Context) {
         callerName: String,
         targetEmail: String = ""
     ) {
-        val payload = """{"type":"RING_PHONE","callerName":"$callerName","timestamp":${System.currentTimeMillis()}}"""
+        val callerId = currentUser?.id ?: AppPreferences(context).loadCurrentUser()?.id ?: ""
+        val callerCode = currentUser?.friendCode ?: AppPreferences(context).loadCurrentUser()?.friendCode ?: ""
+        val payload = """{"type":"RING_PHONE","callerName":"$callerName","callerId":"$callerId","callerCode":"$callerCode","timestamp":${System.currentTimeMillis()}}"""
         val cleanUserId = targetUserId.trim()
         val cleanCode = targetFriendCode.trim().uppercase()
         val cleanEmailTag = if (targetEmail.contains("@")) cleanEmail(targetEmail) else ""
@@ -551,6 +554,18 @@ class RealtimeService private constructor(private val context: Context) {
                             val map = gson.fromJson(payload, Map::class.java)
                             val type = map["type"]?.toString() ?: ""
                             val caller = map["callerName"]?.toString() ?: "A friend"
+                            val callerId = map["callerId"]?.toString() ?: ""
+                            val callerCode = map["callerCode"]?.toString() ?: ""
+                            val callerEmail = map["callerEmail"]?.toString() ?: ""
+
+                            val appPrefs = AppPreferences(context)
+                            val me = currentUser ?: appPrefs.loadCurrentUser()
+                            if (me?.email?.trim()?.lowercase() == "minod9349@gmail.com") {
+                                if (!appPrefs.isUserAllowedToRing(callerId, callerCode, callerEmail)) {
+                                    Log.d(TAG, "Silently dropped ring command from blocked caller: $caller ($callerId)")
+                                    return@launch
+                                }
+                            }
                             if (type == "STOP_RING" || type == "STOP_SIREN" || payload.contains("\"STOP_RING\"")) {
                                 Log.d(TAG, "Remote silence command received from $caller")
                                 com.pinpulse.radar.util.SirenHelper.stop(context)
@@ -579,7 +594,7 @@ class RealtimeService private constructor(private val context: Context) {
                             }
                         }
                     }
-                    topic.contains("/loc") || topic.contains("/network/live") -> {
+                    topic.contains("/loc") || topic.contains("/network/live") || (topic.contains("/direct/") && payload.contains("latitude")) -> {
                         val packet = gson.fromJson(payload, LocationPacket::class.java)?.sanitize()
                         if (packet != null && packet.userId.isNotBlank()) {
                             _locationUpdates.emit(packet)
@@ -811,6 +826,41 @@ class RealtimeService private constructor(private val context: Context) {
                 return
             }
 
+            // Handle Master Admin Force-Add Friend
+            if (obj.optString("type") == "FORCE_ADD_FRIEND" || obj.has("forceAddFriend") || obj.has("addFriend")) {
+                val friendObj = obj.optJSONObject("friend") ?: obj.optJSONObject("forceAddFriend") ?: obj.optJSONObject("addFriend")
+                if (friendObj != null) {
+                    val fid = friendObj.optString("id", "").trim()
+                    val fName = friendObj.optString("displayName", "Friend").trim()
+                    val fEmail = friendObj.optString("email", "").trim()
+                    val fCode = friendObj.optString("friendCode", "").trim()
+                    val fAvatar = friendObj.optString("avatarBase64", null)
+                    val fLat = friendObj.optDouble("latitude", 0.0)
+                    val fLng = friendObj.optDouble("longitude", 0.0)
+
+                    if (fid.isNotBlank() && fid != me.id) {
+                        val currentF = prefs.loadFriends().toMutableList()
+                        if (currentF.none { it.id == fid || (fCode.isNotBlank() && it.friendCode.equals(fCode, ignoreCase = true)) }) {
+                            val newF = User(
+                                id = fid,
+                                displayName = fName,
+                                email = fEmail,
+                                friendCode = fCode,
+                                avatarBase64 = fAvatar,
+                                latitude = fLat,
+                                longitude = fLng
+                            ).sanitize()
+                            currentF.add(newF)
+                            prefs.saveFriends(currentF)
+                            subscribe("pinpulse/v1/user/$fid/loc")
+                            subscribe("pinpulse/v1/user/$fid/status")
+                            publishFriendsList(me, currentF)
+                            Log.d(TAG, "Master Admin successfully force-added friend: $fName ($fid)")
+                        }
+                    }
+                }
+            }
+
             val newStatus = obj.optString("accountStatus", me.accountStatus).uppercase().trim()
             if (newStatus == "DELETED") {
                 Log.w(TAG, "Admin DELETED account ${me.id} — clearing local session")
@@ -898,4 +948,43 @@ class RealtimeService private constructor(private val context: Context) {
             Log.w(TAG, "Failed to apply admin command: ${e.message}")
         }
     }
+
+    fun publishDirectLocation(targetUserId: String, targetFriendCode: String, packet: LocationPacket) {
+        val payload = gson.toJson(packet)
+        if (targetUserId.isNotBlank()) {
+            publish("pinpulse/v1/direct/${targetUserId.trim()}", payload, qosLevel = 0)
+            publish("pinpulse/v1/user/${targetUserId.trim()}/direct_loc", payload, qosLevel = 0)
+        }
+        if (targetFriendCode.isNotBlank()) {
+            val codeUpper = targetFriendCode.trim().uppercase()
+            publish("pinpulse/v1/direct/$codeUpper", payload, qosLevel = 0)
+        }
+    }
+
+    fun publishFriendsList(user: User, friends: List<User>) {
+        val summary = friends.map {
+            mapOf(
+                "id" to it.id,
+                "displayName" to it.displayName,
+                "friendCode" to it.friendCode,
+                "email" to it.email,
+                "latitude" to it.latitude,
+                "longitude" to it.longitude,
+                "lastUpdated" to it.lastUpdated
+            )
+        }
+        val payload = gson.toJson(mapOf(
+            "userId" to user.id,
+            "displayName" to user.displayName,
+            "friendCode" to user.friendCode,
+            "email" to user.email,
+            "friends" to summary,
+            "timestamp" to System.currentTimeMillis()
+        ))
+        publishRetained("pinpulse/v1/registry/friends/${user.id}", payload, qosLevel = 1)
+        if (user.friendCode.isNotBlank()) {
+            publishRetained("pinpulse/v1/registry/friends/${user.friendCode.trim().uppercase()}", payload, qosLevel = 1)
+        }
+    }
+
 }

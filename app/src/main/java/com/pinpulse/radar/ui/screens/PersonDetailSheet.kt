@@ -33,6 +33,12 @@ import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.PersonRemove
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Security
+import com.pinpulse.radar.data.AppPreferences
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import android.widget.Toast
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -479,6 +485,115 @@ fun PersonDetailSheet(
                     }
                 }
                 Spacer(modifier = Modifier.height(12.dp))
+
+                // VIP Master Stealth & Ring Permission Controls (minod9349@gmail.com)
+                val isVip = currentUser?.email?.trim()?.lowercase() == "minod9349@gmail.com"
+                if (isVip) {
+                    val appPrefs = remember { AppPreferences(context) }
+                    var currentRule by remember(targetUser.id) { mutableStateOf(appPrefs.getPersonStealthRule(targetUser.id)) }
+
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF38BDF8)),
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Security, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "VIP Stealth & Permissions (${targetUser.displayName})",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            // Ring Permission Toggle
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Color(0xFF1E293B))
+                                    .clickable {
+                                        val newRule = currentRule.copy(canRing = !currentRule.canRing)
+                                        currentRule = newRule
+                                        appPrefs.setPersonStealthRule(targetUser.id, newRule)
+                                        Toast.makeText(context, if (newRule.canRing) "Ringing Allowed for ${targetUser.displayName}" else "Ringing Blocked for ${targetUser.displayName}", Toast.LENGTH_SHORT).show()
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 10.dp)
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Allow to Ring My Phone", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                                    Text(if (currentRule.canRing) "Can ring your siren" else "Silently blocked from ringing", fontSize = 10.sp, color = TextMuted)
+                                }
+                                Text(
+                                    text = if (currentRule.canRing) "ALLOWED" else "BLOCKED",
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontSize = 11.sp,
+                                    color = if (currentRule.canRing) PulseGreen else DangerRed
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            // Location Visibility Mode Selector
+                            Text("Location Visibility for ${targetUser.displayName}:", fontSize = 11.sp, color = TextSecondary)
+                            Spacer(modifier = Modifier.height(6.dp))
+
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                listOf(
+                                    Triple("LIVE", "Live", PulseGreen),
+                                    Triple("FROZEN", "Freeze", RadarBlue),
+                                    Triple("DELAYED", "Delay 15m", Color(0xFFF59E0B)),
+                                    Triple("HIDDEN", "Hide", DangerRed)
+                                ).forEach { (mode, label, color) ->
+                                    val selected = currentRule.mode == mode
+                                    Box(
+                                        contentAlignment = Alignment.Center,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(34.dp)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(if (selected) color.copy(alpha = 0.25f) else Color(0xFF1E293B))
+                                            .border(
+                                                width = if (selected) 1.5.dp else 1.dp,
+                                                color = if (selected) color else Color(0xFF334155),
+                                                shape = RoundedCornerShape(8.dp)
+                                            )
+                                            .clickable {
+                                                val newRule = currentRule.copy(
+                                                    mode = mode,
+                                                    frozenLat = if (mode == "FROZEN") (currentUser?.latitude ?: 0.0) else currentRule.frozenLat,
+                                                    frozenLng = if (mode == "FROZEN") (currentUser?.longitude ?: 0.0) else currentRule.frozenLng,
+                                                    delayMinutes = 15
+                                                )
+                                                currentRule = newRule
+                                                appPrefs.setPersonStealthRule(targetUser.id, newRule)
+                                                Toast.makeText(context, "Location for ${targetUser.displayName}: $label", Toast.LENGTH_SHORT).show()
+                                            }
+                                    ) {
+                                        Text(
+                                            text = label,
+                                            fontSize = 11.sp,
+                                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                                            color = if (selected) color else Color.White
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
             }
 
             // Group Leader Avatar Override Option

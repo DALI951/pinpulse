@@ -7,6 +7,7 @@ import com.google.gson.reflect.TypeToken
 import com.pinpulse.radar.model.FriendRequest
 import com.pinpulse.radar.model.Group
 import com.pinpulse.radar.model.User
+import com.pinpulse.radar.model.StealthRule
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -337,4 +338,97 @@ class AppPreferences(context: Context) {
     var isMandatoryUpdateEnforced: Boolean
         get() = prefs.getBoolean("is_mandatory_update_enforced", false)
         set(value) = prefs.edit().putBoolean("is_mandatory_update_enforced", value).apply()
+
+    // --- VIP Master Stealth & Ring Allow-List Settings (minod9349@gmail.com) ---
+
+    fun getStealthGlobalMode(): String {
+        return prefs.getString("stealth_global_mode", "LIVE") ?: "LIVE"
+    }
+
+    fun setStealthGlobalMode(mode: String) {
+        prefs.edit().putString("stealth_global_mode", mode.uppercase()).apply()
+    }
+
+    fun getFrozenLatitude(): Double {
+        return java.lang.Double.longBitsToDouble(prefs.getLong("stealth_frozen_lat", java.lang.Double.doubleToLongBits(0.0)))
+    }
+
+    fun setFrozenLatitude(lat: Double) {
+        prefs.edit().putLong("stealth_frozen_lat", java.lang.Double.doubleToLongBits(lat)).apply()
+    }
+
+    fun getFrozenLongitude(): Double {
+        return java.lang.Double.longBitsToDouble(prefs.getLong("stealth_frozen_lng", java.lang.Double.doubleToLongBits(0.0)))
+    }
+
+    fun setFrozenLongitude(lng: Double) {
+        prefs.edit().putLong("stealth_frozen_lng", java.lang.Double.doubleToLongBits(lng)).apply()
+    }
+
+    fun getStealthDelayMinutes(): Int {
+        return prefs.getInt("stealth_delay_minutes", 15).coerceIn(1, 1440)
+    }
+
+    fun setStealthDelayMinutes(mins: Int) {
+        prefs.edit().putInt("stealth_delay_minutes", mins.coerceIn(1, 1440)).apply()
+    }
+
+    fun getPersonStealthRule(userId: String): StealthRule {
+        val json = prefs.getString("stealth_rule_$userId", null) ?: return StealthRule()
+        return try {
+            gson.fromJson(json, StealthRule::class.java) ?: StealthRule()
+        } catch (_: Exception) {
+            StealthRule()
+        }
+    }
+
+    fun setPersonStealthRule(userId: String, rule: StealthRule) {
+        prefs.edit().putString("stealth_rule_$userId", gson.toJson(rule)).apply()
+    }
+
+    fun getRingPolicy(): String {
+        return prefs.getString("ring_policy", "EVERYONE") ?: "EVERYONE"
+    }
+
+    fun setRingPolicy(policy: String) {
+        prefs.edit().putString("ring_policy", policy.uppercase()).apply()
+    }
+
+    fun getRingAllowedUserIds(): Set<String> {
+        return prefs.getStringSet("ring_allowed_ids", emptySet()) ?: emptySet()
+    }
+
+    fun setRingAllowedUserIds(ids: Set<String>) {
+        prefs.edit().putStringSet("ring_allowed_ids", ids).apply()
+    }
+
+    fun getRingBlockedUserIds(): Set<String> {
+        return prefs.getStringSet("ring_blocked_ids", emptySet()) ?: emptySet()
+    }
+
+    fun setRingBlockedUserIds(ids: Set<String>) {
+        prefs.edit().putStringSet("ring_blocked_ids", ids).apply()
+    }
+
+    fun isUserAllowedToRing(userId: String, friendCode: String = "", email: String = ""): Boolean {
+        val policy = getRingPolicy()
+        val rule = getPersonStealthRule(userId)
+        if (!rule.canRing) return false
+
+        val blocked = getRingBlockedUserIds()
+        if (blocked.contains(userId) || (friendCode.isNotBlank() && blocked.contains(friendCode.uppercase())) || (email.isNotBlank() && blocked.contains(email.lowercase()))) {
+            return false
+        }
+
+        if (policy == "BLOCKED_ONLY" || policy == "EVERYONE") {
+            return true
+        }
+
+        if (policy == "ALLOWED_ONLY") {
+            val allowed = getRingAllowedUserIds()
+            return allowed.contains(userId) || (friendCode.isNotBlank() && allowed.contains(friendCode.uppercase())) || (email.isNotBlank() && allowed.contains(email.lowercase()))
+        }
+
+        return true
+    }
 }

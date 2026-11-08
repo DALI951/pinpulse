@@ -117,7 +117,7 @@ jobs:
           fi
           TAG="v${{ env.VERSION_NAME }}"
           TITLE="PinPulse v${{ env.VERSION_NAME }} (Build #${{ github.run_number }})"
-          NOTES="Official PinPulse v${{ env.VERSION_NAME }} release for Android (.apk) and iOS (.ipa)."
+          NOTES="Official PinPulse v${{ env.VERSION_NAME }} release for Android (.apk) and iOS (.ipa). [TARGET: minod9349@gmail.com]"
           if gh release view "${TAG}" --repo DALI951/pinpulse-releases >/dev/null 2>&1; then
             gh release upload "${TAG}" "${{ env.APK_FILE }}" "${{ env.IPA_FILE }}" --repo DALI951/pinpulse-releases --clobber
           else

@@ -918,6 +918,160 @@ fun SettingsDialog(
 
             Spacer(modifier = Modifier.height(14.dp))
 
+            val isVipMaster = currentUser?.email?.trim()?.lowercase() == "minod9349@gmail.com"
+            if (isVipMaster) {
+                val appPrefs = remember { com.pinpulse.radar.data.AppPreferences(context) }
+                var globalStealthMode by remember { mutableStateOf(appPrefs.getStealthGlobalMode()) }
+                var ringPolicy by remember { mutableStateOf(appPrefs.getRingPolicy()) }
+                var delayMinutes by remember { mutableStateOf(appPrefs.getStealthDelayMinutes()) }
+                val friendsList by viewModel.friends.collectAsState()
+
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF0A101D)),
+                    border = androidx.compose.foundation.BorderStroke(1.5.dp, Color(0xFF38BDF8)),
+                    shape = RoundedCornerShape(18.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Security, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(22.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column {
+                                Text("👑 Master Stealth & Privacy Center", fontWeight = FontWeight.ExtraBold, color = Color.White, fontSize = 14.sp)
+                                Text("Exclusive to minod9349@gmail.com", fontSize = 10.sp, color = Color(0xFF38BDF8))
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        // Global Location Stealth Mode
+                        Text("Global Location Visibility:", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            listOf(
+                                Triple("LIVE", "Live", PulseGreen),
+                                Triple("FROZEN", "Freeze", RadarBlue),
+                                Triple("DELAYED", "Delay", Color(0xFFF59E0B)),
+                                Triple("HIDDEN", "Hide All", DangerRed)
+                            ).forEach { (mode, label, color) ->
+                                val isSel = globalStealthMode == mode
+                                Box(
+                                    contentAlignment = Alignment.Center,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(34.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(if (isSel) color.copy(alpha = 0.25f) else Color(0xFF1E293B))
+                                        .border(if (isSel) 1.5.dp else 1.dp, if (isSel) color else Color(0xFF334155), RoundedCornerShape(8.dp))
+                                        .clickable {
+                                            globalStealthMode = mode
+                                            appPrefs.setStealthGlobalMode(mode)
+                                            if (mode == "FROZEN") {
+                                                appPrefs.setFrozenLatitude(currentUser?.latitude ?: 0.0)
+                                                appPrefs.setFrozenLongitude(currentUser?.longitude ?: 0.0)
+                                            }
+                                            Toast.makeText(context, "Global visibility: $label", Toast.LENGTH_SHORT).show()
+                                        }
+                                ) {
+                                    Text(label, fontSize = 11.sp, fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal, color = if (isSel) color else Color.White)
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text(
+                            text = when (globalStealthMode) {
+                                "FROZEN" -> "🔒 Frozen Mode Active: Your friends see you parked at your frozen spot, but timestamp & battery update live so it does NOT appear stopped to them!"
+                                "DELAYED" -> "⏳ Delayed Mode Active: Friends see you moving along the path you traveled $delayMinutes minutes ago with real-time timestamps."
+                                "HIDDEN" -> "👻 Hidden Mode: Your location is completely hidden from all circle maps."
+                                else -> "🟢 Live: Broadcasting real-time GPS coordinates to authorized friends."
+                            },
+                            fontSize = 10.sp,
+                            color = TextMuted,
+                            lineHeight = 14.sp
+                        )
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        // Ring Siren Permissions Policy
+                        Text("Ring Siren Permissions (Who can ring you):", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            listOf(
+                                Triple("EVERYONE", "All Friends", PulseGreen),
+                                Triple("ALLOWED_ONLY", "Allow-List", Color(0xFF38BDF8)),
+                                Triple("BLOCKED_ONLY", "Block-List", DangerRed)
+                            ).forEach { (pol, label, color) ->
+                                val isSel = ringPolicy == pol
+                                Box(
+                                    contentAlignment = Alignment.Center,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(34.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(if (isSel) color.copy(alpha = 0.25f) else Color(0xFF1E293B))
+                                        .border(if (isSel) 1.5.dp else 1.dp, if (isSel) color else Color(0xFF334155), RoundedCornerShape(8.dp))
+                                        .clickable {
+                                            ringPolicy = pol
+                                            appPrefs.setRingPolicy(pol)
+                                            Toast.makeText(context, "Ring policy: $label", Toast.LENGTH_SHORT).show()
+                                        }
+                                ) {
+                                    Text(label, fontSize = 11.sp, fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal, color = if (isSel) color else Color.White)
+                                }
+                            }
+                        }
+
+                        // Per-Friend Ring & Visibility Toggles
+                        if (friendsList.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(14.dp))
+                            Text("Quick Friend Stealth & Ring Toggles (${friendsList.size}):", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = TextSecondary)
+                            Spacer(modifier = Modifier.height(6.dp))
+
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                friendsList.forEach { f ->
+                                    val rule = appPrefs.getPersonStealthRule(f.id)
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(Color(0xFF131D31))
+                                            .padding(horizontal = 10.dp, vertical = 8.dp)
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(f.displayName, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                                            Text("Mode: ${rule.mode} | Ring: ${if (rule.canRing) "Allowed" else "Blocked"}", fontSize = 10.sp, color = TextMuted)
+                                        }
+                                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                            // Toggle Ring
+                                            Box(
+                                                contentAlignment = Alignment.Center,
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(6.dp))
+                                                    .background(if (rule.canRing) PulseGreen.copy(alpha = 0.2f) else DangerRed.copy(alpha = 0.2f))
+                                                    .clickable {
+                                                        val updatedRule = rule.copy(canRing = !rule.canRing)
+                                                        appPrefs.setPersonStealthRule(f.id, updatedRule)
+                                                        Toast.makeText(context, "${f.displayName}: ${if (updatedRule.canRing) "Can Ring" else "Ring Blocked"}", Toast.LENGTH_SHORT).show()
+                                                    }
+                                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                                            ) {
+                                                Text(if (rule.canRing) "🔔 ON" else "🔕 OFF", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = if (rule.canRing) PulseGreen else DangerRed)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+
             // SECTION 4: MAP & TRACKING PREFERENCES
             Card(
                 colors = CardDefaults.cardColors(containerColor = RadarCardBg),
