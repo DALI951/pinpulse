@@ -205,6 +205,10 @@ class MainActivity : ComponentActivity() {
      * Request battery optimization exemption so the OS does not freeze the app in background.
      * Only prompts once unless forced (e.g. from Settings).
      */
+    fun requestBatteryOptimizationExemption(force: Boolean = false) {
+        promptBatteryOptimization(force)
+    }
+
     fun promptBatteryOptimization(force: Boolean = false) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return
