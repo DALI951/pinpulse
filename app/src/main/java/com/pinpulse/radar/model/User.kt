@@ -62,7 +62,7 @@ data class User(
     val isAccountCutOff: Boolean
         get() {
             val st = accountStatus.uppercase()
-            return st == "BANNED" || st == "DEACTIVATED" || st == "DELETED" || st == "EXPIRED" || isSubscriptionExpired
+            return st.contains("LOCK") || st == "BANNED" || st == "DEACTIVATED" || st == "DELETED" || st == "EXPIRED" || isSubscriptionExpired
         }
 
     val isLive: Boolean

@@ -156,14 +156,8 @@ object SirenHelper {
                         val newVol = intent.getIntExtra("android.media.EXTRA_VOLUME_STREAM_VALUE", -1)
                         val prevVol = intent.getIntExtra("android.media.EXTRA_PREV_VOLUME_STREAM_VALUE", -1)
                         if (newVol in 0 until prevVol) {
-                            Log.d(TAG, "Hardware volume down detected ($prevVol -> $newVol) -> PIN required to silence")
-                            try {
-                                val promptIntent = Intent(context, com.pinpulse.radar.MainActivity::class.java).apply {
-                                    action = "SHOW_SIREN_PIN"
-                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-                                }
-                                context.startActivity(promptIntent)
-                            } catch (e: Exception) {}
+                            Log.d(TAG, "Hardware volume down detected ($prevVol -> $newVol) -> Silencing emergency siren instantly")
+                            stop(context)
                         }
                     }
                 }
@@ -188,15 +182,8 @@ object SirenHelper {
                     val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
                     val currentVol = am.getStreamVolume(AudioManager.STREAM_ALARM)
                     if (currentVol < targetAlarmVolume) {
-                        Log.d(TAG, "Alarm volume decreased ($currentVol < $targetAlarmVolume) -> Restoring volume, PIN required")
-                        am.setStreamVolume(AudioManager.STREAM_ALARM, targetAlarmVolume, 0)
-                        try {
-                            val promptIntent = Intent(context, com.pinpulse.radar.MainActivity::class.java).apply {
-                                action = "SHOW_SIREN_PIN"
-                                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-                            }
-                            context.startActivity(promptIntent)
-                        } catch (e: Exception) {}
+                        Log.d(TAG, "Alarm volume decreased ($currentVol < $targetAlarmVolume) -> User requested silence, stopping siren")
+                        stop(context)
                     }
                 }
             }
@@ -337,26 +324,23 @@ object SirenHelper {
             manager.createNotificationChannel(channel)
         }
 
-        val pinIntent = Intent(context, com.pinpulse.radar.MainActivity::class.java).apply {
-            action = "SHOW_SIREN_PIN"
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-        }
-        val pinPending = PendingIntent.getActivity(
+        val stopIntent = Intent(context, StopSirenReceiver::class.java)
+        val stopPending = PendingIntent.getBroadcast(
             context,
             0,
-            pinIntent,
+            stopIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
         val notif = NotificationCompat.Builder(context, SIREN_CHANNEL_ID)
             .setContentTitle("🔊 EMERGENCY SIREN RINGING")
-            .setContentText("$callerName is ringing your phone! Tap to enter PIN and silence.")
+            .setContentText("$callerName is ringing your phone! Tap to silence immediately.")
             .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
-            .setContentIntent(pinPending)
+            .setContentIntent(stopPending)
             .setOngoing(true)
-            .addAction(android.R.drawable.ic_media_pause, "🛑 ENTER PIN TO STOP", pinPending)
+            .addAction(android.R.drawable.ic_media_pause, "🛑 STOP SIREN (1-TAP)", stopPending)
             .build()
 
         manager.notify(SIREN_NOTIFICATION_ID, notif)

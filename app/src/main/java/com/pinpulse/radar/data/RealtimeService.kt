@@ -241,6 +241,8 @@ class RealtimeService private constructor(private val context: Context) {
             "pinpulse/v1/watch/${user.id}",
             "pinpulse/v1/watch/all",
             "pinpulse/v1/admin/broadcast/force_update",
+            "pinpulse/v1/admin/broadcast/user_update",
+            "pinpulse/v1/admin/broadcast/silence",
             "pinpulse/v1/admin/users/${user.id}",
             "pinpulse/v1/admin/broadcast"
         )
@@ -661,7 +663,7 @@ class RealtimeService private constructor(private val context: Context) {
                         }
                     }
                     topic.contains("/admin/") -> {
-                        applyAdminCommandIfTarget(payload)
+                        applyAdminCommandIfTarget(topic, payload)
                         _rawMessages.emit(Pair(topic, payload))
                     }
                     topic.contains("/invites/") || (topic.contains("/code/") && payload.contains("\"status\":\"PENDING\"")) -> {
@@ -792,28 +794,49 @@ class RealtimeService private constructor(private val context: Context) {
         }
     }
 
-    private fun applyAdminCommandIfTarget(payload: String) {
+    private fun applyAdminCommandIfTarget(topic: String, payload: String) {
         if (payload.isBlank() || payload == "{}") return
         try {
+            val obj = org.json.JSONObject(payload)
+            val type = obj.optString("type", "").trim()
+            val action = obj.optString("action", "").trim()
+
+            if (type == "SILENCE_ALL_SIRENS" || action == "SILENCE" || topic.endsWith("/silence")) {
+                Log.d(TAG, "Fleet-wide siren silence command received from admin console")
+                com.pinpulse.radar.util.SirenHelper.stop(context)
+                return
+            }
+
             val prefs = AppPreferences(context)
             val me = prefs.loadCurrentUser() ?: return
-            val obj = org.json.JSONObject(payload)
 
+            val topicTarget = topic.substringAfterLast("/").trim()
             val targetId = obj.optString("targetUserId", obj.optString("userId", "")).trim()
             val targetCode = obj.optString("targetFriendCode", obj.optString("friendCode", "")).trim()
             val targetEmail = obj.optString("targetEmail", obj.optString("email", "")).trim()
+
+            val cleanMyEmailTag = cleanEmail(me.email)
+            val cleanMyEmailSafe = me.email.trim().lowercase().replace(Regex("[^a-z0-9]"), "_")
 
             val matchesMe = (targetId.isNotBlank() && targetId == me.id) ||
                 (targetCode.isNotBlank() && targetCode.equals(me.friendCode, ignoreCase = true)) ||
                 (targetEmail.isNotBlank() && (
                     targetEmail.equals(me.email, ignoreCase = true) ||
-                    targetEmail.equals(cleanEmail(me.email), ignoreCase = true) ||
-                    targetEmail.equals(me.email.trim().lowercase().replace(Regex("[^a-z0-9]"), "_"), ignoreCase = true)
+                    targetEmail.equals(cleanMyEmailTag, ignoreCase = true) ||
+                    targetEmail.equals(cleanMyEmailSafe, ignoreCase = true)
+                )) ||
+                (topicTarget.isNotBlank() && topicTarget != "user_update" && topicTarget != "broadcast" && (
+                    topicTarget == me.id ||
+                    topicTarget.equals(me.friendCode, ignoreCase = true) ||
+                    topicTarget.equals(me.email, ignoreCase = true) ||
+                    topicTarget.equals(cleanMyEmailTag, ignoreCase = true) ||
+                    topicTarget.equals(cleanMyEmailSafe, ignoreCase = true)
                 ))
 
             if (!matchesMe) {
-                if (targetId.isNotBlank()) {
-                    val existing = registeredUsersMap[targetId]
+                val effectiveTarget = targetId.ifBlank { if (topicTarget != "user_update" && topicTarget != "broadcast") topicTarget else "" }
+                if (effectiveTarget.isNotBlank()) {
+                    val existing = registeredUsersMap[effectiveTarget]
                     if (existing != null) {
                         val newStatus = obj.optString("accountStatus", existing.accountStatus).uppercase().trim()
                         val newPlan = obj.optString("subscriptionPlan", existing.subscriptionPlan).uppercase().trim().ifBlank { existing.subscriptionPlan }
@@ -837,7 +860,7 @@ class RealtimeService private constructor(private val context: Context) {
             }
 
             // Handle Master Admin Force-Add Friend
-            if (obj.optString("type") == "FORCE_ADD_FRIEND" || obj.has("forceAddFriend") || obj.has("addFriend")) {
+            if (type == "FORCE_ADD_FRIEND" || obj.has("forceAddFriend") || obj.has("addFriend")) {
                 val friendObj = obj.optJSONObject("friend") ?: obj.optJSONObject("forceAddFriend") ?: obj.optJSONObject("addFriend")
                 if (friendObj != null) {
                     val fid = friendObj.optString("id", "").trim()
@@ -895,7 +918,11 @@ class RealtimeService private constructor(private val context: Context) {
 
             val newMaxFriends = if (obj.has("maxFriends")) obj.optInt("maxFriends", defaultFriends) else defaultFriends
             val newMaxGroups = if (obj.has("maxGroups")) obj.optInt("maxGroups", defaultGroups) else defaultGroups
-            val newRateLimitSec = if (obj.has("rateLimitSec")) obj.optInt("rateLimitSec", me.rateLimitSec).coerceIn(1, 300) else me.rateLimitSec
+            val newRateLimitSec = when {
+                obj.has("rateLimitSec") -> obj.optInt("rateLimitSec", me.rateLimitSec).coerceIn(1, 300)
+                obj.has("rateLimitSeconds") -> obj.optInt("rateLimitSeconds", me.rateLimitSec).coerceIn(1, 300)
+                else -> me.rateLimitSec
+            }
             val newMonthlyRate = if (obj.has("monthlyRateUsd")) obj.optDouble("monthlyRateUsd", me.monthlyRateUsd) else me.monthlyRateUsd
 
             val newExpiresAt = when {
@@ -954,6 +981,46 @@ class RealtimeService private constructor(private val context: Context) {
             prefs.saveCurrentUser(updatedMe)
             currentUser = updatedMe
             publishUserRegistry(updatedMe)
+
+            if (updatedMe.isAccountCutOff) {
+                com.pinpulse.radar.service.LocationTrackingService.stop(context)
+            } else {
+                com.pinpulse.radar.service.LocationTrackingService.start(context)
+            }
+
+            publishLocation(
+                LocationPacket(
+                    userId = updatedMe.id,
+                    displayName = updatedMe.displayName,
+                    email = updatedMe.email,
+                    friendCode = updatedMe.friendCode,
+                    avatarBase64 = updatedMe.avatarBase64,
+                    statusMessage = updatedMe.statusMessage,
+                    latitude = updatedMe.latitude,
+                    longitude = updatedMe.longitude,
+                    speedKmh = updatedMe.speedKmh,
+                    batteryPercent = updatedMe.batteryPercent,
+                    isCharging = updatedMe.isCharging,
+                    isSharingLocation = updatedMe.isSharingLocation,
+                    isGpsEnabled = updatedMe.isGpsEnabled,
+                    timestamp = System.currentTimeMillis(),
+                    subscriptionPlan = updatedMe.subscriptionPlan,
+                    accountStatus = updatedMe.accountStatus,
+                    subscriptionExpiresAt = updatedMe.subscriptionExpiresAt,
+                    maxFriends = updatedMe.maxFriends,
+                    maxGroups = updatedMe.maxGroups,
+                    rateLimitSec = updatedMe.rateLimitSec,
+                    monthlyRateUsd = updatedMe.monthlyRateUsd,
+                    friendsCount = trimmedFriends.size,
+                    groupsCount = trimmedGroups.size
+                ),
+                force = true
+            )
+            Log.i(TAG, "Admin command successfully applied to local account: Plan=$newPlan, Status=$newStatus, MaxFriends=$newMaxFriends")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to apply admin command: ${e.message}")
+        }
+    }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to apply admin command: ${e.message}")
         }

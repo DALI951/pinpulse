@@ -135,7 +135,7 @@ class MainActivity : ComponentActivity() {
         }
 
         if (intent?.action == "SHOW_SIREN_PIN") {
-            viewModel.showSirenPinDialog()
+            viewModel.stopSirenDirectly(this)
         }
         if (intent?.getBooleanExtra("ACTION_PROMPT_GPS", false) == true) {
             promptTurnOnGpsDialog()
@@ -146,7 +146,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         if (intent.action == "SHOW_SIREN_PIN") {
-            viewModel.showSirenPinDialog()
+            viewModel.stopSirenDirectly(this)
         }
         if (intent.getBooleanExtra("ACTION_PROMPT_GPS", false)) {
             promptTurnOnGpsDialog()

@@ -324,10 +324,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        // Observe siren state to pop up or dismiss the Security PIN dialog
+        // Observe siren state (SOS emergency alarm stops directly with no PIN required)
         viewModelScope.launch {
             SirenHelper.isSirenActive.collect { active ->
-                _isSirenPinDialogOpen.value = active
+                if (!active) {
+                    _isSirenPinDialogOpen.value = false
+                }
             }
         }
 
