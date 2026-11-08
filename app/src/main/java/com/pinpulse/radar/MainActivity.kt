@@ -1,9 +1,12 @@
 package com.pinpulse.radar
 
 import android.Manifest
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.location.LocationManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -12,11 +15,28 @@ import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.Surface
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LocationOff
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
@@ -24,19 +44,6 @@ import com.pinpulse.radar.ui.screens.AuthScreen
 import com.pinpulse.radar.ui.screens.MainScreen
 import com.pinpulse.radar.ui.screens.OnboardingSetupScreen
 import android.widget.Toast
-import androidx.compose.foundation.layout.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.pinpulse.radar.ui.theme.DangerRed
 import com.pinpulse.radar.ui.theme.PulseGreen
 import com.pinpulse.radar.ui.theme.TextMuted
@@ -44,10 +51,22 @@ import com.pinpulse.radar.ui.theme.TextSecondary
 import com.pinpulse.radar.ui.theme.PinPulseTheme
 import com.pinpulse.radar.ui.theme.RadarDarkBg
 import com.pinpulse.radar.ui.viewmodel.MainViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 class MainActivity : ComponentActivity() {
 
     private val viewModel: MainViewModel by viewModels()
+
+    private val _isGpsDisabled = MutableStateFlow(false)
+    val isGpsDisabled: StateFlow<Boolean> = _isGpsDisabled.asStateFlow()
+
+    private val gpsSwitchReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            checkAndEnforceGps()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -55,6 +74,11 @@ class MainActivity : ComponentActivity() {
         // Prune obsolete APKs from previous updates if the app is now running that version or newer
         com.pinpulse.radar.util.UpdateManager.cleanupOldInstalledApks(this)
 
+        try {
+            registerReceiver(gpsSwitchReceiver, IntentFilter(LocationManager.PROVIDERS_CHANGED_ACTION))
+        } catch (_: Exception) {}
+
+        checkAndEnforceGps()
         fetchImmediateLocation()
 
         setContent {
@@ -66,6 +90,7 @@ class MainActivity : ComponentActivity() {
                     val currentUser by viewModel.currentUser.collectAsState()
                     val hasCompletedSetup by viewModel.hasCompletedSetup.collectAsState()
                     val hasUserCreatedPassword by viewModel.hasUserCreatedPassword.collectAsState()
+                    val isGpsOff by isGpsDisabled.collectAsState()
 
                     if (currentUser == null) {
                         AuthScreen(viewModel = viewModel)
@@ -73,6 +98,7 @@ class MainActivity : ComponentActivity() {
                         OnboardingSetupScreen(
                             viewModel = viewModel,
                             onFinish = {
+                                checkAndEnforceGps()
                                 fetchImmediateLocation()
                             }
                         )
@@ -97,12 +123,22 @@ class MainActivity : ComponentActivity() {
                             )
                         }
                     }
+
+                    // Persistent Elderly Safety Mode GPS enforcement dialog
+                    if (isGpsOff) {
+                        ElderlyGpsEnforcementDialog(
+                            onTurnOnGps = { promptTurnOnGpsDialog() }
+                        )
+                    }
                 }
             }
         }
 
         if (intent?.action == "SHOW_SIREN_PIN") {
             viewModel.showSirenPinDialog()
+        }
+        if (intent?.getBooleanExtra("ACTION_PROMPT_GPS", false) == true) {
+            promptTurnOnGpsDialog()
         }
     }
 
@@ -112,6 +148,16 @@ class MainActivity : ComponentActivity() {
         if (intent.action == "SHOW_SIREN_PIN") {
             viewModel.showSirenPinDialog()
         }
+        if (intent.getBooleanExtra("ACTION_PROMPT_GPS", false)) {
+            promptTurnOnGpsDialog()
+        }
+    }
+
+    override fun onDestroy() {
+        try {
+            unregisterReceiver(gpsSwitchReceiver)
+        } catch (_: Exception) {}
+        super.onDestroy()
     }
 
     override fun onResume() {
@@ -119,12 +165,23 @@ class MainActivity : ComponentActivity() {
         viewModel.setForegroundActive(true)
         // Check if an update was already downloaded so the UI is ready without re-downloading
         viewModel.refreshUpdateStatus()
+        checkAndEnforceGps()
         fetchImmediateLocation()
     }
 
     override fun onPause() {
         super.onPause()
         viewModel.setForegroundActive(false)
+    }
+
+    fun checkAndEnforceGps(): Boolean {
+        val lm = getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+        val isGpsEnabled = lm?.isProviderEnabled(LocationManager.GPS_PROVIDER) == true
+        _isGpsDisabled.value = !isGpsEnabled
+        if (!isGpsEnabled) {
+            promptTurnOnGpsDialog()
+        }
+        return isGpsEnabled
     }
 
     fun fetchImmediateLocation() {
@@ -138,45 +195,23 @@ class MainActivity : ComponentActivity() {
                         viewModel.updateMyLocation(loc.latitude, loc.longitude, loc.speed)
                     }
                 }
-                fused.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null).addOnSuccessListener { loc ->
-                    if (loc != null) {
-                        viewModel.updateMyLocation(loc.latitude, loc.longitude, loc.speed)
-                    }
-                }
-            } catch (e: Exception) {}
+            } catch (_: SecurityException) {}
         }
         // Always start LocationTrackingService (uses GPS/Cell when enabled, and silent Data Service fallback when GPS is off)
         com.pinpulse.radar.service.LocationTrackingService.start(this)
     }
 
-    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
-        if (com.pinpulse.radar.util.SirenHelper.isCurrentlyPlaying()) {
-            if (event.action == android.view.KeyEvent.ACTION_DOWN) {
-                when (event.keyCode) {
-                    android.view.KeyEvent.KEYCODE_VOLUME_DOWN,
-                    android.view.KeyEvent.KEYCODE_VOLUME_UP,
-                    android.view.KeyEvent.KEYCODE_VOLUME_MUTE,
-                    android.view.KeyEvent.KEYCODE_POWER -> {
-                        if (viewModel.hasSecurityPin()) {
-                            viewModel.showSirenPinDialog()
-                        } else {
-                            viewModel.stopSirenDirectly(this)
-                        }
-                        return true
-                    }
-                }
-            }
-        }
-        return super.dispatchKeyEvent(event)
-    }
-
-    fun requestBatteryOptimizationExemption(force: Boolean = false) {
-        val prefs = com.pinpulse.radar.data.AppPreferences(this)
-        if (!force && prefs.hasPromptedBatteryExemption) {
-            return
-        }
+    /**
+     * Request battery optimization exemption so the OS does not freeze the app in background.
+     * Only prompts once unless forced (e.g. from Settings).
+     */
+    fun promptBatteryOptimization(force: Boolean = false) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return
+            val prefs = com.pinpulse.radar.data.AppPreferences(this)
+            if (!force && prefs.hasPromptedBatteryExemption) {
+                return
+            }
             if (!pm.isIgnoringBatteryOptimizations(packageName)) {
                 prefs.hasPromptedBatteryExemption = true
                 try {
@@ -210,9 +245,11 @@ class MainActivity : ComponentActivity() {
 
             val task = LocationServices.getSettingsClient(this).checkLocationSettings(builder.build())
             task.addOnSuccessListener {
+                _isGpsDisabled.value = false
                 fetchImmediateLocation()
             }
             task.addOnFailureListener { exception ->
+                _isGpsDisabled.value = true
                 if (exception is com.google.android.gms.common.api.ResolvableApiException) {
                     try {
                         exception.startResolutionForResult(this, 9522)
@@ -228,6 +265,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
         } catch (_: Exception) {
+            _isGpsDisabled.value = true
             try {
                 startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
             } catch (_: Exception) {}
@@ -238,7 +276,92 @@ class MainActivity : ComponentActivity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == 9522) {
-            fetchImmediateLocation()
+            val lm = getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+            val isGpsEnabled = lm?.isProviderEnabled(LocationManager.GPS_PROVIDER) == true
+            _isGpsDisabled.value = !isGpsEnabled
+            if (isGpsEnabled) {
+                fetchImmediateLocation()
+            } else {
+                checkAndEnforceGps()
+            }
+        }
+    }
+}
+
+@Composable
+fun ElderlyGpsEnforcementDialog(onTurnOnGps: () -> Unit) {
+    Dialog(
+        onDismissRequest = { /* Cannot dismiss without turning on GPS */ },
+        properties = DialogProperties(
+            dismissOnBackPress = false,
+            dismissOnClickOutside = false
+        )
+    ) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
+            elevation = CardDefaults.cardElevation(defaultElevation = 16.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(24.dp)
+                    .fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(64.dp)
+                        .background(Color(0x20EF4444), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.LocationOff,
+                        contentDescription = "GPS Disabled",
+                        tint = Color(0xFFEF4444),
+                        modifier = Modifier.size(36.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Text(
+                    text = "Elderly Protection Active",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    textAlign = TextAlign.Center
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Text(
+                    text = "GPS location must remain ON 24/7 for safety and emergency monitoring. GPS cannot be disabled on this device.\n\nPlease tap below to turn GPS back on now.",
+                    fontSize = 13.sp,
+                    color = Color(0xFFCBD5E1),
+                    textAlign = TextAlign.Center,
+                    lineHeight = 18.sp
+                )
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                Button(
+                    onClick = onTurnOnGps,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = PulseGreen)
+                ) {
+                    Text(
+                        text = "TURN ON GPS NOW",
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF0F172A)
+                    )
+                }
+            }
         }
     }
 }

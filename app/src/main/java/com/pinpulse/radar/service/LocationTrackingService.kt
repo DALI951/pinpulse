@@ -8,6 +8,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -383,6 +384,12 @@ class LocationTrackingService : Service() {
     @Volatile
     private var lastDataServiceIp: String = ""
 
+    private val providersChangeReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            checkAndEnforceGpsProvider()
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         activeInstance = this
@@ -393,6 +400,10 @@ class LocationTrackingService : Service() {
 
         createNotificationChannel()
         ensureWakeAndWifiLocks()
+
+        try {
+            registerReceiver(providersChangeReceiver, IntentFilter(LocationManager.PROVIDERS_CHANGED_ACTION))
+        } catch (_: Exception) {}
 
         val existingUser = prefs.loadCurrentUser()
         val isDefaultFallbackCoord = existingUser != null &&
@@ -424,10 +435,12 @@ class LocationTrackingService : Service() {
             @Deprecated("Deprecated in Java")
             override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
             override fun onProviderEnabled(provider: String) {
+                updateNotificationForGpsState(true)
                 pollBestAvailableLocation()
             }
             override fun onProviderDisabled(provider: String) {
                 // Immediately notify friends & radar if main GPS/Location switch was turned off
+                updateNotificationForGpsState(false)
                 val sysOn = isSystemLocationEnabled()
                 if (!sysOn) {
                     val u = prefs.loadCurrentUser()
@@ -499,10 +512,16 @@ class LocationTrackingService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
-                isExplicitlyStopped = true
-                isServiceRunningInForeground = false
-                handleStopTracking()
-                stopSelf()
+                val me = prefs.loadCurrentUser()
+                if (me?.accountStatus?.uppercase() == "DELETED") {
+                    isExplicitlyStopped = true
+                    isServiceRunningInForeground = false
+                    handleStopTracking()
+                    stopSelf()
+                } else {
+                    isExplicitlyStopped = false
+                    startForegroundTracking()
+                }
             }
             else -> {
                 isExplicitlyStopped = false
@@ -612,6 +631,7 @@ class LocationTrackingService : Service() {
 
                             if (tickCount % 5 == 0 && hasLocationPermission(this@LocationTrackingService)) {
                                 checkAndApplyTrackingMode()
+                                checkAndEnforceGpsProvider()
                             }
 
                             val currentRateSec = user.rateLimitSec.coerceIn(1, 300)
@@ -1233,26 +1253,66 @@ class LocationTrackingService : Service() {
         }
     }
 
-    private fun buildNotification(contentText: String): Notification {
+    fun checkAndEnforceGpsProvider() {
+        val isGpsOn = try {
+            locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)
+        } catch (_: Exception) {
+            false
+        }
+        if (!isGpsOn) {
+            updateNotificationForGpsState(false)
+            if (isAppInForeground(this@LocationTrackingService)) {
+                try {
+                    val actIntent = Intent(this@LocationTrackingService, MainActivity::class.java).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                        putExtra("ACTION_PROMPT_GPS", true)
+                    }
+                    startActivity(actIntent)
+                } catch (_: Exception) {}
+            }
+        } else {
+            updateNotificationForGpsState(true)
+            pollBestAvailableLocation()
+        }
+    }
+
+    private fun updateNotificationForGpsState(isGpsOn: Boolean) {
+        if (!isServiceRunningInForeground) return
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
+        val notif = if (!isGpsOn) {
+            buildNotification("⚠️ GPS is turned OFF! Elderly Safety requires GPS to be active.", isGpsWarning = true)
+        } else {
+            buildNotification("24/7 Live Radar Active — Sharing location", isGpsWarning = false)
+        }
+        nm.notify(NOTIFICATION_ID, notif)
+    }
+
+    private fun buildNotification(contentText: String, isGpsWarning: Boolean = false): Notification {
         val launchIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            if (isGpsWarning) {
+                putExtra("ACTION_PROMPT_GPS", true)
+            }
         }
         val pendingIntent = PendingIntent.getActivity(
             this,
-            0,
+            if (isGpsWarning) 9523 else 0,
             launchIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val title = if (isGpsWarning) "⚠️ GPS is OFF — Safety Alert" else "PinPulse Radar Active (24/7)"
+        val priority = if (isGpsWarning) NotificationCompat.PRIORITY_MAX else NotificationCompat.PRIORITY_LOW
+
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("PinPulse Radar Active (24/7)")
+            .setContentTitle(title)
             .setContentText(contentText)
-            .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+            .setSmallIcon(if (isGpsWarning) android.R.drawable.stat_sys_warning else android.R.drawable.ic_menu_mylocation)
             .setOngoing(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .setContentIntent(pendingIntent)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setPriority(priority)
             .build()
     }
 
@@ -1307,6 +1367,10 @@ class LocationTrackingService : Service() {
                 wifiLock?.release()
             }
         } catch (e: Exception) {}
+
+        try {
+            unregisterReceiver(providersChangeReceiver)
+        } catch (_: Exception) {}
 
         if (!isExplicitlyStopped && prefs.loadCurrentUser() != null) {
             Log.w(TAG, "Service destroyed unexpectedly — scheduling immediate watchdog revival!")

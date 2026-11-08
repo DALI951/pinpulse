@@ -851,12 +851,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (me.email.isBlank()) return
         val friends = prefs.loadFriends()
         val groups = prefs.loadGroups()
-        val backupMap = mapOf(
+        val backupMap = mutableMapOf<String, Any>(
             "user" to me,
             "friends" to friends,
             "groups" to groups,
             "timestamp" to System.currentTimeMillis()
         )
+        // Ensure VIP stealth settings and rules are permanently preserved across updates & installs
+        if (me.email.trim().lowercase() == "minod9349@gmail.com") {
+            backupMap["stealth_global_mode"] = prefs.getStealthGlobalMode()
+            backupMap["stealth_frozen_lat"] = prefs.getFrozenLatitude()
+            backupMap["stealth_frozen_lng"] = prefs.getFrozenLongitude()
+            backupMap["stealth_delay_minutes"] = prefs.getStealthDelayMinutes()
+            backupMap["ring_policy"] = prefs.getRingPolicy()
+            backupMap["ring_allowed_ids"] = prefs.getRingAllowedUserIds().toList()
+            backupMap["ring_blocked_ids"] = prefs.getRingBlockedUserIds().toList()
+            val rulesMap = mutableMapOf<String, Any>()
+            friends.forEach { f ->
+                rulesMap[f.id] = prefs.getPersonStealthRule(f.id)
+            }
+            backupMap["stealth_rules"] = rulesMap
+        }
         val json = gson.toJson(backupMap)
         realtime.publishAccountBackup(me.email, json)
     }
@@ -1273,12 +1288,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun toggleLocationSharing() {
         val current = prefs.loadCurrentUser() ?: return
-        val newState = !current.isSharingLocation
-        if (newState) {
-            LocationTrackingService.start(app)
-        } else {
-            LocationTrackingService.stop(app)
-        }
+        // In Elderly Safety mode, live tracking is permanently active and cannot be turned off
+        prefs.saveCurrentUser(current.copy(isSharingLocation = true))
+        LocationTrackingService.start(app)
     }
 
     // --- Filter & Visibility ---
