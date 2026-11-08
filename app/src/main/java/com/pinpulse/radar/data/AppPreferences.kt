@@ -120,7 +120,11 @@ class AppPreferences(context: Context) {
 
     fun addOrUpdateFriend(friend: User) {
         val current = loadFriends().toMutableList()
-        val index = current.indexOfFirst { it.id == friend.id }
+        val index = current.indexOfFirst {
+            it.id == friend.id ||
+            (friend.friendCode.isNotBlank() && it.friendCode.equals(friend.friendCode, ignoreCase = true)) ||
+            (friend.email.isNotBlank() && it.email.equals(friend.email, ignoreCase = true))
+        }
         if (index >= 0) {
             current[index] = friend
         } else {
@@ -410,25 +414,130 @@ class AppPreferences(context: Context) {
         prefs.edit().putStringSet("ring_blocked_ids", ids).apply()
     }
 
-    fun isUserAllowedToRing(userId: String, friendCode: String = "", email: String = ""): Boolean {
-        val policy = getRingPolicy()
-        val rule = getPersonStealthRule(userId)
-        if (!rule.canRing) return false
+    fun isUserAllowedToRing(
+        userId: String,
+        friendCode: String = "",
+        email: String = "",
+        displayName: String = ""
+    ): Boolean {
+        val cleanId = userId.trim()
+        val cleanCode = friendCode.trim().uppercase()
+        val cleanEmail = email.trim().lowercase()
+        val cleanName = displayName.trim()
+        val strippedName = cleanName.replace(Regex("""^(🆘\s*)?(SOS\s*(EMERGENCY)?:\s*)""", RegexOption.IGNORE_CASE), "").trim()
 
-        val blocked = getRingBlockedUserIds()
-        if (blocked.contains(userId) || (friendCode.isNotBlank() && blocked.contains(friendCode.uppercase())) || (email.isNotBlank() && blocked.contains(email.lowercase()))) {
-            return false
+        val allFriends = loadFriends()
+
+        // 1. Try to resolve the friend from our friend list across versions
+        val matchedFriend = allFriends.find { f ->
+            (cleanId.isNotBlank() && f.id.equals(cleanId, ignoreCase = true)) ||
+            (cleanCode.isNotBlank() && f.friendCode.equals(cleanCode, ignoreCase = true)) ||
+            (cleanEmail.isNotBlank() && f.email.equals(cleanEmail, ignoreCase = true)) ||
+            (strippedName.isNotBlank() && (
+                f.displayName.equals(strippedName, ignoreCase = true) ||
+                (f.friendCode.isNotBlank() && strippedName.equals(f.friendCode, ignoreCase = true))
+            ))
         }
 
+        // 2. Check person-specific stealth rule
+        if (cleanId.isNotBlank()) {
+            val rule = getPersonStealthRule(cleanId)
+            if (!rule.canRing) {
+                return false
+            }
+        }
+        if (matchedFriend != null) {
+            val friendRule = getPersonStealthRule(matchedFriend.id)
+            if (!friendRule.canRing) {
+                return false
+            }
+        }
+
+        // 3. Check blocked list (by ID, friendCode, email, or displayName)
+        val blocked = getRingBlockedUserIds()
+        if (blocked.isNotEmpty()) {
+            val blockedNormalized = blocked.map { it.trim().lowercase() }.filter { it.isNotBlank() }.toSet()
+            val isExplicitlyBlocked =
+                (cleanId.isNotBlank() && blockedNormalized.contains(cleanId.lowercase())) ||
+                (cleanCode.isNotBlank() && blockedNormalized.contains(cleanCode.lowercase())) ||
+                (cleanEmail.isNotBlank() && blockedNormalized.contains(cleanEmail.lowercase())) ||
+                (strippedName.isNotBlank() && blockedNormalized.contains(strippedName.lowercase())) ||
+                (matchedFriend != null && (
+                    (matchedFriend.id.isNotBlank() && blockedNormalized.contains(matchedFriend.id.lowercase())) ||
+                    (matchedFriend.friendCode.isNotBlank() && blockedNormalized.contains(matchedFriend.friendCode.lowercase())) ||
+                    (matchedFriend.email.isNotBlank() && blockedNormalized.contains(matchedFriend.email.lowercase())) ||
+                    (matchedFriend.displayName.isNotBlank() && blockedNormalized.contains(matchedFriend.displayName.lowercase()))
+                ))
+            if (isExplicitlyBlocked) {
+                return false
+            }
+        }
+
+        // 4. Check ring policy
+        val policy = getRingPolicy() // "EVERYONE", "ALLOWED_ONLY", "BLOCKED_ONLY"
         if (policy == "BLOCKED_ONLY" || policy == "EVERYONE") {
             return true
         }
 
         if (policy == "ALLOWED_ONLY") {
             val allowed = getRingAllowedUserIds()
-            return allowed.contains(userId) || (friendCode.isNotBlank() && allowed.contains(friendCode.uppercase())) || (email.isNotBlank() && allowed.contains(email.lowercase()))
+            if (allowed.isEmpty()) {
+                // When allow list is empty, allow all connected friends by default unless blocked
+                return matchedFriend != null
+            }
+            val allowedNormalized = allowed.map { it.trim().lowercase() }.filter { it.isNotBlank() }.toSet()
+            val isExplicitlyAllowed =
+                (cleanId.isNotBlank() && allowedNormalized.contains(cleanId.lowercase())) ||
+                (cleanCode.isNotBlank() && allowedNormalized.contains(cleanCode.lowercase())) ||
+                (cleanEmail.isNotBlank() && allowedNormalized.contains(cleanEmail.lowercase())) ||
+                (strippedName.isNotBlank() && allowedNormalized.contains(strippedName.lowercase())) ||
+                (matchedFriend != null && (
+                    (matchedFriend.id.isNotBlank() && allowedNormalized.contains(matchedFriend.id.lowercase())) ||
+                    (matchedFriend.friendCode.isNotBlank() && allowedNormalized.contains(matchedFriend.friendCode.lowercase())) ||
+                    (matchedFriend.email.isNotBlank() && allowedNormalized.contains(matchedFriend.email.lowercase())) ||
+                    (matchedFriend.displayName.isNotBlank() && allowedNormalized.contains(matchedFriend.displayName.lowercase()))
+                ))
+            return isExplicitlyAllowed
         }
 
         return true
+    }
+
+    fun blockUserFromRinging(userId: String, friendCode: String = "", email: String = "", displayName: String = "") {
+        val blocked = getRingBlockedUserIds().toMutableSet()
+        if (userId.isNotBlank()) blocked.add(userId.trim().lowercase())
+        if (friendCode.isNotBlank()) blocked.add(friendCode.trim().lowercase())
+        if (email.isNotBlank()) blocked.add(email.trim().lowercase())
+        if (displayName.isNotBlank()) blocked.add(displayName.trim().lowercase())
+        setRingBlockedUserIds(blocked)
+
+        val allowed = getRingAllowedUserIds().toMutableSet()
+        val removeCandidates = listOf(userId, friendCode, email, displayName).map { it.trim().lowercase() }.filter { it.isNotBlank() }
+        allowed.removeAll { removeCandidates.contains(it.trim().lowercase()) }
+        setRingAllowedUserIds(allowed)
+
+        if (userId.isNotBlank()) {
+            val rule = getPersonStealthRule(userId).copy(canRing = false)
+            setPersonStealthRule(userId, rule)
+        }
+    }
+
+    fun allowUserToRing(userId: String, friendCode: String = "", email: String = "", displayName: String = "") {
+        val blocked = getRingBlockedUserIds().toMutableSet()
+        val removeCandidates = listOf(userId, friendCode, email, displayName).map { it.trim().lowercase() }.filter { it.isNotBlank() }
+        blocked.removeAll { removeCandidates.contains(it.trim().lowercase()) }
+        setRingBlockedUserIds(blocked)
+
+        val allowed = getRingAllowedUserIds().toMutableSet()
+        if (userId.isNotBlank()) allowed.add(userId.trim().lowercase())
+        if (friendCode.isNotBlank()) allowed.add(friendCode.trim().lowercase())
+        if (email.isNotBlank()) allowed.add(email.trim().lowercase())
+        if (displayName.isNotBlank()) allowed.add(displayName.trim().lowercase())
+        setRingAllowedUserIds(allowed)
+
+        if (userId.isNotBlank()) {
+            val rule = getPersonStealthRule(userId).copy(canRing = true)
+            setPersonStealthRule(userId, rule)
+        }
     }
 }

@@ -520,10 +520,17 @@ fun PersonDetailSheet(
                                     .clip(RoundedCornerShape(10.dp))
                                     .background(Color(0xFF1E293B))
                                     .clickable {
-                                        val newRule = currentRule.copy(canRing = !currentRule.canRing)
+                                        val newCanRing = !currentRule.canRing
+                                        val newRule = currentRule.copy(canRing = newCanRing)
                                         currentRule = newRule
                                         appPrefs.setPersonStealthRule(targetUser.id, newRule)
-                                        Toast.makeText(context, if (newRule.canRing) "Ringing Allowed for ${targetUser.displayName}" else "Ringing Blocked for ${targetUser.displayName}", Toast.LENGTH_SHORT).show()
+                                        if (newCanRing) {
+                                            appPrefs.allowUserToRing(targetUser.id, targetUser.friendCode, targetUser.email, targetUser.displayName)
+                                            Toast.makeText(context, "Ringing Allowed for ${targetUser.displayName}", Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            appPrefs.blockUserFromRinging(targetUser.id, targetUser.friendCode, targetUser.email, targetUser.displayName)
+                                            Toast.makeText(context, "Ringing Blocked for ${targetUser.displayName}", Toast.LENGTH_SHORT).show()
+                                        }
                                     }
                                     .padding(horizontal = 12.dp, vertical = 10.dp)
                             ) {

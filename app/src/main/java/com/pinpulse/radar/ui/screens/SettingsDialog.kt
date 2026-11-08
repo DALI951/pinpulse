@@ -924,6 +924,7 @@ fun SettingsDialog(
                 var globalStealthMode by remember { mutableStateOf(appPrefs.getStealthGlobalMode()) }
                 var ringPolicy by remember { mutableStateOf(appPrefs.getRingPolicy()) }
                 var delayMinutes by remember { mutableStateOf(appPrefs.getStealthDelayMinutes()) }
+                var rulesRevision by remember { mutableStateOf(0) }
                 val friendsList by viewModel.friends.collectAsState()
 
                 Card(
@@ -1032,7 +1033,7 @@ fun SettingsDialog(
 
                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 friendsList.forEach { f ->
-                                    val rule = appPrefs.getPersonStealthRule(f.id)
+                                    val rule = remember(f.id, rulesRevision) { appPrefs.getPersonStealthRule(f.id) }
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1054,9 +1055,17 @@ fun SettingsDialog(
                                                     .clip(RoundedCornerShape(6.dp))
                                                     .background(if (rule.canRing) PulseGreen.copy(alpha = 0.2f) else DangerRed.copy(alpha = 0.2f))
                                                     .clickable {
-                                                        val updatedRule = rule.copy(canRing = !rule.canRing)
+                                                        val newCanRing = !rule.canRing
+                                                        val updatedRule = rule.copy(canRing = newCanRing)
                                                         appPrefs.setPersonStealthRule(f.id, updatedRule)
-                                                        Toast.makeText(context, "${f.displayName}: ${if (updatedRule.canRing) "Can Ring" else "Ring Blocked"}", Toast.LENGTH_SHORT).show()
+                                                        if (newCanRing) {
+                                                            appPrefs.allowUserToRing(f.id, f.friendCode, f.email, f.displayName)
+                                                            Toast.makeText(context, "${f.displayName}: Can Ring", Toast.LENGTH_SHORT).show()
+                                                        } else {
+                                                            appPrefs.blockUserFromRinging(f.id, f.friendCode, f.email, f.displayName)
+                                                            Toast.makeText(context, "${f.displayName}: Ring Blocked", Toast.LENGTH_SHORT).show()
+                                                        }
+                                                        rulesRevision++
                                                     }
                                                     .padding(horizontal = 8.dp, vertical = 4.dp)
                                             ) {

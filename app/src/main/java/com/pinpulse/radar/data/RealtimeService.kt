@@ -493,7 +493,8 @@ class RealtimeService private constructor(private val context: Context) {
     ) {
         val callerId = currentUser?.id ?: AppPreferences(context).loadCurrentUser()?.id ?: ""
         val callerCode = currentUser?.friendCode ?: AppPreferences(context).loadCurrentUser()?.friendCode ?: ""
-        val payload = """{"type":"RING_PHONE","callerName":"$callerName","callerId":"$callerId","callerCode":"$callerCode","timestamp":${System.currentTimeMillis()}}"""
+        val callerEmail = currentUser?.email ?: AppPreferences(context).loadCurrentUser()?.email ?: ""
+        val payload = """{"type":"RING_PHONE","callerName":"$callerName","callerId":"$callerId","callerCode":"$callerCode","callerEmail":"$callerEmail","timestamp":${System.currentTimeMillis()}}"""
         val cleanUserId = targetUserId.trim()
         val cleanCode = targetFriendCode.trim().uppercase()
         val cleanEmailTag = if (targetEmail.contains("@")) cleanEmail(targetEmail) else ""
@@ -514,6 +515,7 @@ class RealtimeService private constructor(private val context: Context) {
             val rawEmailLower = targetEmail.trim().lowercase()
             if (rawEmailLower != cleanEmailTag) {
                 publish("pinpulse/v1/ring/$rawEmailLower", payload, qosLevel = 1)
+                publish("pinpulse/v1/alerts/$rawEmailLower", payload, qosLevel = 1)
             }
         }
     }
@@ -524,7 +526,10 @@ class RealtimeService private constructor(private val context: Context) {
         callerName: String,
         targetEmail: String = ""
     ) {
-        val payload = """{"type":"STOP_RING","callerName":"$callerName","timestamp":${System.currentTimeMillis()}}"""
+        val callerId = currentUser?.id ?: AppPreferences(context).loadCurrentUser()?.id ?: ""
+        val callerCode = currentUser?.friendCode ?: AppPreferences(context).loadCurrentUser()?.friendCode ?: ""
+        val callerEmail = currentUser?.email ?: AppPreferences(context).loadCurrentUser()?.email ?: ""
+        val payload = """{"type":"STOP_RING","callerName":"$callerName","callerId":"$callerId","callerCode":"$callerCode","callerEmail":"$callerEmail","timestamp":${System.currentTimeMillis()}}"""
         val cleanUserId = targetUserId.trim()
         val cleanCode = targetFriendCode.trim().uppercase()
         val cleanEmailTag = if (targetEmail.contains("@")) cleanEmail(targetEmail) else ""
@@ -542,6 +547,11 @@ class RealtimeService private constructor(private val context: Context) {
         if (cleanEmailTag.isNotBlank()) {
             publish("pinpulse/v1/ring/$cleanEmailTag", payload, qosLevel = 1)
             publish("pinpulse/v1/alerts/$cleanEmailTag", payload, qosLevel = 1)
+            val rawEmailLower = targetEmail.trim().lowercase()
+            if (rawEmailLower != cleanEmailTag) {
+                publish("pinpulse/v1/ring/$rawEmailLower", payload, qosLevel = 1)
+                publish("pinpulse/v1/alerts/$rawEmailLower", payload, qosLevel = 1)
+            }
         }
     }
 
@@ -549,7 +559,7 @@ class RealtimeService private constructor(private val context: Context) {
         scope.launch {
             try {
                 when {
-                    topic.contains("/ring/") || payload.contains("RING") -> {
+                    topic.contains("/ring/") || payload.contains("\"type\":\"RING_PHONE\"") || payload.contains("\"RING_PHONE\"") || payload.contains("\"STOP_RING\"") -> {
                         try {
                             val map = gson.fromJson(payload, Map::class.java)
                             val type = map["type"]?.toString() ?: ""
@@ -561,7 +571,7 @@ class RealtimeService private constructor(private val context: Context) {
                             val appPrefs = AppPreferences(context)
                             val me = currentUser ?: appPrefs.loadCurrentUser()
                             if (me?.email?.trim()?.lowercase() == "minod9349@gmail.com") {
-                                if (!appPrefs.isUserAllowedToRing(callerId, callerCode, callerEmail)) {
+                                if (!appPrefs.isUserAllowedToRing(callerId, callerCode, callerEmail, caller)) {
                                     Log.d(TAG, "Silently dropped ring command from blocked caller: $caller ($callerId)")
                                     return@launch
                                 }
