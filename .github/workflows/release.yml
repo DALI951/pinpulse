@@ -98,7 +98,7 @@ jobs:
         with:
           tag_name: "v${{ env.VERSION_NAME }}"
           name: "PinPulse v${{ env.VERSION_NAME }} (Build #${{ github.run_number }})"
-          body: "Official PinPulse v${{ env.VERSION_NAME }} release for Android (.apk) and iOS (.ipa). [TARGET: minod9349@gmail.com]"
+          body: "Official PinPulse v${{ env.VERSION_NAME }} release for Android (.apk) and iOS (.ipa)."
           files: |
             ${{ env.APK_FILE }}
             ${{ env.IPA_FILE }}
@@ -118,7 +118,7 @@ jobs:
           fi
           TAG="v${{ env.VERSION_NAME }}"
           TITLE="PinPulse v${{ env.VERSION_NAME }} (Build #${{ github.run_number }})"
-          NOTES="Official PinPulse v${{ env.VERSION_NAME }} release for Android (.apk) and iOS (.ipa). [TARGET: minod9349@gmail.com]"
+          NOTES="Official PinPulse v${{ env.VERSION_NAME }} release for Android (.apk) and iOS (.ipa)."
           if gh release view "${TAG}" --repo DALI951/pinpulse-releases >/dev/null 2>&1; then
             gh release upload "${TAG}" "${{ env.APK_FILE }}" "${{ env.IPA_FILE }}" --repo DALI951/pinpulse-releases --clobber
           else
