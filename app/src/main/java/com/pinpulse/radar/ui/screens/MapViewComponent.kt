@@ -92,6 +92,7 @@ fun MapViewComponent(
     currentUserId: String?,
     mapStyle: String,
     selfMarkerMode: String = "FULL",
+    nearbyMarkerMode: String = "SPREAD",
     userTrails: Map<String, List<TrailPoint>> = emptyMap(),
     selectedPersonId: String? = null,
     onAvatarClick: (String) -> Unit,
@@ -193,7 +194,7 @@ fun MapViewComponent(
     }
 
     // Sync native user markers and 15-minute movement trails
-    LaunchedEffect(mapViewRef, visibleUsers, currentUserId, selfMarkerMode, userTrails, selectedPersonId, mapMotionTick) {
+    LaunchedEffect(mapViewRef, visibleUsers, currentUserId, selfMarkerMode, nearbyMarkerMode, userTrails, selectedPersonId, mapMotionTick) {
         val mapView = mapViewRef ?: return@LaunchedEffect
         val density = context.resources.displayMetrics.density
         val now = System.currentTimeMillis()
@@ -306,7 +307,8 @@ fun MapViewComponent(
             }
         }
 
-        if (hasProjection && proj != null) {
+        val isSpreadMode = nearbyMarkerMode.equals("SPREAD", ignoreCase = true)
+        if (hasProjection && proj != null && isSpreadMode) {
             val screenPt = Point()
             val mappedItems = candidateUsers.map { user ->
                 val isSelf = (user.id == currentUserId)

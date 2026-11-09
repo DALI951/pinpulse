@@ -107,6 +107,7 @@ fun MainScreen(
     val hiddenFromGeneral by viewModel.hiddenFromGeneral.collectAsState()
     val mapStyle by viewModel.mapStyle.collectAsState()
     val selfMarkerMode by viewModel.selfMarkerMode.collectAsState()
+    val nearbyMarkerMode by viewModel.nearbyMarkerMode.collectAsState()
     val currentFilter by viewModel.currentFilter.collectAsState()
     val selectedPerson by viewModel.selectedPerson.collectAsState()
     val userTrails by viewModel.userTrails.collectAsState()
@@ -298,6 +299,7 @@ fun MainScreen(
             currentUserId = currentUser?.id,
             mapStyle = mapStyle,
             selfMarkerMode = selfMarkerMode,
+            nearbyMarkerMode = nearbyMarkerMode,
             userTrails = userTrails,
             selectedPersonId = selectedPerson?.id,
             onAvatarClick = { userId ->

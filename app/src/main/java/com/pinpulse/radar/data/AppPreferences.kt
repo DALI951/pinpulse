@@ -39,6 +39,9 @@ class AppPreferences(context: Context) {
     private val _selfMarkerModeFlow = MutableStateFlow(prefs.getString("self_marker_mode", "FULL") ?: "FULL")
     val selfMarkerModeFlow: StateFlow<String> = _selfMarkerModeFlow.asStateFlow()
 
+    private val _nearbyMarkerModeFlow = MutableStateFlow(prefs.getString("nearby_marker_mode", "SPREAD") ?: "SPREAD")
+    val nearbyMarkerModeFlow: StateFlow<String> = _nearbyMarkerModeFlow.asStateFlow()
+
     private val _hasSecurityPinFlow = MutableStateFlow(hasSecurityPin())
     val hasSecurityPinFlow: StateFlow<Boolean> = _hasSecurityPinFlow.asStateFlow()
 
@@ -51,6 +54,7 @@ class AppPreferences(context: Context) {
             "hidden_from_general" -> _hiddenFromGeneralMapFlow.value = loadHiddenUserIds()
             "map_style" -> _mapStyleFlow.value = prefs.getString("map_style", "streets") ?: "streets"
             "self_marker_mode" -> _selfMarkerModeFlow.value = prefs.getString("self_marker_mode", "FULL") ?: "FULL"
+            "nearby_marker_mode" -> _nearbyMarkerModeFlow.value = prefs.getString("nearby_marker_mode", "SPREAD") ?: "SPREAD"
             "security_pin" -> _hasSecurityPinFlow.value = hasSecurityPin()
         }
     }
@@ -317,6 +321,24 @@ class AppPreferences(context: Context) {
         }
         prefs.edit().putString("self_marker_mode", valid).apply()
         _selfMarkerModeFlow.value = valid
+    }
+
+    /**
+     * Controls how friends appear on the map when standing close together:
+     * - "SPREAD": Screen-Pixel Spider Circle Layout (fans out in a ring with dotted connector lines)
+     * - "OVERLAP": Exact GPS coordinates (markers stack/overlap directly on top of each other)
+     */
+    fun getNearbyMarkerMode(): String {
+        return prefs.getString("nearby_marker_mode", "SPREAD") ?: "SPREAD"
+    }
+
+    fun setNearbyMarkerMode(mode: String) {
+        val valid = when (mode.uppercase()) {
+            "OVERLAP" -> "OVERLAP"
+            else -> "SPREAD"
+        }
+        prefs.edit().putString("nearby_marker_mode", valid).apply()
+        _nearbyMarkerModeFlow.value = valid
     }
 
     fun getLastDownloadedUpdateVersion(): String {

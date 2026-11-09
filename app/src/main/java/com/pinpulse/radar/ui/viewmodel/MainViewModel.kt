@@ -92,6 +92,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val hiddenFromGeneral: StateFlow<Set<String>> = prefs.hiddenFromGeneralMapFlow
     val mapStyle: StateFlow<String> = prefs.mapStyleFlow
     val selfMarkerMode: StateFlow<String> = prefs.selfMarkerModeFlow
+    val nearbyMarkerMode: StateFlow<String> = prefs.nearbyMarkerModeFlow
     val registeredUsers: StateFlow<Map<String, User>> = realtime.registeredUsers
 
     private val _currentFilter = MutableStateFlow<MapFilter>(MapFilter.General)
@@ -1615,6 +1616,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setSelfMarkerMode(mode: String) {
         prefs.setSelfMarkerMode(mode)
+    }
+
+    fun setNearbyMarkerMode(mode: String) {
+        prefs.setNearbyMarkerMode(mode)
     }
 
     fun dismissAlert() {

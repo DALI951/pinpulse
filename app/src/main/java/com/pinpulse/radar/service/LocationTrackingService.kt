@@ -1027,15 +1027,15 @@ class LocationTrackingService : Service() {
         if (location.latitude < -90.0 || location.latitude > 90.0 || location.longitude < -180.0 || location.longitude > 180.0) return
 
         // 1. Accuracy Filter: discard coarse cell tower triangulation or Wi-Fi geo-database jumps
-        if (location.hasAccuracy() && location.accuracy > 150f) {
-            Log.d(TAG, "Discarding inaccurate fix: accuracy=${location.accuracy}m > 150m")
+        if (location.hasAccuracy() && location.accuracy > 45f) {
+            Log.d(TAG, "Discarding inaccurate fix: accuracy=${location.accuracy}m > 45m")
             return
         }
 
-        // 2. Stale Fix Filter: discard cached locations older than 60 seconds
+        // 2. Stale Fix Filter: discard cached locations older than 45 seconds
         val now = System.currentTimeMillis()
-        if (location.time > 0L && (now - location.time) > 60_000L) {
-            Log.d(TAG, "Discarding stale fix: age=${now - location.time}ms > 60s")
+        if (location.time > 0L && (now - location.time) > 45_000L) {
+            Log.d(TAG, "Discarding stale fix: age=${now - location.time}ms > 45s")
             return
         }
 
@@ -1047,9 +1047,17 @@ class LocationTrackingService : Service() {
             val elapsedSec = ((now - prevTime) / 1000f).coerceAtLeast(0.1f)
             val distMeters = prev.distanceTo(location)
             val impliedSpeedKmh = (distMeters / elapsedSec) * 3.6f
-            // If movement requires > 200 km/h and distance is > 400m, reject unless fix is pinpoint (< 20m)
-            if (distMeters > 400f && impliedSpeedKmh > 200f && (!location.hasAccuracy() || location.accuracy > 20f)) {
-                Log.w(TAG, "Discarded teleportation jump: dist=${distMeters}m in ${elapsedSec}s (${impliedSpeedKmh} km/h)")
+
+            // Plausibility gates:
+            // a) If implied speed exceeds 130 km/h, reject unless sensor speed actually confirms high speed (> 60 km/h) with pinpoint accuracy (< 20m)
+            val isExtremeSpeed = impliedSpeedKmh > 130f && (!location.hasSpeed() || location.speed * 3.6f < 50f || (location.hasAccuracy() && location.accuracy > 20f))
+            // b) Short-interval sudden jump: jumping > 60m in under 2 seconds without high speed
+            val isShortIntervalJump = elapsedSec < 2.5f && distMeters > 60f && (!location.hasSpeed() || location.speed * 3.6f < 30f)
+            // c) Large stationary jump: jumping > 250m when previously stationary or moderate accuracy
+            val isStationaryJump = distMeters > 250f && (location.hasAccuracy() && location.accuracy > 25f) && impliedSpeedKmh > 80f
+
+            if (isExtremeSpeed || isShortIntervalJump || isStationaryJump) {
+                Log.w(TAG, "Discarded teleportation jump: dist=${distMeters}m in ${elapsedSec}s (${impliedSpeedKmh} km/h, acc=${location.accuracy}m)")
                 return
             }
         }

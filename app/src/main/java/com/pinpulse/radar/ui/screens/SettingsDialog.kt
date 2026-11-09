@@ -107,6 +107,7 @@ fun SettingsDialog(
     val currentUser by viewModel.currentUser.collectAsState()
     val mapStyle by viewModel.mapStyle.collectAsState()
     val selfMarkerMode by viewModel.selfMarkerMode.collectAsState()
+    val nearbyMarkerMode by viewModel.nearbyMarkerMode.collectAsState()
     val updateState by viewModel.updateState.collectAsState()
     val hasSecurityPin by viewModel.hasSecurityPin.collectAsState()
     val friends by viewModel.friends.collectAsState()
@@ -1146,6 +1147,46 @@ fun SettingsDialog(
                                     .clip(RoundedCornerShape(8.dp))
                                     .background(if (isSelected) RadarBlue else Color(0xFF1E293B))
                                     .clickable { viewModel.setSelfMarkerMode(modeKey) }
+                                    .padding(vertical = 8.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = modeName,
+                                    fontSize = 11.sp,
+                                    color = if (isSelected) Color.White else TextMuted,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // Nearby Friends Layout (Spread Out vs Overlap)
+                    Text("Nearby Friends Layout", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 13.sp)
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        "How friends appear when standing right next to each other:",
+                        fontSize = 11.sp,
+                        color = TextMuted
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf(
+                            "SPREAD" to "Spread Out (Ring)",
+                            "OVERLAP" to "Overlap (Exact GPS)"
+                        ).forEach { (modeKey, modeName) ->
+                            val isSelected = nearbyMarkerMode.equals(modeKey, ignoreCase = true)
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (isSelected) RadarBlue else Color(0xFF1E293B))
+                                    .clickable { viewModel.setNearbyMarkerMode(modeKey) }
                                     .padding(vertical = 8.dp),
                                 contentAlignment = Alignment.Center
                             ) {
