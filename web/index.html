@@ -1597,8 +1597,8 @@
           <div class="diag-card">
             <div class="diag-title">Failover & Relay Switcher</div>
             <div style="display: flex; gap: 6px; margin-top: 6px;">
-              <button class="btn-admin accent-btn" onclick="forceBrokerSwitch(0)" style="flex:1;">Primary (EMQX)</button>
-              <button class="btn-admin" onclick="forceBrokerSwitch(1)" style="flex:1;">Backup (HiveMQ)</button>
+              <button class="btn-admin accent-btn" onclick="forceBrokerSwitch(0)" style="flex:1;">Primary (WSS 8084)</button>
+              <button class="btn-admin" onclick="forceBrokerSwitch(1)" style="flex:1;">Alt Port (WS 8083)</button>
             </div>
           </div>
 
@@ -2092,10 +2092,10 @@
       night: L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { subdomains: 'abcd', maxZoom: 19 })
     };
 
-    // Relay list
+    // Relay list (same EMQX cluster across WSS/WS transports to prevent split-brain isolation)
     var brokerList = [
-      { name: 'EMQX Primary', url: 'wss://broker.emqx.io:8084/mqtt' },
-      { name: 'HiveMQ Backup', url: 'wss://broker.hivemq.com:8884/mqtt' }
+      { name: 'EMQX WSS (8084)', url: 'wss://broker.emqx.io:8084/mqtt' },
+      { name: 'EMQX WS (8083)', url: 'ws://broker.emqx.io:8083/mqtt' }
     ];
     var currentBrokerIdx = 0;
 
@@ -2728,7 +2728,14 @@
       }
     }
 
+    var seenRingEventIds = {};
     function handleRingEvent(topic, data) {
+      if (!data) return;
+      var rid = data.ringId || '';
+      if (rid) {
+        if (seenRingEventIds[rid]) return;
+        seenRingEventIds[rid] = Date.now();
+      }
       var type = data.type || '';
       var caller = data.callerName || 'Unknown Operator';
       if (type === 'STOP_RING' || type === 'STOP_SIREN') {
@@ -2967,23 +2974,54 @@
     }
 
     // ---------- Remote Siren Controls ----------
+    function cleanEmailForMqtt(email) {
+      return String(email || '').trim().toLowerCase().replace(/@/g, '_at_').replace(/\./g, '_dot_');
+    }
+
     function ringSelectedUser() {
       if (!selectedUserId) return;
+      if (!client || !client.connected) {
+        alert('⚠️ MQTT broker is not connected. Please wait for relay connection and try again.');
+        return;
+      }
       var u = getUser(selectedUserId);
+      var now = Date.now();
+      var ringId = 'ring_' + now + '_' + Math.random().toString(36).substring(2, 10);
       var payload = JSON.stringify({
         type: 'RING_PHONE',
+        ringId: ringId,
+        callerId: 'MASTER_ADMIN',
+        callerCode: 'ADMIN',
+        callerEmail: 'admin@pinpulse.app',
+        adminOverride: true,
+        isAdmin: true,
         callerName: 'Web Admin Commander',
-        timestamp: Date.now()
+        timestamp: now
       });
 
       try {
         client.publish('pinpulse/v1/ring/' + selectedUserId, payload, { qos: 1 });
         client.publish('pinpulse/v1/alerts/' + selectedUserId, payload, { qos: 1 });
-        if (u && u.friendCode) {
-          client.publish('pinpulse/v1/ring/' + u.friendCode, payload, { qos: 1 });
+        client.publish('pinpulse/v1/ring_pending/' + selectedUserId, payload, { qos: 1, retain: true });
+
+        if (u && u.friendCode && u.friendCode !== '----') {
+          var cleanCode = String(u.friendCode).trim().toUpperCase();
+          if (cleanCode) {
+            client.publish('pinpulse/v1/ring/' + cleanCode, payload, { qos: 1 });
+            client.publish('pinpulse/v1/ring/' + cleanCode.replace(/-/g, ''), payload, { qos: 1 });
+            client.publish('pinpulse/v1/alerts/' + cleanCode, payload, { qos: 1 });
+            client.publish('pinpulse/v1/ring_pending/' + cleanCode, payload, { qos: 1, retain: true });
+          }
         }
+        if (u && u.email && u.email !== 'No email' && u.email.indexOf('@') !== -1) {
+          var emailTag = cleanEmailForMqtt(u.email);
+          client.publish('pinpulse/v1/ring/' + emailTag, payload, { qos: 1 });
+          client.publish('pinpulse/v1/alerts/' + emailTag, payload, { qos: 1 });
+          client.publish('pinpulse/v1/ring_pending/' + emailTag, payload, { qos: 1, retain: true });
+        }
+
         addAuditEntry('Triggered Emergency Siren on ' + (u ? u.name : selectedUserId), 'alarm');
-        alert('🔊 Emergency Siren dispatched to ' + (u ? u.name : 'Target') + '!\nRequires security PIN to stop locally.');
+        alert('🔊 Emergency Siren dispatched to ' + (u ? u.name : 'Target') + '!');
       } catch (e) {
         alert('Failed to send ring: ' + e.message);
       }
@@ -2991,19 +3029,44 @@
 
     function stopRingSelectedUser() {
       if (!selectedUserId) return;
+      if (!client || !client.connected) {
+        alert('⚠️ MQTT broker is not connected. Cannot send stop signal right now.');
+        return;
+      }
       var u = getUser(selectedUserId);
+      var now = Date.now();
+      var stopId = 'stop_' + now + '_' + Math.random().toString(36).substring(2, 10);
       var payload = JSON.stringify({
         type: 'STOP_RING',
+        ringId: stopId,
+        callerId: 'web_admin',
+        callerCode: 'ADMIN_OVERRIDE',
         callerName: 'Web Admin Commander',
-        timestamp: Date.now()
+        timestamp: now
       });
 
       try {
+        // Clear any retained ring_pending packets first
+        client.publish('pinpulse/v1/ring_pending/' + selectedUserId, '', { qos: 1, retain: true });
         client.publish('pinpulse/v1/ring/' + selectedUserId, payload, { qos: 1 });
         client.publish('pinpulse/v1/alerts/' + selectedUserId, payload, { qos: 1 });
-        if (u && u.friendCode) {
-          client.publish('pinpulse/v1/ring/' + u.friendCode, payload, { qos: 1 });
+
+        if (u && u.friendCode && u.friendCode !== '----') {
+          var cleanCode = String(u.friendCode).trim().toUpperCase();
+          if (cleanCode) {
+            client.publish('pinpulse/v1/ring_pending/' + cleanCode, '', { qos: 1, retain: true });
+            client.publish('pinpulse/v1/ring/' + cleanCode, payload, { qos: 1 });
+            client.publish('pinpulse/v1/ring/' + cleanCode.replace(/-/g, ''), payload, { qos: 1 });
+            client.publish('pinpulse/v1/alerts/' + cleanCode, payload, { qos: 1 });
+          }
         }
+        if (u && u.email && u.email !== 'No email' && u.email.indexOf('@') !== -1) {
+          var emailTag = cleanEmailForMqtt(u.email);
+          client.publish('pinpulse/v1/ring_pending/' + emailTag, '', { qos: 1, retain: true });
+          client.publish('pinpulse/v1/ring/' + emailTag, payload, { qos: 1 });
+          client.publish('pinpulse/v1/alerts/' + emailTag, payload, { qos: 1 });
+        }
+
         addAuditEntry('Dispatched STOP_RING (Remote Silence) for ' + (u ? u.name : selectedUserId), 'silence');
         alert('🛑 Remote silence signal dispatched to ' + (u ? u.name : 'Target') + '!\nAlarm & vibration cut off immediately.');
       } catch (e) {
@@ -3012,13 +3075,40 @@
     }
 
     function silenceAllFleetSirens() {
+      if (!client || !client.connected) {
+        alert('⚠️ MQTT broker is not connected. Cannot broadcast fleet silence right now.');
+        return;
+      }
       if (!confirm('Broadcast emergency STOP_RING to silence all active sirens worldwide?')) return;
+      var now = Date.now();
+      var stopId = 'stop_fleet_' + now + '_' + Math.random().toString(36).substring(2, 8);
       var payload = JSON.stringify({
         type: 'STOP_RING',
+        ringId: stopId,
+        callerId: 'superadmin',
+        callerCode: 'ADMIN_OVERRIDE',
         callerName: 'SuperAdmin Fleet Command',
-        timestamp: Date.now()
+        timestamp: now
+      });
+      var adminSilencePayload = JSON.stringify({
+        type: 'SILENCE_ALL_SIRENS',
+        action: 'SILENCE',
+        timestamp: now
       });
       try {
+        // Clear pending ring topics across known fleet nodes
+        Object.keys(users).forEach(function(uid) {
+          var node = users[uid];
+          client.publish('pinpulse/v1/ring_pending/' + uid, '', { qos: 1, retain: true });
+          if (node && node.friendCode && node.friendCode !== '----') {
+            var code = String(node.friendCode).trim().toUpperCase();
+            if (code) client.publish('pinpulse/v1/ring_pending/' + code, '', { qos: 1, retain: true });
+          }
+          if (node && node.email && node.email !== 'No email' && node.email.indexOf('@') !== -1) {
+            client.publish('pinpulse/v1/ring_pending/' + cleanEmailForMqtt(node.email), '', { qos: 1, retain: true });
+          }
+        });
+        client.publish('pinpulse/v1/admin/broadcast/silence', adminSilencePayload, { qos: 1 });
         client.publish('pinpulse/v1/alerts/broadcast', payload, { qos: 1 });
         client.publish('pinpulse/v1/ring/broadcast', payload, { qos: 1 });
         addAuditEntry('BROADCAST EMERGENCY SILENCE DISPATCHED TO ALL UNITS', 'silence');

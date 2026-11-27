@@ -106,8 +106,10 @@ class LocationTrackingService : Service() {
                 val processes = am.runningAppProcesses ?: return false
                 val pkg = context.packageName
                 processes.any {
-                    it.processName == pkg &&
-                        it.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
+                    it.processName == pkg && (
+                        it.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND ||
+                        it.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE
+                    )
                 }
             } catch (e: Exception) {
                 false
@@ -126,16 +128,15 @@ class LocationTrackingService : Service() {
                 return
             }
 
-            // 2. Check if Android 14/15 allows starting a Foreground Service right now:
-            // Allowed if the app is currently open in the foreground OR user granted "Allow all the time" (ACCESS_BACKGROUND_LOCATION).
+            // 2. Start the Foreground Service whenever fine/coarse location permission is granted or app is visible!
+            // Do NOT skip FGS when started with "While using the app" (ACCESS_FINE_LOCATION / ACCESS_COARSE_LOCATION):
+            // an FGS started in foreground stays alive across screen lock & minimize to keep MQTT ring listener active.
             val inForeground = isAppInForeground(appCtx)
+            val hasLocPerm = hasLocationPermission(appCtx)
             val hasBgLoc = hasBackgroundLocationPermission(appCtx)
 
-            if (!inForeground && !hasBgLoc) {
-                // App is in background without "Allow all the time" permission:
-                // Never call startForegroundService() (which crashes Android 15 / One UI 7.0);
-                // instead perform a silent background location & MQTT pulse directly!
-                Log.d(TAG, "Background pulse mode (no ACCESS_BACKGROUND_LOCATION yet) — sending silent pulse")
+            if (!inForeground && !hasBgLoc && !hasLocPerm) {
+                Log.d(TAG, "Background pulse mode (no location permission yet) — sending silent pulse")
                 performSilentBackgroundPulse(appCtx)
                 scheduleWatchdogAlarm(appCtx, 60_000L)
                 return
@@ -152,9 +153,15 @@ class LocationTrackingService : Service() {
                         return
                     } catch (_: Exception) {}
                 }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    appCtx.startForegroundService(intent)
+                if (inForeground || hasBgLoc) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        appCtx.startForegroundService(intent)
+                    } else {
+                        appCtx.startService(intent)
+                    }
                 } else {
+                    // App is in background with only foreground location permission: try startService (succeeds if cached/exempt),
+                    // falling back cleanly to silent pulse if background service start is restricted by OS.
                     appCtx.startService(intent)
                 }
             } catch (t: Throwable) {
@@ -291,6 +298,7 @@ class LocationTrackingService : Service() {
             if (!isServiceRunningInForeground && activeInstance == null) return
             val intent = Intent(appCtx, LocationTrackingService::class.java).apply {
                 action = ACTION_STOP
+                putExtra("FORCE_STOP", true)
             }
             try {
                 appCtx.startService(intent)
@@ -513,10 +521,20 @@ class LocationTrackingService : Service() {
         when (intent?.action) {
             ACTION_STOP -> {
                 val me = prefs.loadCurrentUser()
-                if (me?.accountStatus?.uppercase() == "DELETED") {
+                val statusUpper = me?.accountStatus?.uppercase() ?: ""
+                val forceStop = intent.getBooleanExtra("FORCE_STOP", false)
+                if (me == null || forceStop || statusUpper in listOf("DELETED", "BANNED", "DEACTIVATED")) {
                     isExplicitlyStopped = true
                     isServiceRunningInForeground = false
                     handleStopTracking()
+                    try {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                            stopForeground(STOP_FOREGROUND_REMOVE)
+                        } else {
+                            @Suppress("DEPRECATION")
+                            stopForeground(true)
+                        }
+                    } catch (_: Exception) {}
                     stopSelf()
                 } else {
                     isExplicitlyStopped = false

@@ -7,6 +7,13 @@ on:
       - master
   workflow_dispatch:
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 permissions:
   contents: write
 
@@ -22,7 +29,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up JDK 17 (Temurin)
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: '17'
@@ -32,21 +39,46 @@ jobs:
         with:
           gradle-version: '8.7'
 
-      - name: Calculate Version (0.1 -> 0.9 -> 1.0 -> ...)
+      - name: Calculate Version (Semantic vX.Y + 1 Step)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Count existing releases so Release #1 = v0.1, #9 = v0.9, #10 = v1.0, etc.
-          EXISTING_COUNT=$(gh release list --repo "${{ github.repository }}" --limit 1000 | wc -l)
-          NEXT_NUM=$((EXISTING_COUNT + 1))
-          MAJOR=$((NEXT_NUM / 10))
-          MINOR=$((NEXT_NUM % 10))
-          VERSION_NAME="${MAJOR}.${MINOR}"
+          # Collect all existing vX.Y tags from both local git history and GitHub Releases
+          GIT_TAGS=$(git tag -l 'v*' || true)
+          GH_TAGS=$(gh release list --repo "${{ github.repository }}" --limit 1000 --json tagName --jq '.[].tagName' 2>/dev/null || true)
+          HIGHEST_VER=$(printf "%s\n%s\n" "${GIT_TAGS}" "${GH_TAGS}" \
+            | sed 's/^v//' \
+            | grep -E '^[0-9]+\.[0-9]+$' \
+            | sort -t. -k1,1n -k2,2n \
+            | tail -n1 || true)
+
+          if [ -n "${HIGHEST_VER}" ]; then
+            CUR_MAJOR=$(echo "${HIGHEST_VER}" | cut -d. -f1)
+            CUR_MINOR=$(echo "${HIGHEST_VER}" | cut -d. -f2)
+            if [ "${CUR_MINOR}" -ge 9 ]; then
+              if [ "${CUR_MINOR}" -eq 9 ]; then
+                NEXT_MAJOR=$((CUR_MAJOR + 1))
+                NEXT_MINOR=0
+              else
+                NEXT_MAJOR=${CUR_MAJOR}
+                NEXT_MINOR=$((CUR_MINOR + 1))
+              fi
+            else
+              NEXT_MAJOR=${CUR_MAJOR}
+              NEXT_MINOR=$((CUR_MINOR + 1))
+            fi
+            VERSION_NAME="${NEXT_MAJOR}.${NEXT_MINOR}"
+          else
+            NEXT_MAJOR=4
+            NEXT_MINOR=6
+            VERSION_NAME="4.6"
+          fi
+
           VERSION_CODE=$((100 + GITHUB_RUN_NUMBER))
 
           echo "VERSION_NAME=${VERSION_NAME}" >> $GITHUB_ENV
           echo "VERSION_CODE=${VERSION_CODE}" >> $GITHUB_ENV
-          echo "Building PinPulse v${VERSION_NAME} (versionCode=${VERSION_CODE})..."
+          echo "Highest existing tag: v${HIGHEST_VER:-none} -> Building PinPulse v${VERSION_NAME} (versionCode=${VERSION_CODE})..."
 
       - name: Build Signed Android Release APK
         env:

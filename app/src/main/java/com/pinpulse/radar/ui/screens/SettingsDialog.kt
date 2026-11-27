@@ -927,6 +927,15 @@ fun SettingsDialog(
                 var delayMinutes by remember { mutableStateOf(appPrefs.getStealthDelayMinutes()) }
                 var rulesRevision by remember { mutableStateOf(0) }
                 val friendsList by viewModel.friends.collectAsState()
+                val groupsList by viewModel.groups.collectAsState()
+                val circlePeople = remember(friendsList, groupsList, currentUser?.id) {
+                    val extraGroupUsers = groupsList
+                        .flatMap { it.memberIds }
+                        .distinct()
+                        .filterNot { mid -> mid == currentUser?.id || friendsList.any { it.id == mid } }
+                        .map { viewModel.resolveGroupMember(it) }
+                    (friendsList + extraGroupUsers).distinctBy { it.id }
+                }
 
                 Card(
                     colors = CardDefaults.cardColors(containerColor = Color(0xFF0A101D)),
@@ -973,6 +982,7 @@ fun SettingsDialog(
                                                 appPrefs.setFrozenLatitude(currentUser?.latitude ?: 0.0)
                                                 appPrefs.setFrozenLongitude(currentUser?.longitude ?: 0.0)
                                             }
+                                            viewModel.syncCloudBackup()
                                             Toast.makeText(context, "Global visibility: $label", Toast.LENGTH_SHORT).show()
                                         }
                                 ) {
@@ -1018,6 +1028,8 @@ fun SettingsDialog(
                                         .clickable {
                                             ringPolicy = pol
                                             appPrefs.setRingPolicy(pol)
+                                            rulesRevision++
+                                            viewModel.syncCloudBackup()
                                             Toast.makeText(context, "Ring policy: $label", Toast.LENGTH_SHORT).show()
                                         }
                                 ) {
@@ -1026,15 +1038,35 @@ fun SettingsDialog(
                             }
                         }
 
-                        // Per-Friend Ring & Visibility Toggles
-                        if (friendsList.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = when (ringPolicy) {
+                                "ALLOWED_ONLY" -> "Allow-List Active: Only circle members explicitly toggled ON below can ring your phone."
+                                "BLOCKED_ONLY" -> "Block-List Active: Everyone can ring except members toggled OFF below."
+                                else -> "All Friends Active: Circle members can ring unless individually toggled OFF below."
+                            },
+                            fontSize = 10.sp,
+                            color = TextMuted,
+                            lineHeight = 14.sp
+                        )
+
+                        // Per-Friend & Group-Member Ring & Visibility Toggles (1:1 synced with isUserAllowedToRing)
+                        if (circlePeople.isNotEmpty()) {
                             Spacer(modifier = Modifier.height(14.dp))
-                            Text("Quick Friend Stealth & Ring Toggles (${friendsList.size}):", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = TextSecondary)
+                            Text("Quick Circle Stealth & Ring Toggles (${circlePeople.size}):", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = TextSecondary)
                             Spacer(modifier = Modifier.height(6.dp))
 
                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                friendsList.forEach { f ->
+                                circlePeople.forEach { f ->
                                     val rule = remember(f.id, rulesRevision) { appPrefs.getPersonStealthRule(f.id) }
+                                    val canRingNow = remember(f.id, f.friendCode, f.email, ringPolicy, rulesRevision) {
+                                        appPrefs.isUserAllowedToRing(
+                                            userId = f.id,
+                                            friendCode = f.friendCode,
+                                            email = f.email,
+                                            displayName = f.displayName
+                                        )
+                                    }
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1046,7 +1078,7 @@ fun SettingsDialog(
                                     ) {
                                         Column(modifier = Modifier.weight(1f)) {
                                             Text(f.displayName, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
-                                            Text("Mode: ${rule.mode} | Ring: ${if (rule.canRing) "Allowed" else "Blocked"}", fontSize = 10.sp, color = TextMuted)
+                                            Text("Mode: ${rule.mode} | Ring: ${if (canRingNow) "Allowed" else "Blocked"}", fontSize = 10.sp, color = TextMuted)
                                         }
                                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                             // Toggle Ring
@@ -1054,9 +1086,9 @@ fun SettingsDialog(
                                                 contentAlignment = Alignment.Center,
                                                 modifier = Modifier
                                                     .clip(RoundedCornerShape(6.dp))
-                                                    .background(if (rule.canRing) PulseGreen.copy(alpha = 0.2f) else DangerRed.copy(alpha = 0.2f))
+                                                    .background(if (canRingNow) PulseGreen.copy(alpha = 0.2f) else DangerRed.copy(alpha = 0.2f))
                                                     .clickable {
-                                                        val newCanRing = !rule.canRing
+                                                        val newCanRing = !canRingNow
                                                         val updatedRule = rule.copy(canRing = newCanRing)
                                                         appPrefs.setPersonStealthRule(f.id, updatedRule)
                                                         if (newCanRing) {
@@ -1067,10 +1099,11 @@ fun SettingsDialog(
                                                             Toast.makeText(context, "${f.displayName}: Ring Blocked", Toast.LENGTH_SHORT).show()
                                                         }
                                                         rulesRevision++
+                                                        viewModel.syncCloudBackup()
                                                     }
                                                     .padding(horizontal = 8.dp, vertical = 4.dp)
                                             ) {
-                                                Text(if (rule.canRing) "🔔 ON" else "🔕 OFF", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = if (rule.canRing) PulseGreen else DangerRed)
+                                                Text(if (canRingNow) "🔔 ON" else "🔕 OFF", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = if (canRingNow) PulseGreen else DangerRed)
                                             }
                                         }
                                     }

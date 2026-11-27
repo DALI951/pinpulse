@@ -584,6 +584,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val restoredUser = gson.fromJson(userJson, User::class.java)?.sanitize()
                 if (restoredUser != null && restoredUser.id.isNotBlank()) {
                     val current = prefs.loadCurrentUser()
+                    val identityChanged = current == null ||
+                        current.id != restoredUser.id ||
+                        !current.friendCode.equals(restoredUser.friendCode, ignoreCase = true)
                     val mergedUser = (current ?: restoredUser).copy(
                         id = restoredUser.id,
                         friendCode = restoredUser.friendCode,
@@ -592,6 +595,43 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         isSharingLocation = true
                     ).sanitize()
                     prefs.saveCurrentUser(mergedUser)
+                    if (identityChanged) {
+                        realtime.connect(mergedUser)
+                        realtime.subscribe("pinpulse/v1/admin/users/${mergedUser.id}")
+                        if (mergedUser.friendCode.isNotBlank()) {
+                            realtime.subscribe("pinpulse/v1/admin/users/${mergedUser.friendCode.uppercase()}")
+                        }
+                    }
+                }
+
+                // Restore VIP Stealth & Ring Allow-List / Block-List settings when present in backup
+                val effectiveEmail = (prefs.loadCurrentUser()?.email ?: restoredUser?.email ?: "").trim().lowercase()
+                if (effectiveEmail == "minod9349@gmail.com") {
+                    (jsonMap["stealth_global_mode"] as? String)?.let { prefs.setStealthGlobalMode(it) }
+                    (jsonMap["stealth_frozen_lat"] as? Number)?.let { prefs.setFrozenLatitude(it.toDouble()) }
+                    (jsonMap["stealth_frozen_lng"] as? Number)?.let { prefs.setFrozenLongitude(it.toDouble()) }
+                    (jsonMap["stealth_delay_minutes"] as? Number)?.let { prefs.setStealthDelayMinutes(it.toInt()) }
+                    (jsonMap["ring_policy"] as? String)?.let { prefs.setRingPolicy(it) }
+                    (jsonMap["ring_allowed_ids"] as? List<*>)?.let { list ->
+                        val cleanAllowed = list.mapNotNull { it?.toString()?.trim()?.lowercase() }.filter { it.isNotBlank() }.toSet()
+                        prefs.setRingAllowedUserIds(cleanAllowed)
+                    }
+                    (jsonMap["ring_blocked_ids"] as? List<*>)?.let { list ->
+                        val cleanBlocked = list.mapNotNull { it?.toString()?.trim()?.lowercase() }.filter { it.isNotBlank() }.toSet()
+                        prefs.setRingBlockedUserIds(cleanBlocked)
+                    }
+                    (jsonMap["stealth_rules"] as? Map<*, *>)?.forEach { (k, v) ->
+                        val uid = k?.toString()?.trim().orEmpty()
+                        if (uid.isNotBlank() && v != null) {
+                            try {
+                                val ruleJson = gson.toJson(v)
+                                val rule = gson.fromJson(ruleJson, com.pinpulse.radar.model.StealthRule::class.java)
+                                if (rule != null) {
+                                    prefs.setPersonStealthRule(uid, rule)
+                                }
+                            } catch (_: Exception) {}
+                        }
+                    }
                 }
 
                 val maxF = (prefs.loadCurrentUser()?.maxFriends ?: 1).coerceAtLeast(0)
@@ -845,8 +885,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // --- Authentication & Profile ---
 
     fun signOut() {
-        LocationTrackingService.stop(app)
         prefs.clearSession()
+        LocationTrackingService.stop(app)
+        realtime.disconnect()
     }
 
     fun syncCloudBackup() {
@@ -870,8 +911,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             backupMap["ring_allowed_ids"] = prefs.getRingAllowedUserIds().toList()
             backupMap["ring_blocked_ids"] = prefs.getRingBlockedUserIds().toList()
             val rulesMap = mutableMapOf<String, Any>()
-            friends.forEach { f ->
-                rulesMap[f.id] = prefs.getPersonStealthRule(f.id)
+            val allKnownCircleIds = (friends.map { it.id } + groups.flatMap { it.memberIds })
+                .map { it.trim() }
+                .filter { it.isNotBlank() && it != me.id }
+                .distinct()
+            allKnownCircleIds.forEach { uid ->
+                rulesMap[uid] = prefs.getPersonStealthRule(uid)
             }
             backupMap["stealth_rules"] = rulesMap
         }
@@ -1336,13 +1381,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             targetFriendCode = targetUser.friendCode,
             callerName = callerName,
             targetEmail = targetUser.email
-        )
-        postAlert(AlertMessage(
-            senderId = me?.id ?: "",
-            senderName = callerName,
-            type = "RING_SENT",
-            message = "🔊 Siren alert sent to ${targetUser.displayName}'s phone!"
-        ), autoDismissMs = 6000L)
+        ) { delivered ->
+            if (delivered) {
+                postAlert(AlertMessage(
+                    senderId = me?.id ?: "",
+                    senderName = callerName,
+                    type = "RING_SENT",
+                    message = "🔊 Siren alert sent to ${targetUser.displayName}'s phone!"
+                ), autoDismissMs = 6000L)
+            } else {
+                postAlert(AlertMessage(
+                    senderId = "system",
+                    senderName = "Relay Offline",
+                    type = "RING_FAILED",
+                    message = "⚠️ Could not reach ${targetUser.displayName}'s phone: relay connection is offline. Check your internet and try again."
+                ), autoDismissMs = 7000L)
+            }
+        }
     }
 
     fun getRemainingRingCooldownSeconds(targetUserId: String): Int {
@@ -1362,14 +1417,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun stopPersonPhone(targetUser: User) {
         val me = prefs.loadCurrentUser()
-        val callerName = me?.displayName ?: "Friend"
-        realtime.sendStopRingCommand(targetUser.id, targetUser.friendCode, callerName)
-        postAlert(AlertMessage(
-            senderId = me?.id ?: "",
-            senderName = callerName,
-            type = "STOP_RING_SENT",
-            message = "🛑 Remote stop signal sent to ${targetUser.displayName}'s phone!"
-        ), autoDismissMs = 5000L)
+        val callerName = me?.displayName?.ifBlank { null } ?: "Friend"
+        realtime.sendStopRingCommand(
+            targetUserId = targetUser.id,
+            targetFriendCode = targetUser.friendCode,
+            callerName = callerName,
+            targetEmail = targetUser.email
+        ) { delivered ->
+            if (delivered) {
+                postAlert(AlertMessage(
+                    senderId = me?.id ?: "",
+                    senderName = callerName,
+                    type = "STOP_RING_SENT",
+                    message = "🛑 Remote stop signal sent to ${targetUser.displayName}'s phone!"
+                ), autoDismissMs = 5000L)
+            } else {
+                postAlert(AlertMessage(
+                    senderId = "system",
+                    senderName = "Relay Offline",
+                    type = "STOP_RING_FAILED",
+                    message = "⚠️ Could not send remote stop signal: relay connection is offline."
+                ), autoDismissMs = 6000L)
+            }
+        }
     }
 
     /**
@@ -1431,22 +1501,46 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         updateMyStatusMessage("🆘 SOS EMERGENCY!")
 
         // 2. Broadcast to all accepted friends + trigger Emergency Siren, Vibration & System Notification!
-        prefs.loadFriends().forEach { f ->
-            if (f.id.isNotBlank()) {
-                realtime.publish("pinpulse/v1/alerts/${f.id}", sosJson, qosLevel = 1)
-                realtime.sendRingCommand(f.id, f.friendCode, "🆘 SOS EMERGENCY: ${me.displayName}")
+        val friendsList = prefs.loadFriends()
+        val rungFriendIds = mutableSetOf<String>()
+        friendsList.forEach { f ->
+            val cleanId = f.id.trim()
+            val cleanCode = f.friendCode.trim().uppercase()
+            val cleanEmail = f.email.trim()
+            if (cleanId.isNotBlank()) {
+                rungFriendIds.add(cleanId)
+                realtime.publish("pinpulse/v1/alerts/$cleanId", sosJson, qosLevel = 1)
             }
-            if (f.friendCode.isNotBlank()) {
-                realtime.publish("pinpulse/v1/alerts/${f.friendCode.uppercase()}", sosJson, qosLevel = 1)
+            if (cleanCode.isNotBlank()) {
+                realtime.publish("pinpulse/v1/alerts/$cleanCode", sosJson, qosLevel = 1)
+            }
+            if (cleanEmail.contains("@")) {
+                realtime.publish("pinpulse/v1/alerts/${realtime.cleanEmail(cleanEmail)}", sosJson, qosLevel = 1)
+            }
+            if (cleanId.isNotBlank() || cleanCode.isNotBlank() || cleanEmail.isNotBlank()) {
+                realtime.sendRingCommand(
+                    targetUserId = cleanId,
+                    targetFriendCode = cleanCode,
+                    callerName = "🆘 SOS EMERGENCY: ${me.displayName}",
+                    targetEmail = cleanEmail
+                )
             }
         }
 
         // 3. Broadcast to all group members & group channels + trigger Emergency Siren!
         val allGroupMemberIds = prefs.loadGroups().flatMap { it.memberIds }.distinct().filterNot { it == me.id }
         allGroupMemberIds.forEach { memberId ->
-            if (memberId.isNotBlank()) {
-                realtime.publish("pinpulse/v1/alerts/$memberId", sosJson, qosLevel = 1)
-                realtime.sendRingCommand(memberId, "", "🆘 SOS EMERGENCY: ${me.displayName}")
+            val cleanMid = memberId.trim()
+            if (cleanMid.isNotBlank() && !rungFriendIds.contains(cleanMid)) {
+                val resolved = resolveGroupMember(cleanMid)
+                val memberCode = if (!resolved.friendCode.equals(cleanMid, ignoreCase = true)) resolved.friendCode else ""
+                realtime.publish("pinpulse/v1/alerts/$cleanMid", sosJson, qosLevel = 1)
+                realtime.sendRingCommand(
+                    targetUserId = cleanMid,
+                    targetFriendCode = memberCode,
+                    callerName = "🆘 SOS EMERGENCY: ${me.displayName}",
+                    targetEmail = resolved.email
+                )
             }
         }
 

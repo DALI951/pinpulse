@@ -490,6 +490,16 @@ fun PersonDetailSheet(
                 if (isVip) {
                     val appPrefs = remember { AppPreferences(context) }
                     var currentRule by remember(targetUser.id) { mutableStateOf(appPrefs.getPersonStealthRule(targetUser.id)) }
+                    var canRingAllowed by remember(targetUser.id, targetUser.friendCode, targetUser.email) {
+                        mutableStateOf(
+                            appPrefs.isUserAllowedToRing(
+                                userId = targetUser.id,
+                                friendCode = targetUser.friendCode,
+                                email = targetUser.email,
+                                displayName = targetUser.displayName
+                            )
+                        )
+                    }
 
                     Card(
                         colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
@@ -511,7 +521,7 @@ fun PersonDetailSheet(
 
                             Spacer(modifier = Modifier.height(10.dp))
 
-                            // Ring Permission Toggle
+                            // Ring Permission Toggle (1:1 synced with AppPreferences.isUserAllowedToRing)
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -520,7 +530,7 @@ fun PersonDetailSheet(
                                     .clip(RoundedCornerShape(10.dp))
                                     .background(Color(0xFF1E293B))
                                     .clickable {
-                                        val newCanRing = !currentRule.canRing
+                                        val newCanRing = !canRingAllowed
                                         val newRule = currentRule.copy(canRing = newCanRing)
                                         currentRule = newRule
                                         appPrefs.setPersonStealthRule(targetUser.id, newRule)
@@ -531,18 +541,25 @@ fun PersonDetailSheet(
                                             appPrefs.blockUserFromRinging(targetUser.id, targetUser.friendCode, targetUser.email, targetUser.displayName)
                                             Toast.makeText(context, "Ringing Blocked for ${targetUser.displayName}", Toast.LENGTH_SHORT).show()
                                         }
+                                        canRingAllowed = appPrefs.isUserAllowedToRing(
+                                            userId = targetUser.id,
+                                            friendCode = targetUser.friendCode,
+                                            email = targetUser.email,
+                                            displayName = targetUser.displayName
+                                        )
+                                        viewModel.syncCloudBackup()
                                     }
                                     .padding(horizontal = 12.dp, vertical = 10.dp)
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text("Allow to Ring My Phone", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
-                                    Text(if (currentRule.canRing) "Can ring your siren" else "Silently blocked from ringing", fontSize = 10.sp, color = TextMuted)
+                                    Text(if (canRingAllowed) "Can ring your siren" else "Silently blocked from ringing", fontSize = 10.sp, color = TextMuted)
                                 }
                                 Text(
-                                    text = if (currentRule.canRing) "ALLOWED" else "BLOCKED",
+                                    text = if (canRingAllowed) "ALLOWED" else "BLOCKED",
                                     fontWeight = FontWeight.ExtraBold,
                                     fontSize = 11.sp,
-                                    color = if (currentRule.canRing) PulseGreen else DangerRed
+                                    color = if (canRingAllowed) PulseGreen else DangerRed
                                 )
                             }
 
@@ -584,6 +601,7 @@ fun PersonDetailSheet(
                                                 )
                                                 currentRule = newRule
                                                 appPrefs.setPersonStealthRule(targetUser.id, newRule)
+                                                viewModel.syncCloudBackup()
                                                 Toast.makeText(context, "Location for ${targetUser.displayName}: $label", Toast.LENGTH_SHORT).show()
                                             }
                                     ) {

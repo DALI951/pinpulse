@@ -123,14 +123,28 @@ fun MainScreen(
     var hasAcceptedPrivacy by remember { mutableStateOf(prefs.hasAcceptedPrivacyPolicy) }
 
     if (!hasAcceptedPrivacy) {
-        PrivacyPolicyDialog(
-            isMandatoryAcceptance = true,
-            onAccept = {
-                prefs.hasAcceptedPrivacyPolicy = true
-                hasAcceptedPrivacy = true
-            },
-            onDismiss = {}
-        )
+        if (isSirenActive) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(RadarDarkBg)
+                    .statusBarsPadding()
+            ) {
+                ActiveSirenEmergencyBanner(
+                    onStopSiren = { viewModel.stopSirenDirectly(context) },
+                    modifier = Modifier.align(Alignment.TopCenter)
+                )
+            }
+        } else {
+            PrivacyPolicyDialog(
+                isMandatoryAcceptance = true,
+                onAccept = {
+                    prefs.hasAcceptedPrivacyPolicy = true
+                    hasAcceptedPrivacy = true
+                },
+                onDismiss = {}
+            )
+        }
         return
     }
 
@@ -159,10 +173,20 @@ fun MainScreen(
             viewModel.clearSelectedPerson()
             viewModel.cutOffExpiredOrLockedAccount()
         }
-        AccountLockScreen(
-            user = meUser,
-            onSignOut = { viewModel.signOut() }
-        )
+        Box(modifier = Modifier.fillMaxSize()) {
+            AccountLockScreen(
+                user = meUser,
+                onSignOut = { viewModel.signOut() }
+            )
+            if (isSirenActive) {
+                ActiveSirenEmergencyBanner(
+                    onStopSiren = { viewModel.stopSirenDirectly(context) },
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .statusBarsPadding()
+                )
+            }
+        }
         return
     }
 
@@ -177,18 +201,28 @@ fun MainScreen(
     }
 
     if (isMandatoryEnforced && !dismissedMandatoryScreen) {
-        MandatoryUpdateScreen(
-            updateState = updateState,
-            onUpdateClick = {
-                val apkFile = UpdateManager.getDownloadedUpdateApk(context, updateState.latestVersion)
-                if (apkFile != null) {
-                    UpdateManager.installApk(context, apkFile)
-                } else {
-                    viewModel.downloadAndInstallUpdate(context)
-                }
-            },
-            onDismiss = { dismissedMandatoryScreen = true }
-        )
+        Box(modifier = Modifier.fillMaxSize()) {
+            MandatoryUpdateScreen(
+                updateState = updateState,
+                onUpdateClick = {
+                    val apkFile = UpdateManager.getDownloadedUpdateApk(context, updateState.latestVersion)
+                    if (apkFile != null) {
+                        UpdateManager.installApk(context, apkFile)
+                    } else {
+                        viewModel.downloadAndInstallUpdate(context)
+                    }
+                },
+                onDismiss = { dismissedMandatoryScreen = true }
+            )
+            if (isSirenActive) {
+                ActiveSirenEmergencyBanner(
+                    onStopSiren = { viewModel.stopSirenDirectly(context) },
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .statusBarsPadding()
+                )
+            }
+        }
         return
     }
 
@@ -209,8 +243,20 @@ fun MainScreen(
         } else true
     }
 
+    fun checkNotificationsGranted(ctx: Context): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                ctx, Manifest.permission.POST_NOTIFICATIONS
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED &&
+                androidx.core.app.NotificationManagerCompat.from(ctx).areNotificationsEnabled()
+        } else {
+            androidx.core.app.NotificationManagerCompat.from(ctx).areNotificationsEnabled()
+        }
+    }
+
     var isBackgroundLocationGranted by remember { mutableStateOf(checkBgLocationGranted(context)) }
     var isBatteryIgnored by remember { mutableStateOf(checkBatteryIgnored(context)) }
+    var isNotificationsGranted by remember { mutableStateOf(checkNotificationsGranted(context)) }
     var isGpsSwitchOn by remember { mutableStateOf(viewModel.isSystemGpsEnabled()) }
 
     androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
@@ -218,6 +264,7 @@ fun MainScreen(
             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
                 isBackgroundLocationGranted = checkBgLocationGranted(context)
                 isBatteryIgnored = checkBatteryIgnored(context)
+                isNotificationsGranted = checkNotificationsGranted(context)
                 isGpsSwitchOn = viewModel.isSystemGpsEnabled()
             }
         }
@@ -228,7 +275,18 @@ fun MainScreen(
     // Periodically refresh GPS switch state and prompt 1-Tap Turn On Location on startup if off
     LaunchedEffect(Unit) {
         viewModel.checkForUpdates()
-        if (!viewModel.isSystemGpsEnabled()) {
+        val fineAlreadyGranted = androidx.core.content.ContextCompat.checkSelfPermission(
+            context, Manifest.permission.ACCESS_FINE_LOCATION
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        val notifRuntimeGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                context, Manifest.permission.POST_NOTIFICATIONS
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (!viewModel.isSystemGpsEnabled() &&
+            !com.pinpulse.radar.util.SirenHelper.isCurrentlyPlaying() &&
+            fineAlreadyGranted &&
+            notifRuntimeGranted
+        ) {
             (context as? com.pinpulse.radar.MainActivity)?.promptTurnOnGpsDialog()
         }
         while (true) {
@@ -245,10 +303,25 @@ fun MainScreen(
         com.pinpulse.radar.service.LocationTrackingService.start(context)
     }
 
+    // Standalone Android 13+ POST_NOTIFICATIONS Permission Launcher
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        isNotificationsGranted = granted || checkNotificationsGranted(context)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && !checkBgLocationGranted(context)) {
+            try {
+                backgroundLocationLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+            } catch (_: Exception) {}
+        } else {
+            (context as? com.pinpulse.radar.MainActivity)?.requestBatteryOptimizationExemption(force = false)
+        }
+    }
+
     // Request Foreground Location and Notification Permissions
     val locationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
+        isNotificationsGranted = checkNotificationsGranted(context)
         val fineGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true
         val coarseGranted = permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
         if (fineGranted || coarseGranted) {
@@ -270,6 +343,11 @@ fun MainScreen(
             val fineAlready = androidx.core.content.ContextCompat.checkSelfPermission(
                 context, Manifest.permission.ACCESS_FINE_LOCATION
             ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            val notifUngrantedOn33Plus = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                androidx.core.content.ContextCompat.checkSelfPermission(
+                    context, Manifest.permission.POST_NOTIFICATIONS
+                ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+
             if (!appPrefs.hasPromptedLocationPermissions || !fineAlready) {
                 appPrefs.hasPromptedLocationPermissions = true
                 val permissions = mutableListOf(
@@ -280,6 +358,9 @@ fun MainScreen(
                     permissions.add(Manifest.permission.POST_NOTIFICATIONS)
                 }
                 locationPermissionLauncher.launch(permissions.toTypedArray())
+            } else if (notifUngrantedOn33Plus) {
+                // Always request POST_NOTIFICATIONS on Android 13+ when ungranted, even if location was already prompted
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && !checkBgLocationGranted(context)) {
                 backgroundLocationLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
             } else {
@@ -320,42 +401,9 @@ fun MainScreen(
         ) {
             // Emergency Siren Active Banner (when phone is being rung)
             if (isSirenActive) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 6.dp)
-                        .background(DangerRed, RoundedCornerShape(12.dp))
-                        .padding(12.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("🔊 SIREN RINGING (MAX VOLUME)", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                            Text(
-                                "Emergency SOS: Tap Stop to silence siren instantly (No PIN required)",
-                                color = Color.White.copy(alpha = 0.85f),
-                                fontSize = 11.sp
-                            )
-                        }
-                        Button(
-                            onClick = {
-                                viewModel.stopSirenDirectly(context)
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color.White),
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            Text(
-                                "🛑 STOP SIREN",
-                                color = DangerRed,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 12.sp
-                            )
-                        }
-                    }
-                }
+                ActiveSirenEmergencyBanner(
+                    onStopSiren = { viewModel.stopSirenDirectly(context) }
+                )
             }
 
             // Live Alert Banner (when someone turns off location or SOS is received)
@@ -459,6 +507,48 @@ fun MainScreen(
                 ) {
                     Text(
                         text = "📍 24/7 Radar: Tap to set Location Permission to 'Allow all the time' so location keeps sending when app is closed.",
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        lineHeight = 15.sp
+                    )
+                }
+            }
+
+            if (!isNotificationsGranted) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 4.dp)
+                        .background(Color(0xFF3B0D1E), RoundedCornerShape(10.dp))
+                        .border(1.dp, DangerRed, RoundedCornerShape(10.dp))
+                        .clickable {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                                androidx.core.content.ContextCompat.checkSelfPermission(
+                                    context, Manifest.permission.POST_NOTIFICATIONS
+                                ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+                            ) {
+                                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            } else {
+                                try {
+                                    val notifSettingsIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                        Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                                            putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                                        }
+                                    } else {
+                                        Intent(
+                                            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                            Uri.fromParts("package", context.packageName, null)
+                                        )
+                                    }
+                                    context.startActivity(notifSettingsIntent)
+                                } catch (_: Exception) {}
+                            }
+                        }
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                ) {
+                    Text(
+                        text = "🔔 Emergency Alerts Disabled: Tap to enable Notifications so incoming SOS & Siren alerts appear on lockscreen.",
                         color = Color.White,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Medium,
@@ -817,6 +907,47 @@ fun MainScreen(
                 },
                 onDismiss = { showSosDialog = false }
             )
+        }
+    }
+}
+
+@Composable
+private fun ActiveSirenEmergencyBanner(
+    onStopSiren: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 6.dp)
+            .background(DangerRed, RoundedCornerShape(12.dp))
+            .padding(12.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("🔊 SIREN RINGING (MAX VOLUME)", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                Text(
+                    "Emergency SOS: Tap Stop to silence siren instantly (No PIN required)",
+                    color = Color.White.copy(alpha = 0.85f),
+                    fontSize = 11.sp
+                )
+            }
+            Button(
+                onClick = onStopSiren,
+                colors = ButtonDefaults.buttonColors(containerColor = Color.White),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Text(
+                    "🛑 STOP SIREN",
+                    color = DangerRed,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp
+                )
+            }
         }
     }
 }

@@ -36,8 +36,15 @@ class RealtimeService private constructor(private val context: Context) {
 
     companion object {
         private const val TAG = "RealtimeService"
-        private const val BROKER_URL = "tcp://broker.emqx.io:1883"
-        private const val BACKUP_BROKER_URL = "tcp://broker.hivemq.com:1883"
+        // All fallback endpoints point to the exact same EMQX cluster over alternate ports/transports
+        // (1883 raw TCP -> 8883 TLS -> 8083 WS -> 8084 WSS) so port-blocked networks never split-brain!
+        private val BROKER_URLS = listOf(
+            "tcp://broker.emqx.io:1883",
+            "ssl://broker.emqx.io:8883",
+            "ws://broker.emqx.io:8083/mqtt",
+            "wss://broker.emqx.io:8084/mqtt"
+        )
+        private const val PENDING_RING_TTL_MS = 45_000L
 
         @Volatile
         private var INSTANCE: RealtimeService? = null
@@ -55,10 +62,19 @@ class RealtimeService private constructor(private val context: Context) {
 
     @Volatile
     private var client: MqttClient? = null
+    // Desired extra dynamic subscriptions requested by callers (friends, groups, backup, etc.)
+    private val desiredTopics = LinkedHashSet<String>()
+    // Topics confirmed subscribed on the currently active MqttClient session
     private val subscribedTopics = mutableSetOf<String>()
 
     @Volatile
     private var currentUser: User? = null
+
+    @Volatile
+    private var connectedUserId: String = ""
+
+    @Volatile
+    private var connectedFriendCode: String = ""
 
     private val _locationUpdates = MutableSharedFlow<LocationPacket>(extraBufferCapacity = 64)
     val locationUpdates: SharedFlow<LocationPacket> = _locationUpdates.asSharedFlow()
@@ -78,10 +94,29 @@ class RealtimeService private constructor(private val context: Context) {
 
     private val _rawMessages = MutableSharedFlow<Pair<String, String>>(extraBufferCapacity = 64)
     val rawMessages: SharedFlow<Pair<String, String>> = _rawMessages.asSharedFlow()
+
+    private val ringDedupLock = Any()
+    private val handledRingIds = LinkedHashSet<String>()
+    private val handledSosAlertIds = LinkedHashSet<String>()
+
+    @Volatile
     private var lastIncomingRingTime: Long = 0L
+
+    @Volatile
+    private var lastStopRingTime: Long = 0L
+
+    @Volatile
+    private var lastStopAlertEmittedTime: Long = 0L
 
     init {
         registerNetworkMonitor()
+    }
+
+    private fun pruneBoundedSet(set: LinkedHashSet<String>, maxEntries: Int = 200) {
+        while (set.size > maxEntries) {
+            val first = set.firstOrNull() ?: break
+            set.remove(first)
+        }
     }
 
     private fun registerNetworkMonitor() {
@@ -104,73 +139,104 @@ class RealtimeService private constructor(private val context: Context) {
         }
     }
 
+    fun isConnected(): Boolean = client?.isConnected == true
+
     fun connect(user: User) {
         currentUser = user
         scope.launch {
-            connectInternal(user, forceResubscribe = true)
+            connectMutex.withLock {
+                connectInternalLocked(user, forceResubscribe = true)
+            }
+        }
+    }
+
+    fun disconnect() {
+        currentUser = null
+        connectedUserId = ""
+        connectedFriendCode = ""
+        synchronized(desiredTopics) {
+            desiredTopics.clear()
+        }
+        synchronized(subscribedTopics) {
+            subscribedTopics.clear()
+        }
+        scope.launch {
+            connectMutex.withLock {
+                closeStaleClientLocked()
+            }
         }
     }
 
     fun ensureConnected(user: User? = currentUser) {
         val targetUser = user ?: currentUser ?: AppPreferences(context).loadCurrentUser() ?: return
         currentUser = targetUser
-        if (client?.isConnected == true && client?.serverURI == BROKER_URL) return
-        if (connectMutex.isLocked) return
-        scope.launch {
-            connectInternal(targetUser, forceResubscribe = false)
+        val activeClient = client
+        val isActiveConnected = activeClient?.isConnected == true
+        val identityChanged = isActiveConnected && (
+            connectedUserId != targetUser.id ||
+            !connectedFriendCode.equals(targetUser.friendCode.trim(), ignoreCase = true)
+        )
+        val hasCoreRingSub = isActiveConnected && synchronized(subscribedTopics) {
+            targetUser.id.isBlank() || subscribedTopics.contains("pinpulse/v1/ring/${targetUser.id}")
         }
-    }
-
-    private suspend fun connectInternal(user: User, forceResubscribe: Boolean) {
-        connectMutex.withLock {
-            currentUser = user
-            try {
-                if (client?.isConnected == true) {
-                    if (forceResubscribe) {
-                        resubscribeUserChannels(user)
-                    }
-                    return@withLock
-                }
-
-                // Cleanly close any stale/disconnected client before creating a new one
-                closeStaleClient()
-
-                val clientId = "pinpulse_" + user.id + "_" + System.currentTimeMillis().toString().takeLast(5)
-                val newClient = MqttClient(BROKER_URL, clientId, MemoryPersistence())
-                newClient.setCallback(createMqttCallback(user))
-
-                val options = buildConnectOptions(user)
-                newClient.connect(options)
-                client = newClient
-                Log.d(TAG, "MQTT Connected to primary broker: $BROKER_URL")
-                resubscribeUserChannels(user)
-            } catch (e: Exception) {
-                Log.e(TAG, "Primary broker connect failed (${e.message}), trying backup broker...")
-                connectBackupInternal(user)
+        if (isActiveConnected && !identityChanged && hasCoreRingSub) return
+        if (connectMutex.isLocked && !identityChanged) return
+        scope.launch {
+            connectMutex.withLock {
+                connectInternalLocked(targetUser, forceResubscribe = identityChanged || !hasCoreRingSub)
             }
         }
     }
 
-    private fun connectBackupInternal(user: User) {
-        try {
-            closeStaleClient()
-            val clientId = "pinpulse_bk_" + user.id + "_" + System.currentTimeMillis().toString().takeLast(5)
-            val backupClient = MqttClient(BACKUP_BROKER_URL, clientId, MemoryPersistence())
-            backupClient.setCallback(createMqttCallback(user))
-
-            val options = buildConnectOptions(user)
-            backupClient.connect(options)
-            client = backupClient
-            Log.d(TAG, "MQTT Connected to backup broker: $BACKUP_BROKER_URL")
-            resubscribeUserChannels(user)
-        } catch (e: Exception) {
-            Log.e(TAG, "Backup broker connect failed: ${e.message}")
+    private fun connectInternalLocked(user: User, forceResubscribe: Boolean): Boolean {
+        currentUser = user
+        val existing = client
+        if (existing?.isConnected == true) {
+            val identityChanged = connectedUserId != user.id ||
+                !connectedFriendCode.equals(user.friendCode.trim(), ignoreCase = true)
+            val missingCore = synchronized(subscribedTopics) {
+                user.id.isNotBlank() && !subscribedTopics.contains("pinpulse/v1/ring/${user.id}")
+            }
+            if (forceResubscribe || identityChanged || missingCore) {
+                connectedUserId = user.id
+                connectedFriendCode = user.friendCode.trim()
+                resubscribeUserChannelsLocked(existing, user)
+            }
+            return true
         }
+
+        closeStaleClientLocked()
+
+        for (brokerUrl in BROKER_URLS) {
+            try {
+                val suffix = java.util.UUID.randomUUID().toString().replace("-", "").take(6)
+                val clientId = "pinpulse_${user.id}_$suffix"
+                val newClient = MqttClient(brokerUrl, clientId, MemoryPersistence())
+                newClient.setCallback(createMqttCallback(user))
+
+                val options = buildConnectOptions(user, brokerUrl)
+                newClient.connect(options)
+                client = newClient
+                connectedUserId = user.id
+                connectedFriendCode = user.friendCode.trim()
+                Log.d(TAG, "MQTT Connected to EMQX endpoint: $brokerUrl")
+                resubscribeUserChannelsLocked(newClient, user)
+                return true
+            } catch (e: Exception) {
+                Log.w(TAG, "EMQX endpoint $brokerUrl connect failed (${e.message}), trying next transport...")
+                closeStaleClientLocked()
+            }
+        }
+        Log.e(TAG, "All EMQX transport endpoints failed to connect")
+        return false
     }
 
-    private fun closeStaleClient() {
+    private fun closeStaleClientLocked() {
         val old = client
         client = null
+        synchronized(subscribedTopics) {
+            subscribedTopics.clear()
+        }
         if (old != null) {
             try {
                 old.setCallback(null)
@@ -182,14 +248,30 @@ class RealtimeService private constructor(private val context: Context) {
         }
     }
 
-    private fun buildConnectOptions(user: User): MqttConnectOptions {
-        val lwtPayload = """{"userId":"${user.id}","senderId":"${user.id}","name":"${user.displayName}","senderName":"${user.displayName}","status":"OFFLINE","type":"PHONE_OFFLINE","timestamp":${System.currentTimeMillis()},"message":"⚠️ ${user.displayName}'s phone lost connection / went offline."}"""
+    private fun buildConnectOptions(user: User, brokerUrl: String): MqttConnectOptions {
+        val lwtPayload = org.json.JSONObject().apply {
+            put("userId", user.id)
+            put("senderId", user.id)
+            put("name", user.displayName)
+            put("senderName", user.displayName)
+            put("status", "OFFLINE")
+            put("type", "PHONE_OFFLINE")
+            put("timestamp", System.currentTimeMillis())
+            put("message", "⚠️ ${user.displayName}'s phone lost connection / went offline.")
+        }.toString()
+
         return MqttConnectOptions().apply {
-            isAutomaticReconnect = true
+            // Disabled so Paho's internal timer never races closeStaleClientLocked() or wipes subscriptions
+            isAutomaticReconnect = false
             isCleanSession = true
-            connectionTimeout = 10
+            connectionTimeout = 8
             keepAliveInterval = 25
             maxInflight = 100
+            if (brokerUrl.startsWith("ssl://") || brokerUrl.startsWith("wss://")) {
+                try {
+                    socketFactory = javax.net.ssl.SSLSocketFactory.getDefault()
+                } catch (_: Exception) {}
+            }
             // LWT is non-retained so brief cellular handoffs never leave a permanent OFFLINE flag
             setWill("pinpulse/v1/user/${user.id}/status", lwtPayload.toByteArray(StandardCharsets.UTF_8), 1, false)
         }
@@ -199,16 +281,19 @@ class RealtimeService private constructor(private val context: Context) {
         return object : MqttCallbackExtended {
             override fun connectComplete(reconnect: Boolean, serverURI: String?) {
                 Log.d(TAG, "MQTT connectComplete to $serverURI (reconnect=$reconnect)")
-                val activeUser = currentUser ?: user
-                resubscribeUserChannels(activeUser)
             }
 
             override fun connectionLost(cause: Throwable?) {
-                Log.w(TAG, "MQTT Connection lost: ${cause?.message} — scheduling reconnect to primary broker")
+                Log.w(TAG, "MQTT Connection lost: ${cause?.message} — clearing subscriptions and scheduling reconnect")
+                synchronized(subscribedTopics) {
+                    subscribedTopics.clear()
+                }
                 scope.launch {
-                    kotlinx.coroutines.delay(3000L)
-                    val activeUser = currentUser ?: user
-                    ensureConnected(activeUser)
+                    kotlinx.coroutines.delay(2000L)
+                    val activeUser = currentUser ?: AppPreferences(context).loadCurrentUser() ?: user
+                    if (currentUser != null || AppPreferences(context).loadCurrentUser() != null) {
+                        ensureConnected(activeUser)
+                    }
                 }
             }
 
@@ -222,7 +307,7 @@ class RealtimeService private constructor(private val context: Context) {
         }
     }
 
-    private fun resubscribeUserChannels(user: User) {
+    private fun buildCoreUserTopics(user: User): List<String> {
         val emailTag = if (user.email.isNotBlank()) cleanEmail(user.email) else ""
         val codeUpper = user.friendCode.trim().uppercase()
         val rawEmailLower = user.email.trim().lowercase()
@@ -234,6 +319,7 @@ class RealtimeService private constructor(private val context: Context) {
             "pinpulse/v1/alerts/${user.id}",
             "pinpulse/v1/alerts/broadcast",
             "pinpulse/v1/ring/${user.id}",
+            "pinpulse/v1/ring_pending/${user.id}",
             "pinpulse/v1/ring/broadcast",
             "pinpulse/v1/invites/${user.id}",
             "pinpulse/v1/invites/broadcast",
@@ -256,6 +342,7 @@ class RealtimeService private constructor(private val context: Context) {
             coreTopics.add("pinpulse/v1/ring/$codeUpper")
             coreTopics.add("pinpulse/v1/ring/${codeUpper.replace("-", "")}")
             coreTopics.add("pinpulse/v1/ring/${codeUpper.lowercase()}")
+            coreTopics.add("pinpulse/v1/ring_pending/$codeUpper")
             coreTopics.add("pinpulse/v1/registry/code/$codeUpper")
             coreTopics.add("pinpulse/v1/registry/code/${codeUpper.replace("-", "")}")
             coreTopics.add("pinpulse/v1/admin/users/$codeUpper")
@@ -266,6 +353,7 @@ class RealtimeService private constructor(private val context: Context) {
             coreTopics.add("pinpulse/v1/invites/$emailTag")
             coreTopics.add("pinpulse/v1/alerts/$emailTag")
             coreTopics.add("pinpulse/v1/ring/$emailTag")
+            coreTopics.add("pinpulse/v1/ring_pending/$emailTag")
             coreTopics.add("pinpulse/v1/registry/email/$emailTag")
             coreTopics.add("pinpulse/v1/admin/users/$emailTag")
             if (rawEmailLower.isNotBlank() && rawEmailLower != emailTag) {
@@ -273,12 +361,46 @@ class RealtimeService private constructor(private val context: Context) {
                 coreTopics.add("pinpulse/v1/alerts/$rawEmailLower")
             }
         }
+        return coreTopics
+    }
 
-        synchronized(subscribedTopics) {
-            coreTopics.addAll(subscribedTopics)
+    private fun subscribeTopicsLocked(activeClient: MqttClient, topics: List<String>, qos: Int = 1): Boolean {
+        val clean = topics.map { it.trim() }.filter { it.isNotBlank() }.distinct()
+        if (clean.isEmpty()) return true
+        return try {
+            if (!activeClient.isConnected) {
+                synchronized(subscribedTopics) { subscribedTopics.clear() }
+                false
+            } else {
+                val qosArray = IntArray(clean.size) { qos }
+                activeClient.subscribe(clean.toTypedArray(), qosArray)
+                synchronized(subscribedTopics) {
+                    subscribedTopics.addAll(clean)
+                }
+                Log.d(TAG, "Subscribed to ${clean.size} topics successfully")
+                true
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Subscribe error (${clean.size} topics): ${e.message}")
+            synchronized(subscribedTopics) {
+                subscribedTopics.removeAll(clean.toSet())
+            }
+            false
         }
+    }
 
-        subscribeBatch(coreTopics.distinct(), qos = 1)
+    private fun resubscribeUserChannelsLocked(activeClient: MqttClient, user: User) {
+        val allTopics = mutableListOf<String>()
+        allTopics.addAll(buildCoreUserTopics(user))
+        synchronized(desiredTopics) {
+            allTopics.addAll(desiredTopics)
+        }
+        val ok = subscribeTopicsLocked(activeClient, allTopics.distinct(), qos = 1)
+        if (!ok) {
+            synchronized(subscribedTopics) {
+                subscribedTopics.clear()
+            }
+        }
         publishUserRegistry(user)
     }
 
@@ -299,81 +421,124 @@ class RealtimeService private constructor(private val context: Context) {
             publishRetained("pinpulse/v1/registry/email/$emailTag", registryPayload, qosLevel = 1)
         }
 
-        val onlinePayload = """{"userId":"${user.id}","senderId":"${user.id}","name":"${user.displayName}","senderName":"${user.displayName}","status":"ONLINE","type":"PHONE_ONLINE","timestamp":${System.currentTimeMillis()}}"""
+        val onlinePayload = org.json.JSONObject().apply {
+            put("userId", user.id)
+            put("senderId", user.id)
+            put("name", user.displayName)
+            put("senderName", user.displayName)
+            put("status", "ONLINE")
+            put("type", "PHONE_ONLINE")
+            put("timestamp", System.currentTimeMillis())
+        }.toString()
         publishRetained("pinpulse/v1/user/${user.id}/status", onlinePayload, qosLevel = 1)
     }
 
     fun subscribeBatch(topics: List<String>, qos: Int = 1) {
-        if (topics.isEmpty()) return
+        val clean = topics.map { it.trim() }.filter { it.isNotBlank() }.distinct()
+        if (clean.isEmpty()) return
+        synchronized(desiredTopics) {
+            desiredTopics.addAll(clean)
+        }
         scope.launch {
-            try {
-                synchronized(subscribedTopics) {
-                    subscribedTopics.addAll(topics)
+            connectMutex.withLock {
+                val c = client
+                if (c?.isConnected == true) {
+                    subscribeTopicsLocked(c, clean, qos)
+                } else {
+                    val u = currentUser ?: AppPreferences(context).loadCurrentUser()
+                    if (u != null) {
+                        connectInternalLocked(u, forceResubscribe = false)
+                    }
                 }
-                if (client?.isConnected == true) {
-                    val qosArray = IntArray(topics.size) { qos }
-                    client?.subscribe(topics.toTypedArray(), qosArray)
-                    Log.d(TAG, "Batch subscribed to ${topics.size} topics successfully")
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Batch subscribe error: ${e.message}")
             }
         }
     }
 
     fun subscribe(topic: String) {
+        val clean = topic.trim()
+        if (clean.isBlank()) return
+        synchronized(desiredTopics) {
+            desiredTopics.add(clean)
+        }
         scope.launch {
-            try {
-                synchronized(subscribedTopics) {
-                    subscribedTopics.add(topic)
-                }
-                if (client?.isConnected == true) {
-                    client?.subscribe(topic, 1)
-                    Log.d(TAG, "Subscribed to $topic")
+            connectMutex.withLock {
+                val c = client
+                if (c?.isConnected == true) {
+                    val already = synchronized(subscribedTopics) { subscribedTopics.contains(clean) }
+                    if (!already) {
+                        subscribeTopicsLocked(c, listOf(clean), qos = 1)
+                    }
                 } else {
                     val u = currentUser ?: AppPreferences(context).loadCurrentUser()
-                    if (u != null) connectInternal(u, forceResubscribe = false)
+                    if (u != null) {
+                        connectInternalLocked(u, forceResubscribe = false)
+                    }
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "Subscribe failed for $topic: ${e.message}")
             }
         }
     }
 
     fun unsubscribe(topic: String) {
+        val clean = topic.trim()
+        if (clean.isBlank()) return
+        synchronized(desiredTopics) {
+            desiredTopics.remove(clean)
+        }
+        synchronized(subscribedTopics) {
+            subscribedTopics.remove(clean)
+        }
         scope.launch {
-            try {
-                synchronized(subscribedTopics) {
-                    subscribedTopics.remove(topic)
+            connectMutex.withLock {
+                try {
+                    if (client?.isConnected == true) {
+                        client?.unsubscribe(clean)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Unsubscribe error: ${e.message}")
                 }
-                if (client?.isConnected == true) {
-                    client?.unsubscribe(topic)
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Unsubscribe error: ${e.message}")
             }
+        }
+    }
+
+    private suspend fun ensureConnectedForPublish(): MqttClient? {
+        client?.takeIf { it.isConnected }?.let { return it }
+        return connectMutex.withLock {
+            client?.takeIf { it.isConnected } ?: run {
+                val u = currentUser ?: AppPreferences(context).loadCurrentUser()
+                if (u != null && connectInternalLocked(u, forceResubscribe = false)) {
+                    client?.takeIf { it.isConnected }
+                } else {
+                    null
+                }
+            }
+        }
+    }
+
+    private fun publishDirectOnClient(
+        activeClient: MqttClient,
+        topic: String,
+        payload: String,
+        retained: Boolean,
+        qosLevel: Int
+    ): Boolean {
+        return try {
+            if (!activeClient.isConnected) return false
+            val message = MqttMessage(payload.toByteArray(StandardCharsets.UTF_8)).apply {
+                qos = qosLevel
+                isRetained = retained
+            }
+            activeClient.publish(topic, message)
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Publish error to $topic: ${e.message}")
+            false
         }
     }
 
     fun publish(topic: String, payload: String, retained: Boolean = false, qosLevel: Int = 0) {
         scope.launch {
-            try {
-                if (client?.isConnected != true) {
-                    val u = currentUser ?: AppPreferences(context).loadCurrentUser()
-                    if (u != null) {
-                        connectInternal(u, forceResubscribe = false)
-                    }
-                }
-                val message = MqttMessage(payload.toByteArray(StandardCharsets.UTF_8)).apply {
-                    qos = qosLevel
-                    isRetained = retained
-                }
-                if (client?.isConnected == true) {
-                    client?.publish(topic, message)
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Publish error to $topic: ${e.message}")
-            }
+            val activeClient = ensureConnectedForPublish() ?: return@launch
+            publishDirectOnClient(activeClient, topic, payload, retained, qosLevel)
         }
     }
 
@@ -487,38 +652,110 @@ class RealtimeService private constructor(private val context: Context) {
         publishRetained(topic, accountJson, qosLevel = 1)
     }
 
+    private fun buildTargetRingTopics(
+        targetUserId: String,
+        targetFriendCode: String,
+        targetEmail: String
+    ): Pair<List<String>, List<String>> {
+        val cleanUserId = targetUserId.trim()
+        val cleanCode = targetFriendCode.trim().uppercase()
+        val cleanEmailTag = if (targetEmail.contains("@")) cleanEmail(targetEmail) else ""
+        val rawEmailLower = targetEmail.trim().lowercase()
+
+        val liveTopics = mutableListOf<String>()
+        val pendingTopics = mutableListOf<String>()
+
+        if (cleanUserId.isNotBlank()) {
+            liveTopics.add("pinpulse/v1/ring/$cleanUserId")
+            liveTopics.add("pinpulse/v1/alerts/$cleanUserId")
+            pendingTopics.add("pinpulse/v1/ring_pending/$cleanUserId")
+        }
+        if (cleanCode.isNotBlank() && cleanCode != "----") {
+            liveTopics.add("pinpulse/v1/ring/$cleanCode")
+            liveTopics.add("pinpulse/v1/ring/${cleanCode.replace("-", "")}")
+            liveTopics.add("pinpulse/v1/ring/${cleanCode.lowercase()}")
+            liveTopics.add("pinpulse/v1/alerts/$cleanCode")
+            pendingTopics.add("pinpulse/v1/ring_pending/$cleanCode")
+        }
+        if (cleanEmailTag.isNotBlank()) {
+            liveTopics.add("pinpulse/v1/ring/$cleanEmailTag")
+            liveTopics.add("pinpulse/v1/alerts/$cleanEmailTag")
+            pendingTopics.add("pinpulse/v1/ring_pending/$cleanEmailTag")
+            if (rawEmailLower.isNotBlank() && rawEmailLower != cleanEmailTag) {
+                liveTopics.add("pinpulse/v1/ring/$rawEmailLower")
+                liveTopics.add("pinpulse/v1/alerts/$rawEmailLower")
+            }
+        }
+        return Pair(liveTopics.distinct(), pendingTopics.distinct())
+    }
+
+    private fun clearOwnPendingRingTopics() {
+        val me = currentUser ?: AppPreferences(context).loadCurrentUser() ?: return
+        val topicsToClear = mutableListOf<String>()
+        if (me.id.isNotBlank()) {
+            topicsToClear.add("pinpulse/v1/ring_pending/${me.id.trim()}")
+        }
+        val codeUpper = me.friendCode.trim().uppercase()
+        if (codeUpper.isNotBlank()) {
+            topicsToClear.add("pinpulse/v1/ring_pending/$codeUpper")
+        }
+        if (me.email.contains("@")) {
+            topicsToClear.add("pinpulse/v1/ring_pending/${cleanEmail(me.email)}")
+        }
+        topicsToClear.distinct().forEach { t ->
+            publishRetained(t, "", qosLevel = 1)
+        }
+    }
+
     fun sendRingCommand(
         targetUserId: String,
         targetFriendCode: String,
         callerName: String,
-        targetEmail: String = ""
+        targetEmail: String = "",
+        onResult: ((Boolean) -> Unit)? = null
     ) {
-        val callerId = currentUser?.id ?: AppPreferences(context).loadCurrentUser()?.id ?: ""
-        val callerCode = currentUser?.friendCode ?: AppPreferences(context).loadCurrentUser()?.friendCode ?: ""
-        val callerEmail = currentUser?.email ?: AppPreferences(context).loadCurrentUser()?.email ?: ""
-        val payload = """{"type":"RING_PHONE","callerName":"$callerName","callerId":"$callerId","callerCode":"$callerCode","callerEmail":"$callerEmail","timestamp":${System.currentTimeMillis()}}"""
-        val cleanUserId = targetUserId.trim()
-        val cleanCode = targetFriendCode.trim().uppercase()
-        val cleanEmailTag = if (targetEmail.contains("@")) cleanEmail(targetEmail) else ""
+        val savedMe = currentUser ?: AppPreferences(context).loadCurrentUser()
+        val callerId = savedMe?.id ?: ""
+        val callerCode = savedMe?.friendCode ?: ""
+        val callerEmail = savedMe?.email ?: ""
+        val now = System.currentTimeMillis()
+        val ringId = "ring_${now}_" + java.util.UUID.randomUUID().toString().replace("-", "").take(8)
 
-        if (cleanUserId.isNotBlank()) {
-            publish("pinpulse/v1/ring/$cleanUserId", payload, qosLevel = 1)
-            publish("pinpulse/v1/alerts/$cleanUserId", payload, qosLevel = 1)
+        val payload = org.json.JSONObject().apply {
+            put("type", "RING_PHONE")
+            put("ringId", ringId)
+            put("callerName", callerName)
+            put("callerId", callerId)
+            put("callerCode", callerCode)
+            put("callerEmail", callerEmail)
+            put("timestamp", now)
+        }.toString()
+
+        val (liveTopics, pendingTopics) = buildTargetRingTopics(targetUserId, targetFriendCode, targetEmail)
+        if (liveTopics.isEmpty()) {
+            onResult?.invoke(false)
+            return
         }
-        if (cleanCode.isNotBlank()) {
-            publish("pinpulse/v1/ring/$cleanCode", payload, qosLevel = 1)
-            publish("pinpulse/v1/ring/${cleanCode.replace("-", "")}", payload, qosLevel = 1)
-            publish("pinpulse/v1/ring/${cleanCode.lowercase()}", payload, qosLevel = 1)
-            publish("pinpulse/v1/alerts/$cleanCode", payload, qosLevel = 1)
-        }
-        if (cleanEmailTag.isNotBlank()) {
-            publish("pinpulse/v1/ring/$cleanEmailTag", payload, qosLevel = 1)
-            publish("pinpulse/v1/alerts/$cleanEmailTag", payload, qosLevel = 1)
-            val rawEmailLower = targetEmail.trim().lowercase()
-            if (rawEmailLower != cleanEmailTag) {
-                publish("pinpulse/v1/ring/$rawEmailLower", payload, qosLevel = 1)
-                publish("pinpulse/v1/alerts/$rawEmailLower", payload, qosLevel = 1)
+
+        scope.launch {
+            val activeClient = ensureConnectedForPublish()
+            if (activeClient == null) {
+                Log.w(TAG, "sendRingCommand failed: MQTT broker unreachable")
+                onResult?.invoke(false)
+                return@launch
             }
+            var publishedAny = false
+            for (t in liveTopics) {
+                if (publishDirectOnClient(activeClient, t, payload, retained = false, qosLevel = 1)) {
+                    publishedAny = true
+                }
+            }
+            for (pt in pendingTopics) {
+                if (publishDirectOnClient(activeClient, pt, payload, retained = true, qosLevel = 1)) {
+                    publishedAny = true
+                }
+            }
+            onResult?.invoke(publishedAny)
         }
     }
 
@@ -526,34 +763,163 @@ class RealtimeService private constructor(private val context: Context) {
         targetUserId: String,
         targetFriendCode: String,
         callerName: String,
-        targetEmail: String = ""
+        targetEmail: String = "",
+        onResult: ((Boolean) -> Unit)? = null
     ) {
-        val callerId = currentUser?.id ?: AppPreferences(context).loadCurrentUser()?.id ?: ""
-        val callerCode = currentUser?.friendCode ?: AppPreferences(context).loadCurrentUser()?.friendCode ?: ""
-        val callerEmail = currentUser?.email ?: AppPreferences(context).loadCurrentUser()?.email ?: ""
-        val payload = """{"type":"STOP_RING","callerName":"$callerName","callerId":"$callerId","callerCode":"$callerCode","callerEmail":"$callerEmail","timestamp":${System.currentTimeMillis()}}"""
-        val cleanUserId = targetUserId.trim()
-        val cleanCode = targetFriendCode.trim().uppercase()
-        val cleanEmailTag = if (targetEmail.contains("@")) cleanEmail(targetEmail) else ""
+        val savedMe = currentUser ?: AppPreferences(context).loadCurrentUser()
+        val callerId = savedMe?.id ?: ""
+        val callerCode = savedMe?.friendCode ?: ""
+        val callerEmail = savedMe?.email ?: ""
+        val now = System.currentTimeMillis()
+        val stopId = "stop_${now}_" + java.util.UUID.randomUUID().toString().replace("-", "").take(8)
 
-        if (cleanUserId.isNotBlank()) {
-            publish("pinpulse/v1/ring/$cleanUserId", payload, qosLevel = 1)
-            publish("pinpulse/v1/alerts/$cleanUserId", payload, qosLevel = 1)
+        val payload = org.json.JSONObject().apply {
+            put("type", "STOP_RING")
+            put("ringId", stopId)
+            put("callerName", callerName)
+            put("callerId", callerId)
+            put("callerCode", callerCode)
+            put("callerEmail", callerEmail)
+            put("timestamp", now)
+        }.toString()
+
+        val (liveTopics, pendingTopics) = buildTargetRingTopics(targetUserId, targetFriendCode, targetEmail)
+        if (liveTopics.isEmpty() && pendingTopics.isEmpty()) {
+            onResult?.invoke(false)
+            return
         }
-        if (cleanCode.isNotBlank()) {
-            publish("pinpulse/v1/ring/$cleanCode", payload, qosLevel = 1)
-            publish("pinpulse/v1/ring/${cleanCode.replace("-", "")}", payload, qosLevel = 1)
-            publish("pinpulse/v1/ring/${cleanCode.lowercase()}", payload, qosLevel = 1)
-            publish("pinpulse/v1/alerts/$cleanCode", payload, qosLevel = 1)
-        }
-        if (cleanEmailTag.isNotBlank()) {
-            publish("pinpulse/v1/ring/$cleanEmailTag", payload, qosLevel = 1)
-            publish("pinpulse/v1/alerts/$cleanEmailTag", payload, qosLevel = 1)
-            val rawEmailLower = targetEmail.trim().lowercase()
-            if (rawEmailLower != cleanEmailTag) {
-                publish("pinpulse/v1/ring/$rawEmailLower", payload, qosLevel = 1)
-                publish("pinpulse/v1/alerts/$rawEmailLower", payload, qosLevel = 1)
+
+        scope.launch {
+            val activeClient = ensureConnectedForPublish()
+            if (activeClient == null) {
+                Log.w(TAG, "sendStopRingCommand failed: MQTT broker unreachable")
+                onResult?.invoke(false)
+                return@launch
             }
+            var publishedAny = false
+            // Wipe retained ring_pending first so reconnecting target never replays a stopped ring
+            for (pt in pendingTopics) {
+                if (publishDirectOnClient(activeClient, pt, "", retained = true, qosLevel = 1)) {
+                    publishedAny = true
+                }
+            }
+            for (t in liveTopics) {
+                if (publishDirectOnClient(activeClient, t, payload, retained = false, qosLevel = 1)) {
+                    publishedAny = true
+                }
+            }
+            onResult?.invoke(publishedAny)
+        }
+    }
+
+    private suspend fun handleIncomingRingOrStop(topic: String, payload: String) {
+        val trimmed = payload.trim()
+        // Empty payload is an MQTT retained-clear event — never treat as a ring or re-clear in a loop!
+        if (trimmed.isEmpty() || trimmed == "{}") return
+
+        val isPendingTopic = topic.contains("/ring_pending/")
+        val json = try {
+            org.json.JSONObject(trimmed)
+        } catch (_: Exception) {
+            null
+        }
+
+        val type = json?.optString("type", "")?.trim().orEmpty()
+        val ringId = json?.optString("ringId", "")?.trim().orEmpty()
+        val caller = json?.optString("callerName", "")?.trim()?.ifBlank { "A friend" } ?: "A friend"
+        val callerId = json?.optString("callerId", "")?.trim().orEmpty()
+        val callerCode = json?.optString("callerCode", "")?.trim().orEmpty()
+        val callerEmail = json?.optString("callerEmail", "")?.trim().orEmpty()
+        val packetTs = json?.optLong("timestamp", 0L) ?: 0L
+
+        val isStop = type == "STOP_RING" ||
+            type == "STOP_SIREN" ||
+            trimmed.contains("\"STOP_RING\"") ||
+            trimmed.contains("\"STOP_SIREN\"")
+
+        // Always clear consumed retained ring_pending topic immediately
+        if (isPendingTopic) {
+            publishRetained(topic, "", qosLevel = 1)
+        }
+
+        // 1. Process STOP_RING / STOP_SIREN BEFORE VIP caller filter so remote silence always succeeds!
+        if (isStop) {
+            val now = System.currentTimeMillis()
+            val shouldEmitStopAlert: Boolean
+            synchronized(ringDedupLock) {
+                lastStopRingTime = now
+                if (ringId.isNotBlank() && !handledRingIds.add(ringId)) {
+                    shouldEmitStopAlert = false
+                } else if (now - lastStopAlertEmittedTime < 2500L) {
+                    shouldEmitStopAlert = false
+                } else {
+                    lastStopAlertEmittedTime = now
+                    shouldEmitStopAlert = true
+                }
+                pruneBoundedSet(handledRingIds)
+            }
+            Log.d(TAG, "Remote silence command received from $caller on $topic")
+            com.pinpulse.radar.util.SirenHelper.stop(context)
+            clearOwnPendingRingTopics()
+            if (shouldEmitStopAlert) {
+                _alerts.emit(
+                    AlertMessage(
+                        senderId = "system",
+                        senderName = caller,
+                        type = "SIREN_STOPPED_REMOTELY",
+                        message = "🛑 Alarm silenced remotely by $caller."
+                    )
+                )
+            }
+            return
+        }
+
+        // 2. Enforce VIP Ring Allow-List / Block-List (even if JSON was malformed), honoring Admin Console override
+        val isAdminOverride = json?.optBoolean("adminOverride", false) == true || json?.optBoolean("isAdmin", false) == true
+        val appPrefs = AppPreferences(context)
+        val me = currentUser ?: appPrefs.loadCurrentUser()
+        if (!isAdminOverride && me?.email?.trim()?.lowercase() == "minod9349@gmail.com") {
+            val effectiveCallerName = if (json != null) caller else ""
+            if (!appPrefs.isUserAllowedToRing(callerId, callerCode, callerEmail, effectiveCallerName)) {
+                Log.d(TAG, "Silently dropped ring command from blocked/unallowed caller: $caller ($callerId)")
+                return
+            }
+        }
+
+        // 3. Enforce strict 45s TTL on retained ring_pending catch-up packets
+        val now = System.currentTimeMillis()
+        if (isPendingTopic) {
+            if (packetTs <= 0L || kotlin.math.abs(now - packetTs) > PENDING_RING_TTL_MS) {
+                Log.d(TAG, "Ignored expired ring_pending packet on $topic (ts=$packetTs, now=$now)")
+                return
+            }
+        }
+
+        // 4. Synchronized ringId + timestamp deduplication (never re-triggering after local/remote Stop!)
+        val shouldTriggerRing: Boolean = synchronized(ringDedupLock) {
+            val withinPostStopGuard = (now - lastStopRingTime) < 2500L &&
+                (packetTs <= 0L || packetTs <= lastStopRingTime)
+            if (ringId.isNotBlank()) {
+                if (handledRingIds.contains(ringId) || withinPostStopGuard) {
+                    false
+                } else {
+                    handledRingIds.add(ringId)
+                    pruneBoundedSet(handledRingIds)
+                    lastIncomingRingTime = now
+                    true
+                }
+            } else {
+                if (withinPostStopGuard || (now - lastIncomingRingTime) < 3000L) {
+                    false
+                } else {
+                    lastIncomingRingTime = now
+                    true
+                }
+            }
+        }
+
+        if (shouldTriggerRing) {
+            com.pinpulse.radar.util.SirenHelper.ring(context, caller)
         }
     }
 
@@ -561,50 +927,13 @@ class RealtimeService private constructor(private val context: Context) {
         scope.launch {
             try {
                 when {
-                    topic.contains("/ring/") || payload.contains("\"type\":\"RING_PHONE\"") || payload.contains("\"RING_PHONE\"") || payload.contains("\"STOP_RING\"") -> {
-                        try {
-                            val map = gson.fromJson(payload, Map::class.java)
-                            val type = map["type"]?.toString() ?: ""
-                            val caller = map["callerName"]?.toString() ?: "A friend"
-                            val callerId = map["callerId"]?.toString() ?: ""
-                            val callerCode = map["callerCode"]?.toString() ?: ""
-                            val callerEmail = map["callerEmail"]?.toString() ?: ""
-
-                            val appPrefs = AppPreferences(context)
-                            val me = currentUser ?: appPrefs.loadCurrentUser()
-                            if (me?.email?.trim()?.lowercase() == "minod9349@gmail.com") {
-                                if (!appPrefs.isUserAllowedToRing(callerId, callerCode, callerEmail, caller)) {
-                                    Log.d(TAG, "Silently dropped ring command from blocked caller: $caller ($callerId)")
-                                    return@launch
-                                }
-                            }
-                            if (type == "STOP_RING" || type == "STOP_SIREN" || payload.contains("\"STOP_RING\"")) {
-                                Log.d(TAG, "Remote silence command received from $caller")
-                                com.pinpulse.radar.util.SirenHelper.stop(context)
-                                _alerts.emit(AlertMessage(
-                                    senderId = "system",
-                                    senderName = caller,
-                                    type = "SIREN_STOPPED_REMOTELY",
-                                    message = "🛑 Alarm silenced remotely by $caller."
-                                ))
-                            } else {
-                                val now = System.currentTimeMillis()
-                                if (now - lastIncomingRingTime >= 3000L || !com.pinpulse.radar.util.SirenHelper.isCurrentlyPlaying()) {
-                                    lastIncomingRingTime = now
-                                    com.pinpulse.radar.util.SirenHelper.ring(context, caller)
-                                }
-                            }
-                        } catch (e: Exception) {
-                            if (payload.contains("\"STOP_RING\"")) {
-                                com.pinpulse.radar.util.SirenHelper.stop(context)
-                            } else {
-                                val now = System.currentTimeMillis()
-                                if (now - lastIncomingRingTime >= 3000L || !com.pinpulse.radar.util.SirenHelper.isCurrentlyPlaying()) {
-                                    lastIncomingRingTime = now
-                                    com.pinpulse.radar.util.SirenHelper.ring(context, "A friend")
-                                }
-                            }
-                        }
+                    topic.contains("/ring/") ||
+                        topic.contains("/ring_pending/") ||
+                        payload.contains("\"type\":\"RING_PHONE\"") ||
+                        payload.contains("\"RING_PHONE\"") ||
+                        payload.contains("\"STOP_RING\"") ||
+                        payload.contains("\"STOP_SIREN\"") -> {
+                        handleIncomingRingOrStop(topic, payload)
                     }
                     topic.contains("/loc") || topic.contains("/network/live") || (topic.contains("/direct/") && payload.contains("latitude")) -> {
                         val packet = gson.fromJson(payload, LocationPacket::class.java)?.sanitize()
@@ -750,19 +1079,44 @@ class RealtimeService private constructor(private val context: Context) {
                         }
                     }
                     topic.contains("/alerts/") -> {
+                        if (payload.isBlank() || payload.trim() == "{}") return@launch
                         try {
                             val alert = gson.fromJson(payload, AlertMessage::class.java)?.sanitize()
                             if (alert != null) {
                                 val me = currentUser ?: AppPreferences(context).loadCurrentUser()
+                                val isSos = alert.type.contains("SOS", ignoreCase = true)
+                                if (isSos && alert.id.isNotBlank()) {
+                                    val isDuplicateSos = synchronized(ringDedupLock) {
+                                        val added = handledSosAlertIds.add(alert.id)
+                                        pruneBoundedSet(handledSosAlertIds)
+                                        !added
+                                    }
+                                    if (isDuplicateSos) return@launch
+                                }
                                 // If this is an SOS_EMERGENCY from a friend or group member, trigger loud Siren + Vibration + System Notification!
-                                if (alert.type.contains("SOS", ignoreCase = true) && alert.senderId != me?.id) {
-                                    val ageMs = System.currentTimeMillis() - alert.timestamp
+                                if (isSos && alert.senderId != me?.id) {
+                                    val now = System.currentTimeMillis()
+                                    val ageMs = now - alert.timestamp
                                     if (alert.timestamp <= 0L || ageMs < 60_000L) {
                                         val appPrefs = AppPreferences(context)
+                                        val isVip = me?.email?.trim()?.lowercase() == "minod9349@gmail.com"
+                                        val vipAllowed = !isVip || appPrefs.isUserAllowedToRing(alert.senderId, "", "", alert.senderName)
                                         val isFriendOrGroup = appPrefs.loadFriends().any { it.id == alert.senderId || (it.friendCode.isNotBlank() && it.friendCode.equals(alert.senderId, ignoreCase = true)) } ||
                                             appPrefs.loadGroups().any { it.memberIds.contains(alert.senderId) }
-                                        if (isFriendOrGroup) {
-                                            com.pinpulse.radar.util.SirenHelper.ring(context, "🆘 SOS EMERGENCY: ${alert.senderName}")
+                                        if (isFriendOrGroup && vipAllowed) {
+                                            val canRingFromSos = synchronized(ringDedupLock) {
+                                                val postStopBlocked = (now - lastStopRingTime) < 2500L &&
+                                                    (alert.timestamp <= 0L || alert.timestamp <= lastStopRingTime)
+                                                if (postStopBlocked || (now - lastIncomingRingTime) < 3000L) {
+                                                    false
+                                                } else {
+                                                    lastIncomingRingTime = now
+                                                    true
+                                                }
+                                            }
+                                            if (canRingFromSos) {
+                                                com.pinpulse.radar.util.SirenHelper.ring(context, "🆘 SOS EMERGENCY: ${alert.senderName}")
+                                            }
                                         }
                                     }
                                 }
@@ -803,7 +1157,11 @@ class RealtimeService private constructor(private val context: Context) {
 
             if (type == "SILENCE_ALL_SIRENS" || action == "SILENCE" || topic.endsWith("/silence")) {
                 Log.d(TAG, "Fleet-wide siren silence command received from admin console")
+                synchronized(ringDedupLock) {
+                    lastStopRingTime = System.currentTimeMillis()
+                }
                 com.pinpulse.radar.util.SirenHelper.stop(context)
+                clearOwnPendingRingTopics()
                 return
             }
 

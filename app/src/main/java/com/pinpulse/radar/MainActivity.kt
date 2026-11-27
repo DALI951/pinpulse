@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
+import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
@@ -51,6 +52,7 @@ import com.pinpulse.radar.ui.theme.TextSecondary
 import com.pinpulse.radar.ui.theme.PinPulseTheme
 import com.pinpulse.radar.ui.theme.RadarDarkBg
 import com.pinpulse.radar.ui.viewmodel.MainViewModel
+import com.pinpulse.radar.util.SirenHelper
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -91,41 +93,75 @@ class MainActivity : ComponentActivity() {
                     val hasCompletedSetup by viewModel.hasCompletedSetup.collectAsState()
                     val hasUserCreatedPassword by viewModel.hasUserCreatedPassword.collectAsState()
                     val isGpsOff by isGpsDisabled.collectAsState()
+                    val isSirenActive by SirenHelper.isSirenActive.collectAsState()
 
-                    if (currentUser == null) {
-                        AuthScreen(viewModel = viewModel)
-                    } else if (!hasCompletedSetup) {
-                        OnboardingSetupScreen(
-                            viewModel = viewModel,
-                            onFinish = {
-                                checkAndEnforceGps()
-                                fetchImmediateLocation()
-                            }
-                        )
-                    } else {
-                        MainScreen(viewModel = viewModel)
-
-                        if (!hasUserCreatedPassword && currentUser?.email?.isNotBlank() == true) {
-                            CreatePasswordPromptDialog(
-                                email = currentUser?.email ?: "",
-                                onSetPassword = { pass ->
-                                    viewModel.setPasswordForCurrentAccount(pass) { success: Boolean, err: String? ->
-                                        if (success) {
-                                            Toast.makeText(this@MainActivity, "Account secured with password!", Toast.LENGTH_SHORT).show()
-                                        } else if (err != null) {
-                                            Toast.makeText(this@MainActivity, err, Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
-                                },
-                                onDismiss = {
-                                    viewModel.markPasswordCreated()
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        if (currentUser == null) {
+                            AuthScreen(viewModel = viewModel)
+                        } else if (!hasCompletedSetup) {
+                            OnboardingSetupScreen(
+                                viewModel = viewModel,
+                                onFinish = {
+                                    checkAndEnforceGps()
+                                    fetchImmediateLocation()
                                 }
                             )
+                        } else {
+                            MainScreen(viewModel = viewModel)
+
+                            if (!hasUserCreatedPassword && !isSirenActive && currentUser?.email?.isNotBlank() == true) {
+                                CreatePasswordPromptDialog(
+                                    email = currentUser?.email ?: "",
+                                    onSetPassword = { pass ->
+                                        viewModel.setPasswordForCurrentAccount(pass) { success: Boolean, err: String? ->
+                                            if (success) {
+                                                Toast.makeText(this@MainActivity, "Account secured with password!", Toast.LENGTH_SHORT).show()
+                                            } else if (err != null) {
+                                                Toast.makeText(this@MainActivity, err, Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                    },
+                                    onDismiss = {
+                                        viewModel.markPasswordCreated()
+                                    }
+                                )
+                            }
+                        }
+
+                        // Ensure Stop Siren banner is accessible even on Auth/Onboarding screens if ringing
+                        if (isSirenActive && (currentUser == null || !hasCompletedSetup)) {
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopCenter)
+                                    .statusBarsPadding()
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 6.dp)
+                                    .background(DangerRed, RoundedCornerShape(12.dp))
+                                    .padding(12.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("🔊 SIREN RINGING (MAX VOLUME)", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                        Text("Tap Stop to silence siren instantly", color = Color.White.copy(alpha = 0.85f), fontSize = 11.sp)
+                                    }
+                                    Button(
+                                        onClick = { viewModel.stopSirenDirectly(this@MainActivity) },
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color.White),
+                                        shape = RoundedCornerShape(8.dp)
+                                    ) {
+                                        Text("🛑 STOP SIREN", color = DangerRed, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                    }
+                                }
+                            }
                         }
                     }
 
-                    // Persistent Elderly Safety Mode GPS enforcement dialog
-                    if (isGpsOff) {
+                    // Persistent Elderly Safety Mode GPS enforcement dialog (suppressed while siren is ringing!)
+                    if (isGpsOff && !isSirenActive) {
                         ElderlyGpsEnforcementDialog(
                             onTurnOnGps = { promptTurnOnGpsDialog() }
                         )
@@ -135,22 +171,41 @@ class MainActivity : ComponentActivity() {
         }
 
         if (intent?.action == "SHOW_SIREN_PIN") {
+            intent?.action = null
+            setIntent(intent)
             viewModel.stopSirenDirectly(this)
         }
         if (intent?.getBooleanExtra("ACTION_PROMPT_GPS", false) == true) {
-            promptTurnOnGpsDialog()
+            intent?.removeExtra("ACTION_PROMPT_GPS")
+            if (!SirenHelper.isCurrentlyPlaying()) {
+                promptTurnOnGpsDialog()
+            }
         }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        setIntent(intent)
         if (intent.action == "SHOW_SIREN_PIN") {
+            intent.action = null
             viewModel.stopSirenDirectly(this)
         }
         if (intent.getBooleanExtra("ACTION_PROMPT_GPS", false)) {
-            promptTurnOnGpsDialog()
+            intent.removeExtra("ACTION_PROMPT_GPS")
+            if (!SirenHelper.isCurrentlyPlaying()) {
+                promptTurnOnGpsDialog()
+            }
         }
+        setIntent(intent)
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        if ((keyCode == KeyEvent.KEYCODE_VOLUME_DOWN || keyCode == KeyEvent.KEYCODE_VOLUME_UP) &&
+            SirenHelper.isCurrentlyPlaying()
+        ) {
+            viewModel.stopSirenDirectly(this)
+            return true
+        }
+        return super.onKeyDown(keyCode, event)
     }
 
     override fun onDestroy() {
@@ -178,7 +233,7 @@ class MainActivity : ComponentActivity() {
         val lm = getSystemService(Context.LOCATION_SERVICE) as? LocationManager
         val isGpsEnabled = lm?.isProviderEnabled(LocationManager.GPS_PROVIDER) == true
         _isGpsDisabled.value = !isGpsEnabled
-        if (!isGpsEnabled) {
+        if (!isGpsEnabled && !SirenHelper.isCurrentlyPlaying()) {
             promptTurnOnGpsDialog()
         }
         return isGpsEnabled
@@ -238,6 +293,7 @@ class MainActivity : ComponentActivity() {
      * LocationSettingsRequest, with fallback to Location Settings screen.
      */
     fun promptTurnOnGpsDialog() {
+        if (SirenHelper.isCurrentlyPlaying()) return
         try {
             val locationRequest = com.google.android.gms.location.LocationRequest.Builder(
                 Priority.PRIORITY_HIGH_ACCURACY,
